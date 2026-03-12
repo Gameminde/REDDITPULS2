@@ -276,7 +276,7 @@ Scans · Validate · Explore · Trends · Competitors · Reports · Saved · WTP
 | `/api/ideas` | GET | ❌ | List all ideas (stock market data, sortable/filterable) |
 | `/api/ideas/[slug]` | GET | ❌ | Single idea with full intelligence |
 | `/api/enrich` | GET | ❌ | Get cached enrichment (SO + GH signals) |
-| `/api/enrich` | POST | ❌ | Trigger background enrichment |
+| `/api/enrich` | POST | ✅ | Trigger background enrichment |
 | `/api/discover` | GET | ❌ | Opportunity discovery feed |
 | `/api/intelligence` | GET | ❌ | Cross-platform intelligence summary |
 | `/api/watchlist` | CRUD | ✅ | User watchlist management |
