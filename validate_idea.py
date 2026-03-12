@@ -100,10 +100,13 @@ Return ONLY valid JSON with this exact structure:
 }
 
 RULES:
-- Generate 5-10 search keywords/phrases that people would use when complaining about this problem on Reddit
-- Include both specific tool names and general pain phrases ("tired of manually", "is there a tool for")
-- Competitors should be existing tools that partially solve this problem
-- search_queries should be the BEST Reddit search queries to find posts about this pain
+- keywords MUST be SHORT (1-3 words max). Reddit search works best with short phrases.
+  GOOD keywords: "code review", "PR review", "pull request", "code quality", "code linting"
+  BAD keywords: "AI-powered code review tool for small teams", "automated pull request review system"
+- Generate 8-12 short keywords covering: the pain, the solution category, and adjacent tool names
+- Include both specific tool names and SHORT pain phrases ("slow reviews", "code bugs", "manual testing")
+- Competitors should be existing tools that partially solve this problem (include 5-8)
+- search_queries can be slightly longer (3-6 words) for targeted Reddit searches
 - Keep all strings concise and search-engine friendly
 """
 
@@ -294,7 +297,7 @@ def phase2_scrape(keywords, validation_id):
     return unique_posts, source_counts, platform_warnings
 
 
-def phase2b_intelligence(keywords, validation_id):
+def phase2b_intelligence(keywords, validation_id, idea_text=""):
     """Phase 2b: Google Trends + Competition Analysis."""
     intel = {"trends": None, "competition": None, "trend_prompt": "", "comp_prompt": ""}
 
@@ -335,10 +338,10 @@ def phase2b_intelligence(keywords, validation_id):
         update_validation(validation_id, {"status": "analyzing_competition"})
         try:
             comp_keywords = keywords[:3]  # Top 3 for competition
-            comp_results = analyze_competition(comp_keywords)
+            comp_results = analyze_competition(comp_keywords, idea_text=idea_text)
             comp_report = competition_summary(comp_results)
             intel["competition"] = comp_report
-            intel["comp_prompt"] = competition_prompt_section(comp_results)
+            intel["comp_prompt"] = competition_prompt_section(comp_results, idea_text=idea_text)
             print(f"  [✓] Competition: {len(comp_results)} keywords analyzed")
             for kw, r in comp_results.items():
                 print(f"      {kw}: {r.tier} ({r.details})")
@@ -375,7 +378,7 @@ Return ONLY valid JSON:
 }
 
 RULES:
-- Include AT LEAST 5 evidence posts. More is better. Quote exact titles from the scraped data.
+- Include AT LEAST 15 evidence posts. More is better. Quote exact titles from the scraped data.
 - NEVER invent post titles. Only cite what appears in the data.
 - For WTP, search for dollar amounts, "I'd pay", "take my money", "shut up and take", pricing discussions.
 - Be specific with TAM — reference subreddit subscriber counts, post frequency, industry size.
@@ -423,6 +426,7 @@ RULES:
 - Pricing tiers must have concrete dollar amounts, not placeholders.
 - ICP must be specific enough to write a cold email to this person.
 - Moat strategy must be actionable, not generic "build a great product".
+- Geographic focus in ICP must be EVIDENCE-BASED from the post data. If no geographic signal exists in scraped posts, say "Global (remote-first)". NEVER hallucinate specific regions like "small towns" without data to support it.
 """
 
 PASS3_SYSTEM = """You are a startup launch advisor. Given the market analysis and strategy, create the ACTION PLAN.
@@ -476,7 +480,7 @@ Return ONLY valid JSON:
   "top_posts": [
     {"title": "Most important post title", "source": "platform", "score": 123, "relevance": "Why this post matters for the decision"},
     {"title": "Second post", "source": "platform", "score": 456, "relevance": "Why important"},
-    {"title": "Third post", "source": "platform", "score": 789, "relevance": "Why important"}
+    ... // Include AT LEAST 10 top posts, ideally 15-20. More is better.
   ]
 }
 
@@ -585,28 +589,33 @@ def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
         confidence_cap = min(confidence_cap, 60)
 
     # Contradiction: Revenue projections assume unrealistic conversion rates
+    # Check ALL months, not just month_12 — catch fantasy assumptions early
     projections = pass3.get("revenue_projections", {})
-    month_12 = projections.get("month_12", {})
-    if isinstance(month_12, dict):
-        users_str = str(month_12.get("users", "0"))
-        paying_str = str(month_12.get("paying", "0"))
-        import re
-        users_match = re.search(r'(\d[\d,]*)', users_str.replace(",", ""))
-        paying_match = re.search(r'(\d[\d,]*)', paying_str.replace(",", ""))
-        if users_match and paying_match:
-            total_users = int(users_match.group(1))
-            paying_users = int(paying_match.group(1))
-            if total_users > 0:
-                conversion_rate = paying_users / total_users
-                if conversion_rate > 0.10:
-                    contradictions.append(
-                        f"CONVERSION FANTASY: Month 12 projects {conversion_rate:.0%} conversion rate "
-                        f"({paying_users}/{total_users} users) — industry average is 2-5% for freemium B2B SaaS"
-                    )
-                elif conversion_rate > 0.07:
-                    warnings.append(
-                        f"Optimistic conversion: Month 12 projects {conversion_rate:.0%} — above industry average of 2-5%"
-                    )
+    worst_conversion = {"rate": 0, "month": "", "users": 0, "paying": 0}
+    for month_key in ["month_1", "month_3", "month_6", "month_12"]:
+        month_data = projections.get(month_key, {})
+        if isinstance(month_data, dict):
+            users_str = str(month_data.get("users", "0")).replace(",", "")
+            paying_str = str(month_data.get("paying", "0")).replace(",", "")
+            users_match = re.search(r'(\d+)', users_str)
+            paying_match = re.search(r'(\d+)', paying_str)
+            if users_match and paying_match:
+                total_users = int(users_match.group(1))
+                paying_users = int(paying_match.group(1))
+                if total_users > 0:
+                    rate = paying_users / total_users
+                    if rate > worst_conversion["rate"]:
+                        worst_conversion = {"rate": rate, "month": month_key, "users": total_users, "paying": paying_users}
+
+    if worst_conversion["rate"] >= 0.10:
+        contradictions.append(
+            f"CONVERSION FANTASY: {worst_conversion['month']} projects {worst_conversion['rate']:.0%} conversion rate "
+            f"({worst_conversion['paying']}/{worst_conversion['users']} users) — industry average is 2-5% for freemium B2B SaaS"
+        )
+    elif worst_conversion["rate"] >= 0.07:
+        warnings.append(
+            f"Optimistic conversion: {worst_conversion['month']} projects {worst_conversion['rate']:.0%} — above industry average of 2-5%"
+        )
 
     # Competition check: if saturation is HIGH/MEDIUM but unfair advantage is vague
     comp = pass2.get("competition_landscape", {})
@@ -1005,7 +1014,7 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
         posts, source_counts, platform_warnings = phase2_scrape(decomposition["keywords"], validation_id)
 
         # Phase 2b: Intelligence analysis (Trends + Competition)
-        intel = phase2b_intelligence(decomposition["keywords"], validation_id)
+        intel = phase2b_intelligence(decomposition["keywords"], validation_id, idea_text=idea_text)
 
         if len(posts) == 0:
             update_validation(validation_id, {

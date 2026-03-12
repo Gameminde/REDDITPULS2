@@ -52,6 +52,124 @@ COMPETITION_TIERS = {
 }
 
 
+# ═══════════════════════════════════════════════════════
+# KNOWN COMPETITORS DATABASE
+# Static but structured — match triggers, inject known data,
+# then augment with Google discovery on top.
+# ═══════════════════════════════════════════════════════
+KNOWN_COMPETITORS = {
+    "code_review": {
+        "triggers": ["code review", "PR review", "pull request", "code quality",
+                     "code linting", "static analysis", "code analysis"],
+        "competitors": [
+            {"name": "Coderabbit", "price": "$19/mo", "weakness": "expensive for solo devs", "users": "10,000+"},
+            {"name": "GitHub Copilot PR", "price": "$10/mo", "weakness": "GitHub-only, limited explanations", "users": "1.3M"},
+            {"name": "PR-Agent (CodiumAI)", "price": "free/open source", "weakness": "complex self-hosted setup", "users": "5,000+"},
+            {"name": "CodeClimate", "price": "$16/mo", "weakness": "no AI explanations", "users": "unknown"},
+            {"name": "SonarQube", "price": "free tier + $150/mo", "weakness": "enterprise-focused, complex", "users": "300,000+"},
+            {"name": "CodeFactor", "price": "free tier + $7/mo", "weakness": "limited AI capabilities", "users": "unknown"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$10",
+        "wtp_ceiling": "$50",
+    },
+    "invoice_automation": {
+        "triggers": ["invoice", "billing", "payment automation", "accounts receivable",
+                     "invoicing", "billing software"],
+        "competitors": [
+            {"name": "FreshBooks", "price": "$17/mo", "weakness": "no multi-currency for small plans", "users": "30M"},
+            {"name": "Wave", "price": "free", "weakness": "limited integrations", "users": "unknown"},
+            {"name": "QuickBooks", "price": "$30/mo", "weakness": "expensive, complex for solo", "users": "7M"},
+            {"name": "Stripe Invoicing", "price": "0.4% per invoice", "weakness": "developer-focused", "users": "unknown"},
+            {"name": "Zoho Invoice", "price": "free tier + $9/mo", "weakness": "ecosystem lock-in", "users": "unknown"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$17",
+        "wtp_ceiling": "$50",
+    },
+    "project_management": {
+        "triggers": ["project management", "task management", "kanban", "sprint",
+                     "agile tool", "team collaboration", "project tracking"],
+        "competitors": [
+            {"name": "Linear", "price": "$8/mo", "weakness": "developer-focused only", "users": "10,000+"},
+            {"name": "Jira", "price": "free tier + $8/mo", "weakness": "bloated, slow, hated UX", "users": "10M+"},
+            {"name": "Notion", "price": "free tier + $10/mo", "weakness": "jack of all trades, master of none", "users": "30M+"},
+            {"name": "Asana", "price": "free tier + $11/mo", "weakness": "complex for small teams", "users": "100K+"},
+            {"name": "Trello", "price": "free tier + $5/mo", "weakness": "limited beyond basic kanban", "users": "50M+"},
+        ],
+        "saturation": "SATURATED",
+        "wtp_floor": "$5",
+        "wtp_ceiling": "$20",
+    },
+    "email_marketing": {
+        "triggers": ["email marketing", "newsletter", "email automation",
+                     "drip campaign", "email platform"],
+        "competitors": [
+            {"name": "Mailchimp", "price": "free tier + $13/mo", "weakness": "expensive at scale", "users": "12M"},
+            {"name": "ConvertKit", "price": "$29/mo", "weakness": "expensive for beginners", "users": "500K"},
+            {"name": "Beehiiv", "price": "free tier + $49/mo", "weakness": "newsletter-only focus", "users": "unknown"},
+            {"name": "Resend", "price": "free tier + $20/mo", "weakness": "developer-focused, no visual builder", "users": "unknown"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$13",
+        "wtp_ceiling": "$99",
+    },
+    "social_media": {
+        "triggers": ["social media management", "social scheduling", "content calendar",
+                     "social media tool", "post scheduler"],
+        "competitors": [
+            {"name": "Buffer", "price": "free tier + $6/mo", "weakness": "limited analytics", "users": "140K"},
+            {"name": "Hootsuite", "price": "$99/mo", "weakness": "expensive, bloated", "users": "18M"},
+            {"name": "Later", "price": "$25/mo", "weakness": "Instagram-focused", "users": "7M"},
+            {"name": "Typefully", "price": "$15/mo", "weakness": "Twitter/X focus only", "users": "unknown"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$6",
+        "wtp_ceiling": "$99",
+    },
+    "landing_page": {
+        "triggers": ["landing page", "website builder", "no-code website",
+                     "page builder", "conversion page"],
+        "competitors": [
+            {"name": "Carrd", "price": "$19/yr", "weakness": "single-page only", "users": "unknown"},
+            {"name": "Webflow", "price": "$14/mo", "weakness": "steep learning curve", "users": "3.5M"},
+            {"name": "Framer", "price": "free tier + $15/mo", "weakness": "limited CMS", "users": "unknown"},
+            {"name": "Unbounce", "price": "$99/mo", "weakness": "very expensive", "users": "15K"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$14",
+        "wtp_ceiling": "$99",
+    },
+    "customer_support": {
+        "triggers": ["customer support", "help desk", "ticket system",
+                     "support tool", "customer service tool", "live chat"],
+        "competitors": [
+            {"name": "Zendesk", "price": "$19/mo", "weakness": "expensive, complex setup", "users": "100K+"},
+            {"name": "Intercom", "price": "$74/mo", "weakness": "very expensive for startups", "users": "25K"},
+            {"name": "Crisp", "price": "free tier + $25/mo", "weakness": "limited automation", "users": "500K"},
+            {"name": "Freshdesk", "price": "free tier + $15/mo", "weakness": "clunky UI", "users": "60K"},
+        ],
+        "saturation": "HIGH",
+        "wtp_floor": "$15",
+        "wtp_ceiling": "$99",
+    },
+}
+
+
+def match_known_competitors(idea_text: str) -> Optional[dict]:
+    """
+    Match idea text against KNOWN_COMPETITORS triggers.
+    Returns the matched category data or None.
+    """
+    idea_lower = idea_text.lower()
+    for category, data in KNOWN_COMPETITORS.items():
+        for trigger in data["triggers"]:
+            if trigger.lower() in idea_lower:
+                print(f"    [COMP] Matched known category: {category} (trigger: '{trigger}')")
+                return data
+    return None
+
+
 def _google_result_count(query: str) -> int:
     """
     Estimate Google result count for a query.
@@ -154,17 +272,40 @@ class CompetitionReport:
         )
 
 
-def analyze_competition(keywords: List[str]) -> Dict[str, CompetitionReport]:
+def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, CompetitionReport]:
     """
     Analyze competition for a list of keywords.
-    Rate-limited to avoid Google blocking.
+    Matches KNOWN_COMPETITORS first, then augments with Google discovery.
     """
     results = {}
 
+    # Step 1: Check known competitors database
+    known_match = match_known_competitors(idea_text) if idea_text else None
+    if known_match:
+        # Inject known competitors as a synthetic report
+        known_comp = known_match["competitors"]
+        saturation = known_match["saturation"]
+        tier_map = {"HIGH": "SATURATED", "MEDIUM": "COMPETITIVE", "LOW": "EMERGING"}
+        tier = tier_map.get(saturation, "COMPETITIVE")
+
+        report = CompetitionReport("known_database", tier, {
+            "g2_products": len(known_comp) * 5,  # synthetic count
+            "ph_launches": len(known_comp) * 3,
+            "total_products": len(known_comp) * 8,
+            "alternatives_searches": 50000,
+            "switch_demand": "high",
+            "known_competitors": known_comp,
+            "wtp_floor": known_match.get("wtp_floor", "unknown"),
+            "wtp_ceiling": known_match.get("wtp_ceiling", "unknown"),
+            "source": "known_database",
+        })
+        results["known_database"] = report
+        print(f"    [COMP] {report}")
+
+    # Step 2: Google discovery for each keyword
     for kw in keywords:
         print(f"    [COMP] Checking competition for: '{kw}'...")
 
-        # Run searches with delays
         g2 = _count_g2_products(kw)
         time.sleep(2)
         ph = _count_ph_launches(kw)
@@ -172,7 +313,6 @@ def analyze_competition(keywords: List[str]) -> Dict[str, CompetitionReport]:
         alt = _count_alternatives_searches(kw)
         time.sleep(2)
 
-        # Skip if all searches failed
         if g2 < 0 and ph < 0 and alt < 0:
             print(f"    [COMP] All searches failed for '{kw}' — skipping")
             continue
@@ -190,14 +330,31 @@ def analyze_competition(keywords: List[str]) -> Dict[str, CompetitionReport]:
     return results
 
 
-def competition_prompt_section(reports: Dict[str, CompetitionReport]) -> str:
-    """Generate prompt section for AI synthesis."""
+def competition_prompt_section(reports: Dict[str, CompetitionReport], idea_text: str = "") -> str:
+    """Generate prompt section for AI synthesis, including known competitor data."""
     if not reports:
         return ""
 
     lines = ["COMPETITION ANALYSIS (auto-detected):"]
 
+    # Known competitors section
+    known_match = match_known_competitors(idea_text) if idea_text else None
+    if known_match:
+        lines.append("")
+        lines.append("KNOWN COMPETITORS IN THIS SPACE:")
+        for comp in known_match["competitors"]:
+            lines.append(
+                f"  - {comp['name']}: {comp['price']} "
+                f"(weakness: {comp['weakness']}, users: {comp['users']})"
+            )
+        lines.append(f"  Market WTP floor: {known_match.get('wtp_floor', '?')}/mo")
+        lines.append(f"  Market WTP ceiling: {known_match.get('wtp_ceiling', '?')}/mo")
+        lines.append(f"  Market saturation: {known_match.get('saturation', '?')}")
+        lines.append("")
+
     for kw, report in reports.items():
+        if kw == "known_database":
+            continue  # already shown above
         d = report.details
         lines.append(
             f"  '{kw}': {report.tier_data['icon']} {report.tier_data['label']} "
@@ -212,6 +369,8 @@ def competition_prompt_section(reports: Dict[str, CompetitionReport]) -> str:
     lines.append("IMPORTANT: Factor competition into your recommendations.")
     lines.append("Blue Ocean = build fast. Saturated = need unique angle or avoid.")
     lines.append("High switch demand + many competitors = people hate existing tools = OPPORTUNITY.")
+    if known_match:
+        lines.append(f"Use competitor pricing ({known_match.get('wtp_floor', '?')}-{known_match.get('wtp_ceiling', '?')}/mo) as WTP evidence.")
 
     return "\n".join(lines)
 

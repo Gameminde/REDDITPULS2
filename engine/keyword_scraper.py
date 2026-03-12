@@ -138,15 +138,107 @@ def _parse_post(child: dict, keywords: list) -> dict:
     }
 
 
+def _keyword_matches(keyword: str, text_lower: str) -> bool:
+    """
+    Smart keyword matching: exact phrase match for short keywords,
+    partial word-level match for longer ones.
+    """
+    kw_lower = keyword.lower()
+    # Exact phrase match always wins
+    if kw_lower in text_lower:
+        return True
+    # For multi-word keywords, check if enough individual words match
+    words = kw_lower.split()
+    if len(words) <= 1:
+        return False  # single word didn't match exactly
+    # For 2-3 word phrases, require at least 2 words to appear
+    matching_words = sum(1 for w in words if len(w) > 2 and w in text_lower)
+    return matching_words >= min(2, len(words))
+
+
 # ═══════════════════════════════════════════════════════
-# RELEVANT BUSINESS SUBREDDITS TO SEARCH
+# TOPIC-BASED SUBREDDIT MAPPING
 # ═══════════════════════════════════════════════════════
-BUSINESS_SUBREDDITS = [
+
+# Core business subs (always searched)
+CORE_SUBREDDITS = [
     "SaaS", "Entrepreneur", "smallbusiness", "startups",
-    "webdev", "marketing", "ecommerce", "freelance",
-    "shopify", "digitalnomad", "Accounting", "ContentCreators",
     "sideproject", "microsaas", "indiehackers",
 ]
+
+# Topic-specific subs — matched by keyword triggers
+TOPIC_SUBREDDITS = {
+    "developer": {
+        "triggers": ["code", "coding", "developer", "programming", "api", "sdk",
+                     "debug", "deploy", "devops", "git", "github", "CI/CD",
+                     "pull request", "PR review", "code review", "testing",
+                     "backend", "frontend", "fullstack", "software"],
+        "subs": ["programming", "webdev", "learnprogramming", "cscareerquestions",
+                 "devops", "AskProgramming", "ExperiencedDevs", "codereview",
+                 "softwaredevelopment", "Frontend", "node", "reactjs", "Python",
+                 "golang", "rust", "java", "csharp"],
+    },
+    "design": {
+        "triggers": ["design", "UI", "UX", "figma", "prototype", "wireframe",
+                     "branding", "logo", "graphic"],
+        "subs": ["web_design", "UI_Design", "userexperience", "graphic_design",
+                 "design_critiques"],
+    },
+    "data_ai": {
+        "triggers": ["AI", "machine learning", "data", "analytics", "automation",
+                     "chatbot", "NLP", "LLM", "GPT", "model", "prediction"],
+        "subs": ["MachineLearning", "artificial", "datascience", "LanguageTechnology",
+                 "LocalLLaMA", "ChatGPT", "OpenAI"],
+    },
+    "finance": {
+        "triggers": ["invoice", "billing", "payment", "accounting", "fintech",
+                     "bookkeeping", "payroll", "tax", "expense"],
+        "subs": ["Accounting", "personalfinance", "FinancialPlanning", "fintech"],
+    },
+    "marketing": {
+        "triggers": ["marketing", "SEO", "content", "social media", "ads",
+                     "growth", "newsletter", "email", "copywriting"],
+        "subs": ["marketing", "SEO", "socialmedia", "content_marketing",
+                 "digital_marketing", "PPC", "emailmarketing"],
+    },
+    "productivity": {
+        "triggers": ["productivity", "workflow", "automation", "tool", "app",
+                     "project management", "task", "notion", "calendar"],
+        "subs": ["productivity", "selfhosted", "Notion", "IFTTT",
+                 "automation"],
+    },
+    "ecommerce": {
+        "triggers": ["ecommerce", "shopify", "store", "product", "inventory",
+                     "dropshipping", "marketplace", "selling"],
+        "subs": ["ecommerce", "shopify", "FulfillmentByAmazon",
+                 "Etsy", "dropship"],
+    },
+    "freelance": {
+        "triggers": ["freelance", "client", "agency", "contract", "remote work",
+                     "consulting", "upwork"],
+        "subs": ["freelance", "digitalnomad", "WorkOnline",
+                 "freelanceWriters"],
+    },
+}
+
+
+def _select_subreddits(keywords: list) -> list:
+    """Pick subreddits based on which topic triggers match the keywords."""
+    selected = set(CORE_SUBREDDITS)
+    kw_text = " ".join(kw.lower() for kw in keywords)
+
+    for topic, data in TOPIC_SUBREDDITS.items():
+        for trigger in data["triggers"]:
+            if trigger.lower() in kw_text:
+                selected.update(data["subs"])
+                break  # one trigger match is enough
+
+    # Always add the general subs
+    selected.update(["webdev", "freelance", "ecommerce", "marketing"])
+
+    result = list(selected)
+    print(f"    [Subreddits] Selected {len(result)} subs for keywords: {keywords[:5]}")
+    return result
 
 
 def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
@@ -198,8 +290,9 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
         time.sleep(2.5)
 
     # ── Phase 2: Async subreddit-specific searches ──
+    selected_subs = _select_subreddits(keywords)
     if on_progress:
-        on_progress(len(all_posts), "Async scanning subreddits...")
+        on_progress(len(all_posts), f"Async scanning {len(selected_subs)} subreddits...")
 
     try:
         import asyncio
@@ -210,18 +303,17 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
 
         if AIOHTTP_AVAILABLE:
             async_posts = asyncio.run(scrape_all_async(
-                subreddits=BUSINESS_SUBREDDITS,
+                subreddits=selected_subs,
                 sorts=["new"],
                 max_concurrent=6,
             ))
             for post_data in async_posts:
-                # Re-check keyword match
+                # Word-level partial matching — any keyword word in post text
                 text_lower = post_data.get("full_text", "").lower()
-                matched_kw = [kw for kw in keywords if kw.lower() in text_lower]
+                matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
                 if matched_kw and post_data.get("external_id") not in seen_ids:
                     seen_ids.add(post_data["external_id"])
                     post_data["matched_keywords"] = matched_kw
-                    # Adapt fields to keyword_scraper format
                     post_data["id"] = post_data.get("external_id", "")
                     post_data["selftext"] = post_data.get("body", "")
                     post_data["permalink"] = post_data.get("permalink", "")
@@ -234,7 +326,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
     except Exception as e:
         # Fallback to sequential
         print(f"    [!] Async unavailable ({e}), using sequential scan")
-        for sub in BUSINESS_SUBREDDITS:
+        for sub in selected_subs:
             if time.time() - start_time > max_seconds:
                 break
             if on_progress:
@@ -258,7 +350,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
     try:
         from pullpush_scraper import scrape_historical
         query = " ".join(keywords[:3])  # Top 3 keywords for historical search
-        for sub in BUSINESS_SUBREDDITS[:8]:  # Top 8 subs for historical depth
+        for sub in selected_subs[:12]:  # Top 12 selected subs for historical depth
             if time.time() - start_time > max_seconds:
                 break
             pp_posts = scrape_historical(sub, keyword=query, days_back=90, size=50)
@@ -267,7 +359,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 eid = post_data.get("external_id", "")
                 if eid and eid not in seen_ids:
                     text_lower = post_data.get("full_text", "").lower()
-                    matched_kw = [kw for kw in keywords if kw.lower() in text_lower]
+                    matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
                     if matched_kw:
                         seen_ids.add(eid)
                         post_data["id"] = eid
