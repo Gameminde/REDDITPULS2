@@ -1,0 +1,18 @@
+# RedditPulse
+node_modules/
+.env*
+.env.local
+__pycache__/
+*.pyc
+output/
+.next/
+dist/
+*.log
+
+# SQL schemas moved to sql/ dir
+sql/
+
+# IDE
+.vscode/
+.idea/
+*.swp
