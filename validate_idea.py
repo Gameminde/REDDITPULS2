@@ -715,42 +715,46 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
     source_counts = source_counts or {}
     intel = intel or {}
 
-    # ── Smart Sampling: top quality + random spread + outliers ──
-    def _smart_sample(all_posts: list, budget: int = 50) -> list:
+    # ── Smart Sampling: top quality + random spread + outliers + recent ──
+    def _smart_sample(all_posts: list, budget: int = 100) -> list:
         """
-        Avoid bias from the naive posts[:50] slice which over-represents
-        the dominant platform (HN had 518/548 posts in the first live run).
-        Strategy:
-          - Top 30 by score       → best signal/engagement
-          - 15 random from rest   → prevents echo chamber
-          - 5 outliers            → low-score but high-comment (hidden pain points)
+        Budget raised to 100 (was 50) — better coverage with same AI cost.
+        Strategy (100 total):
+          - Top 40 by score       → highest engagement / best signal
+          - 10 most recent        → fresh market pulse
+          - 35 random from rest   → prevents echo chamber bias
+          - 15 outliers           → low-score but high-comment (hidden pain)
         """
         import random as _random
         if len(all_posts) <= budget:
             return all_posts
 
-        # Bucket 1: top 30 by score
+        # Bucket 1: top 40 by score
         sorted_by_score = sorted(all_posts, key=lambda p: p.get("score", 0), reverse=True)
-        top_n = min(30, budget // 2)
+        top_n = min(40, budget * 4 // 10)
         top_picks = sorted_by_score[:top_n]
         top_ids = {p.get("id", "") for p in top_picks}
 
-        # Bucket 2: remaining pool (deduped)
+        # Bucket 2: 10 most recent (by created_utc or date)
         remaining = [p for p in all_posts if p.get("id", "") not in top_ids]
+        sorted_by_date = sorted(remaining, key=lambda p: p.get("created_utc", p.get("created_at", 0)), reverse=True)
+        recent_picks = sorted_by_date[:10]
+        recent_ids = {p.get("id", "") for p in recent_picks}
 
         # Bucket 3: outliers — low score, high comments (controversy/pain)
-        sorted_by_comments = sorted(remaining, key=lambda p: p.get("num_comments", 0), reverse=True)
-        outlier_candidates = [p for p in sorted_by_comments[:30] if p.get("score", 0) < 20]
-        outlier_picks = outlier_candidates[:5]
+        remaining2 = [p for p in remaining if p.get("id", "") not in recent_ids]
+        sorted_by_comments = sorted(remaining2, key=lambda p: p.get("num_comments", 0), reverse=True)
+        outlier_candidates = [p for p in sorted_by_comments[:40] if p.get("score", 0) < 20]
+        outlier_picks = outlier_candidates[:15]
         outlier_ids = {p.get("id", "") for p in outlier_picks}
 
         # Bucket 4: random from what's left
-        random_pool = [p for p in remaining if p.get("id", "") not in outlier_ids]
-        random_budget = budget - top_n - len(outlier_picks)
+        random_pool = [p for p in remaining2 if p.get("id", "") not in outlier_ids]
+        random_budget = budget - top_n - len(recent_picks) - len(outlier_picks)
         random_picks = _random.sample(random_pool, min(random_budget, len(random_pool)))
 
-        sampled = top_picks + random_picks + outlier_picks
-        print(f"  [Smart Sample] {len(sampled)} posts: {top_n} top-scored + {len(random_picks)} random + {len(outlier_picks)} outliers (from {len(all_posts)} total)")
+        sampled = top_picks + recent_picks + random_picks + outlier_picks
+        print(f"  [Smart Sample] {len(sampled)} posts: {top_n} top + {len(recent_picks)} recent + {len(random_picks)} random + {len(outlier_picks)} outliers (from {len(all_posts)} total)")
         return sampled
 
     # ── Pre-filter: remove noise posts before sampling ──
@@ -783,7 +787,8 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
                         len(p.get("matched_keywords", p.get("matched_phrases", []))) >= MIN_KW_HITS] or posts
         print(f"  [Filter] Fallback: {len(pre_filtered)} posts after score+body-keyword filter", flush=True)
 
-    sampled_posts = _smart_sample(pre_filtered, budget=50)
+    posts_filtered_count = len(pre_filtered)  # for pipeline UI display
+    sampled_posts = _smart_sample(pre_filtered, budget=100)
     post_summaries = []
     for p in sampled_posts:
         summary = {
@@ -799,6 +804,112 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
     platforms_used = len([k for k, v in source_counts.items() if v > 0])
     source_summary = ", ".join([f"{k}: {v} posts" for k, v in source_counts.items() if v > 0])
 
+    # ── Batch summarization: run ALL filtered posts through AI in parallel batches ──
+    # This replaces the naive approach of only telling the AI about 100 posts.
+    # Every filtered post contributes to the verdict — coverage goes to 100%.
+    def _batch_summarize_all(all_posts: list, keywords: list) -> dict:
+        """
+        Splits all_posts into batches of 50, runs each batch through the AI in
+        parallel threads, and merges the results into a single signal block
+        that replaces posts_block in Pass 1.
+        Falls back to sampled posts_block if all batches fail.
+        """
+        import concurrent.futures as _cf
+
+        BATCH_SIZE = 50
+        batches = [all_posts[i:i + BATCH_SIZE] for i in range(0, len(all_posts), BATCH_SIZE)]
+        kw_str = ", ".join(keywords[:10])
+        print(f"  [BatchSummarize] {len(all_posts)} posts → {len(batches)} batches of ≤{BATCH_SIZE}", flush=True)
+
+        BATCH_SYSTEM = "You are a market signal extractor. Return ONLY valid compact JSON."
+
+        def _run_batch(batch_posts, batch_idx):
+            lines = []
+            for p in batch_posts:
+                title = (p.get("title", "") or "")[:150]
+                snippet = (p.get("selftext", "") or p.get("text", "") or "")[:200]
+                score = p.get("score", 0)
+                lines.append(f"[{score}pts] {title}\n{snippet}")
+            posts_text = "\n---\n".join(lines)
+            prompt = f"""Idea keywords: {kw_str}
+
+Analyze these {len(batch_posts)} posts for startup market signals.
+Return ONLY this JSON (no markdown, no explanation):
+{{"pain_quotes":["exact quote 1","exact quote 2"],"wtp_signals":["signal or null"],"competitor_mentions":["name if explicitly mentioned"],"key_insight":"one specific sentence"}}
+
+Posts:
+{posts_text}"""
+            try:
+                raw = brain.single_call(prompt, BATCH_SYSTEM)
+                data = extract_json(raw)
+                print(f"  [Batch {batch_idx+1}/{len(batches)}] ✓ {len(batch_posts)} posts", flush=True)
+                return data
+            except Exception as ex:
+                print(f"  [Batch {batch_idx+1}/{len(batches)}] ✗ {ex}", flush=True)
+                return None
+
+        # Run all batches in parallel threads
+        with _cf.ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(_run_batch, batch, i): i for i, batch in enumerate(batches)}
+            batch_results = []
+            for future in _cf.as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    batch_results.append(result)
+
+        if not batch_results:
+            print("  [BatchSummarize] All batches failed — falling back to sampled block", flush=True)
+            return None  # caller will use sampled posts_block instead
+
+        # Merge all batch signals
+        all_pain_quotes, all_wtp, all_competitors, all_insights = [], [], [], []
+        for r in batch_results:
+            all_pain_quotes.extend(r.get("pain_quotes", []))
+            all_wtp.extend([w for w in r.get("wtp_signals", []) if w and w.lower() != "null"])
+            all_competitors.extend(r.get("competitor_mentions", []))
+            if r.get("key_insight"):
+                all_insights.append(r["key_insight"])
+
+        merged = {
+            "posts_analyzed": len(all_posts),
+            "batches_succeeded": len(batch_results),
+            "batches_total": len(batches),
+            "coverage": f"{len(all_posts)} posts ({len(batch_results)}/{len(batches)} batches)",
+            "pain_quotes": list(dict.fromkeys(all_pain_quotes))[:25],  # dedupe, keep order
+            "wtp_signals": list(dict.fromkeys(all_wtp))[:15],
+            "competitor_mentions": list(dict.fromkeys(all_competitors))[:10],
+            "key_insights": [i for i in all_insights if i][:20],
+        }
+        print(f"  [BatchSummarize] Merged: {len(merged['pain_quotes'])} pain quotes, {len(merged['wtp_signals'])} WTP signals, {len(merged['competitor_mentions'])} competitors", flush=True)
+        return merged
+
+    # Run batch analysis on ALL filtered posts
+    update_validation(validation_id, {"status": "synthesizing (0/3 batch scan)"})
+    batch_signals = _batch_summarize_all(pre_filtered, decomposition.get("keywords", []))
+
+    # Build posts_block — prefer rich batch signals, fall back to sampled summaries
+    if batch_signals:
+        posts_block = f"""MARKET SIGNAL SCAN ({batch_signals['coverage']}):
+
+PAIN QUOTES (exact from posts):
+{json.dumps(batch_signals['pain_quotes'], indent=2)}
+
+WILLINGNESS TO PAY SIGNALS:
+{json.dumps(batch_signals['wtp_signals'], indent=2)}
+
+COMPETITOR MENTIONS (from post discussions):
+{json.dumps(batch_signals['competitor_mentions'], indent=2)}
+
+KEY INSIGHTS (one per batch):
+{json.dumps(batch_signals['key_insights'], indent=2)}
+
+TOP {len(post_summaries)} REPRESENTATIVE POSTS (for title/score reference):
+{json.dumps(post_summaries, indent=2)}"""
+        posts_analyzed_count = len(pre_filtered)
+    else:
+        posts_block = f"TOP {len(post_summaries)} POSTS:\n{json.dumps(post_summaries, indent=2)}"
+        posts_analyzed_count = len(sampled_posts)
+
     # ── Shared context block ──
     context_block = f"""IDEA: {idea_text}
 
@@ -807,14 +918,12 @@ PAIN HYPOTHESIS: {decomposition['pain_hypothesis']}
 COMPETITORS: {', '.join(decomposition['competitors'])}
 KEYWORDS: {', '.join(decomposition['keywords'])}
 
-DATA: {len(sampled_posts)} posts shown below (sampled from {len(posts)} total) across {platforms_used} platforms ({source_summary})
+DATA: {posts_filtered_count} filtered posts (from {len(posts)} total scraped) across {platforms_used} platforms ({source_summary})
 """
     if intel.get("trend_prompt"):
         context_block += intel["trend_prompt"] + "\n"
     if intel.get("comp_prompt"):
         context_block += intel["comp_prompt"] + "\n"
-
-    posts_block = f"TOP {len(post_summaries)} POSTS:\n{json.dumps(post_summaries, indent=2)}"
 
     # ═══════════════════════════════════════
     # PASS 1: MARKET ANALYSIS
@@ -1116,6 +1225,10 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["trends_data"] = intel.get("trends")
     report["competition_data"] = intel.get("competition")
     report["synthesis_method"] = "multi-pass-3"
+    # Pipeline counts for UI
+    report["posts_scraped"] = len(posts)
+    report["posts_filtered"] = posts_filtered_count
+    report["posts_analyzed"] = posts_analyzed_count
 
     # ── DATA QUALITY METADATA (new) ──
     report["data_quality"] = {
@@ -1160,8 +1273,9 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     try:
         url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
         r = requests.patch(url, json={
-            "posts_analyzed": len(sampled_posts),
+            "posts_analyzed": posts_analyzed_count,
             "posts_found": len(posts),
+            "posts_filtered": posts_filtered_count,
             "verdict_source": verdict_source,
         }, headers=_supabase_headers(), timeout=10)
         if r.status_code >= 400:
