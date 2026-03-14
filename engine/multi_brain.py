@@ -86,7 +86,31 @@ def call_anthropic(prompt, system_prompt, api_key, model="claude-opus-4.6"):
     return r.json()["content"][0]["text"]
 
 
-def call_openai(prompt, system_prompt, api_key, model="gpt-5.4"):
+def _extract_content(data: dict) -> str:
+    """Safely extract text from any OpenAI-compatible response format.
+
+    Handles:
+    1. Standard: data["choices"][0]["message"]["content"]  (OpenAI/Groq/etc)
+    2. Direct:   data["content"]                           (some OpenRouter models)
+    3. Nested:   data["choices"][0]["text"]                (completion-style)
+    """
+    if "choices" in data and data["choices"]:
+        choice = data["choices"][0]
+        if "message" in choice:
+            return choice["message"].get("content") or choice["message"].get("text", "")
+        if "text" in choice:
+            return choice["text"]
+    if "content" in data:
+        # Some providers (OpenRouter w/ certain models) return top-level content
+        c = data["content"]
+        if isinstance(c, list) and c:
+            return c[0].get("text", "")  # Anthropic-style nested
+        if isinstance(c, str):
+            return c
+    raise ValueError(f"Unexpected response format — keys: {list(data.keys())}")
+
+
+def call_openai(prompt, system_prompt, api_key, model="gpt-4o"):
     url = "https://api.openai.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -100,7 +124,7 @@ def call_openai(prompt, system_prompt, api_key, model="gpt-5.4"):
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
         raise Exception(f"OpenAI {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _extract_content(r.json())
 
 
 def call_groq(prompt, system_prompt, api_key, model="meta-llama/llama-4-scout-17b-16e-instruct"):
@@ -117,7 +141,7 @@ def call_groq(prompt, system_prompt, api_key, model="meta-llama/llama-4-scout-17
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
         raise Exception(f"Groq {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _extract_content(r.json())
 
 
 def call_grok(prompt, system_prompt, api_key, model="grok-4.1"):
@@ -134,7 +158,7 @@ def call_grok(prompt, system_prompt, api_key, model="grok-4.1"):
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
         raise Exception(f"Grok {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _extract_content(r.json())
 
 
 def call_deepseek(prompt, system_prompt, api_key, model="deepseek-v4"):
@@ -158,7 +182,7 @@ def call_deepseek(prompt, system_prompt, api_key, model="deepseek-v4"):
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
         raise Exception(f"DeepSeek {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _extract_content(r.json())
 
 
 def call_minimax(prompt, system_prompt, api_key, model="minimax-01"):
@@ -215,7 +239,98 @@ def call_openrouter(prompt, system_prompt, api_key, model="anthropic/claude-3.5-
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
         raise Exception(f"OpenRouter {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
+    return _extract_content(r.json())
+
+
+def call_together(prompt, system_prompt, api_key, model="meta-llama/Llama-3-70b-chat-hf"):
+    """Together AI — OpenAI-compatible endpoint, huge model catalog."""
+    url = "https://api.together.xyz/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3, "max_tokens": 16384,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise Exception(f"Together AI {r.status_code}: {r.text[:300]}")
+    return _extract_content(r.json())
+
+
+def call_nvidia(prompt, system_prompt, api_key, model="meta/llama-3.1-70b-instruct"):
+    """NVIDIA NIM — OpenAI-compatible. Base URL: integrate.api.nvidia.com/v1"""
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3, "max_tokens": 16384,
+        "stream": False,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise Exception(f"NVIDIA NIM {r.status_code}: {r.text[:300]}")
+    return _extract_content(r.json())
+
+
+def call_fireworks(prompt, system_prompt, api_key, model="accounts/fireworks/models/llama-v3p1-70b-instruct"):
+    """Fireworks AI — OpenAI-compatible."""
+    url = "https://api.fireworks.ai/inference/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3, "max_tokens": 16384,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise Exception(f"Fireworks {r.status_code}: {r.text[:300]}")
+    return _extract_content(r.json())
+
+
+def call_mistral(prompt, system_prompt, api_key, model="mistral-large-latest"):
+    """Mistral AI — native API format."""
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3, "max_tokens": 16384,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise Exception(f"Mistral {r.status_code}: {r.text[:300]}")
+    return _extract_content(r.json())
+
+
+def call_cerebras(prompt, system_prompt, api_key, model="llama3.1-70b"):
+    """Cerebras — OpenAI-compatible, ultra-fast inference."""
+    url = "https://api.cerebras.ai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3, "max_tokens": 8192,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise Exception(f"Cerebras {r.status_code}: {r.text[:300]}")
+    return _extract_content(r.json())
 
 
 # ── Model name normalization ── 
@@ -236,11 +351,34 @@ MODEL_ALIASES = {
     # OpenAI aliases
     "gpt-5.2": "gpt-4o",
     "gpt-5": "gpt-4o",
+    "gpt-5.4": "gpt-4o",
+    "gpt-5.3-codex": "gpt-4o",
     # Anthropic aliases
-    "claude-opus-4.6": "claude-sonnet-4-20250514",
+    "claude-opus-4.6": "claude-3-5-sonnet-20241022",
+    "claude-sonnet-4.6": "claude-3-5-sonnet-20241022",
+    "claude-haiku-4.5": "claude-3-5-haiku-20241022",
     # DeepSeek aliases
     "deepseek-v4": "deepseek-chat",
     "deepseek-v3.2-speciale": "deepseek-chat",
+    # OpenRouter — fix broken Qwen model ID
+    "qwen/qwen3-coder-480b-a35b": "qwen/qwen2.5-72b-instruct",
+    # Together AI aliases
+    "llama-3-70b": "meta-llama/Llama-3-70b-chat-hf",
+    "llama-3.1-405b": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+    "qwen2.5-72b": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+    # NVIDIA NIM aliases
+    "llama-3.1-70b-nvidia": "meta/llama-3.1-70b-instruct",
+    "nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",
+    # Mistral aliases
+    "mistral-large": "mistral-large-latest",
+    "mixtral-8x22b": "open-mixtral-8x22b",
+    "mistral-small": "mistral-small-latest",
+    # Cerebras aliases
+    "llama3.1-70b-cerebras": "llama3.1-70b",
+    "llama3.3-70b-cerebras": "llama-3.3-70b",
+    # Fireworks AI aliases
+    "llama-3.1-70b-fireworks": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+    "deepseek-r1-fireworks": "accounts/fireworks/models/deepseek-r1",
 }
 
 
@@ -260,6 +398,12 @@ PROVIDER_FUNCTIONS = {
     "minimax": call_minimax,
     "ollama": call_ollama,
     "openrouter": call_openrouter,
+    # New providers (2025)
+    "together": call_together,
+    "nvidia": call_nvidia,
+    "fireworks": call_fireworks,
+    "mistral": call_mistral,
+    "cerebras": call_cerebras,
 }
 
 
@@ -361,6 +505,7 @@ def build_data_context(posts, metadata=None):
 
 def call_provider(config, prompt, system_prompt):
     """Call a specific provider using its config. Returns (provider_name, model, response_text)."""
+    import time as _time
     provider = config["provider"]
     api_key = config["api_key"]
     model = resolve_model(config["selected_model"])  # Auto-correct model name
@@ -374,7 +519,11 @@ def call_provider(config, prompt, system_prompt):
     if provider == "ollama":
         kwargs["endpoint_url"] = endpoint_url
 
+    _t0 = _time.time()
+    print(f"  [Brain] >>> CALLING {provider}/{model} at {_time.strftime('%H:%M:%S')} ...", flush=True)
     text = fn(**kwargs)
+    _elapsed = _time.time() - _t0
+    print(f"  [Brain] <<< {provider}/{model} responded in {_elapsed:.1f}s ({len(text)} chars)", flush=True)
     return provider, model, text
 
 
@@ -419,13 +568,26 @@ class AIBrain:
         for c in self.configs:
             print(f"    [{c['priority']}] {c['provider']}/{c['selected_model']} (id={c['id'][:8]})")
 
-    def single_call(self, prompt, system_prompt):
-        """Round-robin across all models — distributes load evenly."""
-        idx = self._call_counter % len(self.configs)
+    def single_call(self, prompt, system_prompt, pinned_index=None):
+        """
+        Fix H: Always use the SAME model for sequential passes within a validation run.
+        Previously round-robined across models — meaning Pass 1, Pass 2, Pass 3 each went
+        to a DIFFERENT model, causing error cascade where each pass reasoned on a different
+        model's output of a digest of raw data.
+
+        Default: pin to self.configs[0] (highest priority model by Supabase ordering).
+        Pass pinned_index explicitly to override (e.g. for retry on different model).
+        """
+        if pinned_index is None:
+            # Always use highest-priority config for sequential reasoning passes
+            config = self.configs[0]
+            idx = 0
+        else:
+            idx = pinned_index % len(self.configs)
+            config = self.configs[idx]
         self._call_counter += 1
-        config = self.configs[idx]
         provider, model, text = call_provider(config, prompt, system_prompt)
-        print(f"  [Brain] Single call #{self._call_counter} → {provider}/{model} (agent {idx+1}/{len(self.configs)}, {len(text)} chars)")
+        print(f"  [Brain] Single call #{self._call_counter} → {provider}/{model} (pinned agent {idx+1}/{len(self.configs)}, {len(text)} chars)")
         return text
 
     def debate(self, prompt, system_prompt, on_progress=None, metadata=None):
@@ -603,13 +765,21 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
         verdicts = [a["result"].get("verdict", "UNKNOWN") for a in analyses]
         total_models = len(analyses)
 
-        # ── Calculate per-model weights based on unknowns ──
+        # ── Fix I: evidence-rewarding weight formula ──
+        # OLD (broken): weight = 1 / (1 + unknowns * 0.2)
+        # Problem: models that honestly listed 5 unknowns got weight=0.5 vs 1.0 for
+        # a model that listed none — systematic reward for superficiality.
+        #
+        # NEW: weight based on evidence_count — models that cite more evidence from
+        # the actual posts get more weight. Models that admit unknowns are NOT penalized.
+        # Both evidence_count and unknowns are positive signals for epistemic honesty.
         weighted_entries = []
         for a in analyses:
             unknowns_count = len(a["result"].get("top_unknowns", []))
+            evidence_count = len(a["result"].get("evidence", []))
             confidence = a["result"].get("confidence", 50)
-            # More unknowns = lower weight (inverse uncertainty)
-            weight = 1.0 / (1.0 + unknowns_count * 0.2)
+            # More evidence cited = higher weight. Min weight 0.5 to avoid full exclusion.
+            weight = max(0.5, 1.0 + (evidence_count * 0.1))
             weighted_entries.append({
                 "provider": a["provider"],
                 "model": a["model"],
@@ -618,6 +788,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                 "confidence": confidence,
                 "weight": weight,
                 "unknowns": unknowns_count,
+                "evidence_count": evidence_count,
                 "result": a["result"],
             })
 

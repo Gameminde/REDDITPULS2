@@ -121,6 +121,11 @@ def _parse_post(child: dict, keywords: list) -> dict:
     text_lower = full_text.lower()
     matched_kw = [kw for kw in keywords if kw.lower() in text_lower]
 
+    # Relevance gate: require ≥2 keyword matches so generic words ('review', 'code')
+    # don't pull in completely unrelated posts. Single-word match = noise.
+    if len(matched_kw) < 2:
+        return None
+
     return {
         "id": d.get("id", ""),
         "title": d.get("title", ""),

@@ -34,15 +34,18 @@ def _hn_request(url, params, max_retries=3):
     return None
 
 
-def search_hn(keyword, pages=3, hits_per_page=100):
+def search_hn(keyword, pages=3, hits_per_page=100, all_keywords=None):
     """
     Search Hacker News for a keyword across Ask HN and Show HN posts.
     Returns a list of normalized post dicts compatible with the Reddit pipeline.
+    all_keywords: full list of topic keywords — used to compute matched_keywords per post.
     """
     all_posts = []
     seen_ids = set()
+    all_keywords = all_keywords or [keyword]
 
     for tag in HN_TAGS:
+        tag_count = 0
         for page in range(pages):
             params = {
                 "query": keyword,
@@ -69,12 +72,17 @@ def search_hn(keyword, pages=3, hits_per_page=100):
                 # Clean HTML tags from story_text
                 import re
                 text_body = re.sub(r"<[^>]+>", " ", text_body).strip()
+                full_text = f"{title} {text_body}".strip()[:2500]
+                full_lower = full_text.lower()
+
+                # Compute which keywords from the full topic list appear in this post
+                matched_kw = [kw for kw in all_keywords if kw.lower() in full_lower]
 
                 post = {
                     "id": f"hn_{obj_id}",
                     "title": title,
                     "selftext": text_body[:2000],
-                    "full_text": f"{title} {text_body}".strip()[:2500],
+                    "full_text": full_text,
                     "score": hit.get("points") or 0,
                     "num_comments": hit.get("num_comments") or 0,
                     "upvote_ratio": 0.8,  # HN doesn't expose this
@@ -84,15 +92,19 @@ def search_hn(keyword, pages=3, hits_per_page=100):
                     "author": hit.get("author") or "[unknown]",
                     "url": hit.get("url") or "",
                     "source": "hackernews",
-                    "matched_phrases": [],
+                    "matched_keywords": matched_kw,  # populated so pre-filter works
+                    "matched_phrases": matched_kw,   # legacy compat
                 }
 
                 all_posts.append(post)
+                tag_count += 1
 
             if len(data.get("hits", [])) < hits_per_page:
                 break
 
             time.sleep(0.5)  # Be respectful to the API
+
+        print(f"    [HN] {tag}: {tag_count} posts for '{keyword}'", flush=True)
 
     return all_posts
 
@@ -161,24 +173,21 @@ def run_hn_scrape(keywords, max_pages=2):
     """
     Run HN scrape for a list of keywords.
     Returns deduplicated posts compatible with the Reddit pipeline.
+    keywords: full topic keyword list — passed to each search so matched_keywords is populated.
     """
     seen_ids = set()
     all_posts = []
 
     for kw in keywords:
-        posts = search_hn(kw, pages=max_pages)
+        posts = search_hn(kw, pages=max_pages, all_keywords=keywords)
+        before = len(all_posts)
         for p in posts:
             if p["id"] not in seen_ids:
                 seen_ids.add(p["id"])
                 all_posts.append(p)
+        print(f"    [HN] '{kw}': +{len(all_posts)-before} unique posts (total {len(all_posts)})", flush=True)
 
-        # Also get recent posts
-        recent = search_hn_recent(kw)
-        for p in recent:
-            if p["id"] not in seen_ids:
-                seen_ids.add(p["id"])
-                all_posts.append(p)
-
+    print(f"  [HN] Total unique posts scraped: {len(all_posts)}", flush=True)
     return all_posts
 
 

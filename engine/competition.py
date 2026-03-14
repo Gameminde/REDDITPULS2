@@ -275,7 +275,9 @@ class CompetitionReport:
 def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, CompetitionReport]:
     """
     Analyze competition for a list of keywords.
-    Matches KNOWN_COMPETITORS first, then augments with Google discovery.
+    Matches KNOWN_COMPETITORS first. If matched, returns immediately — skips
+    Google search entirely to avoid timeout-induced BLUE_OCEAN false positives.
+    Only falls through to Google if no known category matched.
     """
     results = {}
 
@@ -301,8 +303,13 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
         })
         results["known_database"] = report
         print(f"    [COMP] {report}")
+        # ── Short-circuit: known database is accurate, skip Google ──
+        # Google often times out and returns 0 products (BLUE_OCEAN), which directly
+        # contradicts our curated known competitor data and confuses the AI models.
+        print(f"    [COMP] Known category matched — skipping Google search to avoid timeout contamination")
+        return results
 
-    # Step 2: Google discovery for each keyword
+    # Step 2: Google discovery for each keyword (only when no known category matched)
     for kw in keywords:
         print(f"    [COMP] Checking competition for: '{kw}'...")
 

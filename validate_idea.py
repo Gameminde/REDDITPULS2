@@ -73,15 +73,27 @@ def _supabase_headers():
     }
 
 
-def update_validation(validation_id, updates):
-    """Update idea_validations row in Supabase."""
+def update_validation(validation_id, updates, retries=3):
+    """Update idea_validations row in Supabase. Retries on transient network errors.
+    
+    ECONNRESET mid-run was leaving status stuck at 'queued' in Supabase,
+    causing the frontend poller to always see phase=0 and show 'Starting'.
+    """
     url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
-    try:
-        r = requests.patch(url, json=updates, headers=_supabase_headers(), timeout=10)
-        if r.status_code >= 400:
-            print(f"  [!] Supabase update error: {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        print(f"  [!] Supabase update failed: {e}")
+    last_err = None
+    for attempt in range(retries):
+        try:
+            r = requests.patch(url, json=updates, headers=_supabase_headers(), timeout=15)
+            if r.status_code >= 400:
+                print(f"  [!] Supabase update error: {r.status_code} {r.text[:200]}")
+            return  # success
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                wait = 2 ** attempt  # 1s, 2s backoff
+                print(f"  [!] Supabase update failed (attempt {attempt+1}/{retries}), retrying in {wait}s: {e}")
+                time.sleep(wait)
+    print(f"  [!] Supabase update gave up after {retries} attempts: {last_err}")
 
 
 # ═══════════════════════════════════════════════════════
@@ -239,10 +251,18 @@ def phase2_scrape(keywords, validation_id):
             source_counts["producthunt"] = len(ph_posts)
             print(f"  [✓] ProductHunt: {len(ph_posts)} posts")
             if len(ph_posts) == 0:
-                platform_warnings.append({"platform": "producthunt", "issue": "0 posts returned"})
+                platform_warnings.append({
+                    "platform": "producthunt",
+                    "issue": "Limited to RSS fallback — GraphQL API requires auth (403). 0 posts returned. Data from Reddit+HN only."
+                })
+            elif len(ph_posts) <= 2:
+                platform_warnings.append({
+                    "platform": "producthunt",
+                    "issue": f"Only {len(ph_posts)} post(s) from RSS fallback — GraphQL requires auth. Coverage is minimal."
+                })
         except Exception as e:
             print(f"  [!] ProductHunt scrape failed: {e}")
-            platform_warnings.append({"platform": "producthunt", "issue": f"Scrape failed: {str(e)[:100]}"})
+            platform_warnings.append({"platform": "producthunt", "issue": f"Scrape error (infra): {str(e)[:100]}"})
     else:
         platform_warnings.append({"platform": "producthunt", "issue": "Scraper not available (ph_scraper module missing)"})
 
@@ -255,10 +275,13 @@ def phase2_scrape(keywords, validation_id):
             source_counts["indiehackers"] = len(ih_posts)
             print(f"  [✓] IndieHackers: {len(ih_posts)} posts")
             if len(ih_posts) == 0:
-                platform_warnings.append({"platform": "indiehackers", "issue": "0 posts returned"})
+                platform_warnings.append({
+                    "platform": "indiehackers",
+                    "issue": "Algolia API blocked (connection error on all retry attempts). 0 posts returned. Analysis based on Reddit+HN only."
+                })
         except Exception as e:
             print(f"  [!] IndieHackers scrape failed: {e}")
-            platform_warnings.append({"platform": "indiehackers", "issue": f"Scrape failed: {str(e)[:100]}"})
+            platform_warnings.append({"platform": "indiehackers", "issue": f"Scrape error (infra): {str(e)[:100]}"})
     else:
         platform_warnings.append({"platform": "indiehackers", "issue": "Scraper not available (ih_scraper module missing)"})
 
@@ -464,30 +487,51 @@ Return ONLY valid JSON:
 
 RULES:
 - Launch roadmap must have REAL costs (domain, hosting, tools), REAL timelines, REAL tasks.
-- Revenue projections must state assumptions. Use CONSERVATIVE estimates.
-- Risk matrix must include at least 1 technical risk, 1 market risk, 1 execution risk.
+- Revenue projections must state assumptions. NEVER use 'based on continued growth' or circular reasoning.
+  Each month's assumptions must cite a SPECIFIC comparable (e.g. 'similar to Grammarly's free-to-paid rate of 3%').
+  If no comparable exists, say 'conservative assumption — no comparable found'.
+  Use CONSERVATIVE estimates unless the data explicitly shows strong WTP.
+- Risk matrix RULES (CRITICAL):
+  * Each risk MUST name a specific competitor, technology, or real market condition — not a category.
+  * BAD: 'Market competition risk' | GOOD: 'GitHub Copilot has 1.3M users at $10/mo — direct price overlap'
+  * BAD: 'Technical debt' | GOOD: 'Real-time diff engine at scale: N+1 DB queries become critical at 1k concurrent users'
+  * FORBIDDEN phrases in risks: 'Market competition', 'Technical debt', 'User adoption', 'unique features', 'differentiate', 'repayment'.
+  * Must include: 1 risk naming a specific named competitor with market share/price data, 1 platform/infra risk with specific failure mode, 1 go-to-market risk citing a specific channel and why it may fail.
 - First 10 customers: name SPECIFIC subreddits, communities, exact outreach templates.
 - MVP features: max 4-5 features. Everything else is a cut feature.
 """
 
-VERDICT_SYSTEM = """You are a venture analyst delivering a final verdict on a startup idea. You've been given the full analysis (market data, strategy, action plan). Synthesize into a final decision.
+VERDICT_SYSTEM = """You are a venture analyst delivering a final verdict on a startup idea. You've been given the full analysis (market data, strategy, action plan, and scraped posts). Synthesize into a final decision.
 
 Return ONLY valid JSON:
 {
   "verdict": "BUILD IT" or "RISKY" or "DON'T BUILD",
   "confidence": 0-100,
   "executive_summary": "4-5 sentence summary. Include: post count, platforms analyzed, trend direction, competition level, key WTP signals, and your honest recommendation. Be direct and data-driven.",
+  "evidence": [
+    {"post_title": "Exact post title from the scraped data", "source": "reddit/hn/ph/ih", "score": 123, "what_it_proves": "Specific market signal this post reveals"},
+    {"post_title": "Another exact title", "source": "reddit/hn/ph/ih", "score": 456, "what_it_proves": "Another insight from this post"}
+  ],
+  "risk_factors": [
+    "Market risk: specific description with real data point",
+    "Technical risk: specific challenge with mitigation hint",
+    "Execution risk: specific bottleneck or dependency"
+  ],
   "top_posts": [
     {"title": "Most important post title", "source": "platform", "score": 123, "relevance": "Why this post matters for the decision"},
-    {"title": "Second post", "source": "platform", "score": 456, "relevance": "Why important"},
-    ... // Include AT LEAST 10 top posts, ideally 15-20. More is better.
+    {"title": "Second post", "source": "platform", "score": 456, "relevance": "Why important"}
+  ],
+  "suggestions": [
+    "Specific first action for the founder",
+    "Second actionable suggestion"
   ]
 }
 
-SCORING:
-- "BUILD IT" = strong signal (50+ posts, multi-platform, WTP mentions, growing trends, clear gaps)
-- "RISKY" = moderate signal (20-50 posts, few WTP, unclear differentiation, mixed trends)
-- "DON'T BUILD" = weak signal (<20 posts, no WTP, saturated, declining trends)
+RULES:
+- evidence: MINIMUM 10 posts. Quote EXACT titles from the posts you were given. NEVER invent titles.
+- risk_factors: MINIMUM 3 risks — at least one market risk, one technical risk, one execution risk.
+- top_posts: Pick the 10-20 most impactful posts from the data. More is better.
+- SCORING: "BUILD IT" = strong signal (50+ posts, multi-platform, WTP mentions, growing trends, clear gaps). "RISKY" = moderate signal (20-50 posts, few WTP, unclear differentiation, mixed trends). "DON'T BUILD" = weak signal (<20 posts, no WTP, saturated, declining trends).
 - Be BRUTALLY honest. The founder wants truth that makes money, not encouragement that wastes time.
 """
 
@@ -525,12 +569,31 @@ def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
         cap_reason = f"Only {total_posts} posts scraped (need 20+ for full confidence)"
         warnings.append(f"MODERATE DATA: {total_posts} posts found — below recommended minimum of 20")
 
-    # Platform coverage penalty
+    # Fix G: proportion-based platform balance (not just count)
+    # A run with 547 HN + 1 Reddit = "2 platforms" but is 94% from one source
+    total_scraped = sum(source_counts.values()) if source_counts else 0
+    max_platform_posts = max(source_counts.values()) if source_counts else 0
+    dominance = (max_platform_posts / total_scraped) if total_scraped > 0 else 1.0
+    dominant_platform = max(source_counts, key=source_counts.get) if source_counts else "unknown"
+
     if platforms_with_data <= 1:
         confidence_cap = min(confidence_cap, 55)
         warnings.append(f"SINGLE SOURCE: Data from only {platforms_with_data} platform — multi-platform validation required for high confidence")
         if "only 1 platform" not in cap_reason.lower():
             cap_reason += f"; only {platforms_with_data} platform used"
+    elif dominance > 0.85:
+        confidence_cap = min(confidence_cap, 55)
+        warnings.append(
+            f"PLATFORM IMBALANCE: {dominance*100:.0f}% of posts from {dominant_platform} — "
+            f"effectively single-source despite {platforms_with_data} platforms reporting"
+        )
+        if "platform imbalance" not in cap_reason.lower():
+            cap_reason += f"; {dominance*100:.0f}% from {dominant_platform} (platform imbalance)"
+    elif dominance > 0.70:
+        warnings.append(
+            f"PLATFORM SKEW: {dominance*100:.0f}% of posts from {dominant_platform} — "
+            f"results may be biased toward {dominant_platform} audience"
+        )
 
     # Log which platforms failed
     for pw in platform_warnings:
@@ -589,14 +652,22 @@ def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
         confidence_cap = min(confidence_cap, 60)
 
     # Contradiction: Revenue projections assume unrealistic conversion rates
-    # Check ALL months, not just month_12 — catch fantasy assumptions early
+    # Fix D: normalize revenue_projections schema first — AI may use year_1/month1/etc.
     projections = pass3.get("revenue_projections", {})
+    normalized_projections = {}
+    for key, val in projections.items():
+        if isinstance(val, dict) and any(m in key.lower() for m in ["month", "year", "quarter"]):
+            normalized_projections[key] = val
+
+    if not normalized_projections and projections:
+        print(f"  [Q] CONVERSION check: no month/year keys found in projections schema {list(projections.keys())} — check skipped")
+        warnings.append("CONVERSION check skipped — revenue_projections uses non-standard key schema")
+
     worst_conversion = {"rate": 0, "month": "", "users": 0, "paying": 0}
-    for month_key in ["month_1", "month_3", "month_6", "month_12"]:
-        month_data = projections.get(month_key, {})
+    for month_key, month_data in normalized_projections.items():
         if isinstance(month_data, dict):
-            users_str = str(month_data.get("users", "0")).replace(",", "")
-            paying_str = str(month_data.get("paying", "0")).replace(",", "")
+            users_str = str(month_data.get("users", month_data.get("total_users", "0"))).replace(",", "")
+            paying_str = str(month_data.get("paying", month_data.get("paying_users", month_data.get("customers", "0")))).replace(",", "")
             users_match = re.search(r'(\d+)', users_str)
             paying_match = re.search(r'(\d+)', paying_str)
             if users_match and paying_match:
@@ -644,9 +715,77 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
     source_counts = source_counts or {}
     intel = intel or {}
 
-    top_posts = posts[:50]
+    # ── Smart Sampling: top quality + random spread + outliers ──
+    def _smart_sample(all_posts: list, budget: int = 50) -> list:
+        """
+        Avoid bias from the naive posts[:50] slice which over-represents
+        the dominant platform (HN had 518/548 posts in the first live run).
+        Strategy:
+          - Top 30 by score       → best signal/engagement
+          - 15 random from rest   → prevents echo chamber
+          - 5 outliers            → low-score but high-comment (hidden pain points)
+        """
+        import random as _random
+        if len(all_posts) <= budget:
+            return all_posts
+
+        # Bucket 1: top 30 by score
+        sorted_by_score = sorted(all_posts, key=lambda p: p.get("score", 0), reverse=True)
+        top_n = min(30, budget // 2)
+        top_picks = sorted_by_score[:top_n]
+        top_ids = {p.get("id", "") for p in top_picks}
+
+        # Bucket 2: remaining pool (deduped)
+        remaining = [p for p in all_posts if p.get("id", "") not in top_ids]
+
+        # Bucket 3: outliers — low score, high comments (controversy/pain)
+        sorted_by_comments = sorted(remaining, key=lambda p: p.get("num_comments", 0), reverse=True)
+        outlier_candidates = [p for p in sorted_by_comments[:30] if p.get("score", 0) < 20]
+        outlier_picks = outlier_candidates[:5]
+        outlier_ids = {p.get("id", "") for p in outlier_picks}
+
+        # Bucket 4: random from what's left
+        random_pool = [p for p in remaining if p.get("id", "") not in outlier_ids]
+        random_budget = budget - top_n - len(outlier_picks)
+        random_picks = _random.sample(random_pool, min(random_budget, len(random_pool)))
+
+        sampled = top_picks + random_picks + outlier_picks
+        print(f"  [Smart Sample] {len(sampled)} posts: {top_n} top-scored + {len(random_picks)} random + {len(outlier_picks)} outliers (from {len(all_posts)} total)")
+        return sampled
+
+    # ── Pre-filter: remove noise posts before sampling ──
+    # Fix 3: Require at least 1 CORE keyword in the post TITLE specifically.
+    # This eliminates posts that match on body text only (burnout, loneliness posts
+    # that happen to mention 'developer' or 'code' but have zero idea relevance).
+    MIN_SCORE = 3
+    MIN_KW_HITS = 1
+    core_keywords = [kw.lower() for kw in decomposition.get("keywords", [])]
+
+    def _title_has_core_kw(p):
+        """Returns True if the post title contains at least one core keyword."""
+        title = (p.get("title", "") or "").lower()
+        return any(kw in title for kw in core_keywords)
+
+    def _relevance_score(p):
+        kw_hits = len(p.get("matched_keywords", p.get("matched_phrases", [])))
+        score = p.get("score", 0)
+        source = p.get("source", p.get("subreddit", "")).lower()
+        title_relevant = _title_has_core_kw(p)
+        # All platforms: must pass score threshold AND have a core keyword in title
+        # (HN posts previously bypassed this — they don't anymore)
+        return score >= MIN_SCORE and (title_relevant or kw_hits >= 2)
+
+    pre_filtered = [p for p in posts if _relevance_score(p)]
+    print(f"  [Filter] {len(pre_filtered)}/{len(posts)} posts passed score≥{MIN_SCORE} + title-keyword filter", flush=True)
+    if len(pre_filtered) < 10:
+        # Don't discard everything if filter is too aggressive — fall back to score+body-keyword only
+        pre_filtered = [p for p in posts if p.get("score", 0) >= MIN_SCORE and
+                        len(p.get("matched_keywords", p.get("matched_phrases", []))) >= MIN_KW_HITS] or posts
+        print(f"  [Filter] Fallback: {len(pre_filtered)} posts after score+body-keyword filter", flush=True)
+
+    sampled_posts = _smart_sample(pre_filtered, budget=50)
     post_summaries = []
-    for p in top_posts:
+    for p in sampled_posts:
         summary = {
             "title": p.get("title", "")[:200],
             "source": p.get("source", p.get("subreddit", "unknown")),
@@ -668,7 +807,7 @@ PAIN HYPOTHESIS: {decomposition['pain_hypothesis']}
 COMPETITORS: {', '.join(decomposition['competitors'])}
 KEYWORDS: {', '.join(decomposition['keywords'])}
 
-DATA: {len(posts)} posts from {platforms_used} platforms ({source_summary})
+DATA: {len(sampled_posts)} posts shown below (sampled from {len(posts)} total) across {platforms_used} platforms ({source_summary})
 """
     if intel.get("trend_prompt"):
         context_block += intel["trend_prompt"] + "\n"
@@ -716,10 +855,10 @@ MARKET ANALYSIS (from Pass 1):
 - WTP: {pass1.get('willingness_to_pay', 'N/A')}
 - Timing: {pass1.get('market_timing', 'N/A')}
 - TAM: {pass1.get('tam_estimate', 'N/A')}
+- Evidence posts cited: {len(pass1.get('evidence', []))}
 
-{posts_block}
-
-Design the full strategy: ICP, competition landscape, pricing, and monetization."""
+Design the full strategy: ICP, competition landscape, pricing, and monetization.
+(Do NOT re-analyze raw posts — reason from the market analysis above.)"""
         pass2_raw = brain.single_call(pass2_prompt, PASS2_SYSTEM)
         pass2 = extract_json(pass2_raw)
         competitors = pass2.get("competition_landscape", {}).get("direct_competitors", [])
@@ -742,32 +881,63 @@ Design the full strategy: ICP, competition landscape, pricing, and monetization.
     try:
         pricing_summary = json.dumps(pass2.get("pricing_strategy", {}))
         icp_summary = pass2.get("ideal_customer_profile", {}).get("primary_persona", "Unknown")
+        comp_landscape = pass2.get("competition_landscape", {})
+        direct_competitors = comp_landscape.get("direct_competitors", [])
+        # Pass competitor names + prices to Pass 3 so risks are idea-specific not generic
+        competitors_block = ""
+        if direct_competitors:
+            comp_lines = []
+            for c in direct_competitors[:5]:
+                name = c.get("name", c.get("company", "Unknown"))
+                price = c.get("price", c.get("pricing", c.get("price_point", "unknown price")))
+                weakness = c.get("weakness", c.get("gap", ""))
+                comp_lines.append(f"  - {name}: {price} | Gap: {weakness}")
+            competitors_block = "NAMED COMPETITORS (use these in risks — do not invent others):\n" + "\n".join(comp_lines)
+        else:
+            competitors_block = "NAMED COMPETITORS: None identified in Pass 2 — use market saturation data for risks."
+
         pass3_prompt = f"""{context_block}
 
 FROM MARKET ANALYSIS:
 - Pain validated: {pass1.get('pain_validated')}
 - Intensity: {pass1.get('pain_intensity', 'N/A')}
-- WTP: {pass1.get('willingness_to_pay', 'N/A')}
+- WTP signals: {pass1.get('willingness_to_pay', 'N/A')}
 - TAM: {pass1.get('tam_estimate', 'N/A')}
+- Evidence posts count: {len(pass1.get('evidence', []))}
 
 FROM STRATEGY:
 - ICP: {icp_summary}
 - Pricing: {pricing_summary[:500]}
-- Market saturation: {pass2.get('competition_landscape', {}).get('market_saturation', 'N/A')}
+- Market saturation: {comp_landscape.get('market_saturation', 'N/A')}
+- Total products found: {comp_landscape.get('total_products_found', 'N/A')}
+{competitors_block}
 
-Create the ACTION PLAN: launch roadmap, revenue projections, risk matrix, and first 10 customers strategy."""
-        pass3_raw = brain.single_call(pass3_prompt, PASS3_SYSTEM)
+Create the ACTION PLAN. CRITICAL: risks must name specific competitors above, not generic categories.
+Revenue assumptions must cite a specific comparable conversion rate or say 'no comparable found'.
+Create the launch roadmap, revenue projections, risk matrix, and first 10 customers strategy."""
+
+        # Pass 3 has a large JSON response — prefer second model (pinned_index=1) which avoids
+        # re-using the same Groq Llama-4 Scout (configs[0]) that hits 8192 token limit mid-JSON
+        # and truncates risk_matrix + first_10_customers. DeepSeek or other models handle this better.
+        pass3_raw = brain.single_call(
+            pass3_prompt,
+            PASS3_SYSTEM,
+            pinned_index=1,  # Use second configured model — avoids Groq 8K token truncation
+        )
         pass3 = extract_json(pass3_raw)
         roadmap_steps = len(pass3.get("launch_roadmap", []))
-        print(f"  [✓] Pass 3 done: {roadmap_steps} roadmap steps, MVP features={pass3.get('mvp_features', [])}")
+        risk_count = len(pass3.get("risk_matrix", []))
+        print(f"  [✓] Pass 3 done: {roadmap_steps} roadmap steps, {risk_count} risks, MVP features={pass3.get('mvp_features', [])}")
     except Exception as e:
-        print(f"  [!] Pass 3 failed: {e} — retrying with next model...")
+        print(f"  [!] Pass 3 failed: {e} — retrying with different model...")
         try:
-            pass3_raw = brain.single_call(pass3_prompt, PASS3_SYSTEM)
+            # Retry with third model (or wraps to first if only 2 configs)
+            pass3_raw = brain.single_call(pass3_prompt, PASS3_SYSTEM, pinned_index=2)
             pass3 = extract_json(pass3_raw)
             print(f"  [✓] Pass 3 retry succeeded")
         except Exception as e2:
             print(f"  [!] Pass 3 retry also failed: {e2}")
+            print(f"  [!] Raw Pass 3 output (first 500 chars): {pass3_raw[:500] if 'pass3_raw' in dir() else 'no output'}")
             pass3 = {"launch_roadmap": [], "revenue_projections": {}, "risk_matrix": [], "first_10_customers_strategy": {}}
 
     # ═══════════════════════════════════════
@@ -832,13 +1002,21 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
 
     try:
         verdict_report = brain.debate(verdict_prompt, VERDICT_SYSTEM, on_progress=on_progress)
+        verdict_report["_source"] = "debate_engine"  # Fix A: mark as real computed result
     except Exception as e:
-        print(f"  [!] Verdict debate failed: {e}")
+        # Fix A: log the full exception type + message so we can distinguish fallback from real verdict
+        import traceback as _tb
+        print(f"  [!!!] DEBATE ENGINE FAILED — {type(e).__name__}: {e}")
+        print(f"  [!!!] This means RISKY/50% is the FALLBACK DEFAULT, not a computed verdict!")
+        print(f"  [!!!] Traceback: {_tb.format_exc()[-1000:]}")
         verdict_report = {
             "verdict": "RISKY",
             "confidence": 50,
-            "executive_summary": f"Analysis completed but final verdict debate failed: {str(e)}",
+            "executive_summary": f"[FALLBACK] Verdict debate engine failed — this is NOT a real analysis result. Error: {type(e).__name__}: {str(e)}",
             "top_posts": [],
+            "_source": "fallback_exception",  # Fix A: mark as fake/fallback
+            "_error": str(e),
+            "_error_type": type(e).__name__,
         }
 
     # ═══════════════════════════════════════
@@ -858,6 +1036,15 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     if capped_confidence < 40 and report["verdict"] == "BUILD IT":
         report["verdict"] = "RISKY"
         print(f"  [Q] Verdict overridden: BUILD IT → RISKY (confidence too low after cap)")
+
+    # Fix E: symmetric override — DONT_BUILD at high confidence + validated pain is contradictory
+    if capped_confidence > 80 and report["verdict"] == "DONT_BUILD":
+        if report.get("market_analysis", {}).get("pain_validated"):
+            report["verdict"] = "RISKY"
+            print(f"  [Q] Verdict overridden: DONT_BUILD → RISKY (high confidence + validated pain contradicts negative verdict)")
+            data_quality["warnings"].append(
+                "DONT_BUILD overridden to RISKY — confidence >80% with validated pain contradicts a hard negative. Review evidence."
+            )
 
     report["executive_summary"] = verdict_report.get("executive_summary", "")
 
@@ -882,13 +1069,46 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     # Pass 3: Action Plan
     report["launch_roadmap"] = pass3.get("launch_roadmap", [])
     report["revenue_projections"] = pass3.get("revenue_projections", {})
-    report["risk_matrix"] = pass3.get("risk_matrix", [])
+
+    # Risk fallback: Pass 3 often truncates on Groq 8K limit — use debate risks if empty
+    pass3_risks = pass3.get("risk_matrix", [])
+    if not pass3_risks:
+        # Extract risks from debate output — they're always generated, even when Pass 3 fails
+        debate_risks = verdict_report.get("risks", [])
+        if debate_risks:
+            # Normalize to same structure as pass3 risk_matrix
+            pass3_risks = [
+                {"risk": r if isinstance(r, str) else r.get("risk", str(r)), "severity": "HIGH", "mitigation": ""}
+                for r in debate_risks
+            ]
+            print(f"  [Risks] Pass 3 empty — using {len(pass3_risks)} risks from debate output")
+    report["risk_matrix"] = pass3_risks
+
     report["first_10_customers_strategy"] = pass3.get("first_10_customers_strategy", {})
     report["mvp_features"] = pass3.get("mvp_features", [])
     report["cut_features"] = pass3.get("cut_features", [])
 
     # Verdict extras
     report["top_posts"] = verdict_report.get("top_posts", [])
+
+    # ── Fix 1: Write full debate metadata to report so frontend displays it ──
+    # debate() returns models_used, model_verdicts, debate_mode, consensus_type, dissent
+    # but validate_idea.py was only extracting top_posts — debate counter showed 0.
+    debate_models = verdict_report.get("models_used", [])
+    model_verdicts_raw = verdict_report.get("model_verdicts", {})
+    # model_verdicts from _weighted_merge is {model: {verdict, role}} — flatten to {model: verdict} for frontend
+    model_verdicts_flat = {
+        m: (v.get("verdict", v) if isinstance(v, dict) else str(v))
+        for m, v in model_verdicts_raw.items()
+    }
+    report["debate_mode"] = verdict_report.get("debate_mode", len(debate_models) > 1)
+    report["models_used"] = debate_models
+    report["model_verdicts"] = model_verdicts_flat
+    report["debate_rounds"] = 2 if verdict_report.get("debate_mode") else 1  # actual rounds used
+    report["consensus_type"] = verdict_report.get("consensus_type", "")
+    report["consensus_strength"] = verdict_report.get("consensus_strength", "")
+    report["debate_log"] = []  # flat debate — no per-round log yet; placeholder for future
+    report["final_verdict"] = verdict_report.get("verdict", report.get("verdict", ""))
 
     # Metadata
     report["data_sources"] = source_counts
@@ -915,14 +1135,39 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     verdict = report["verdict"]
     confidence = report["confidence"]
 
+    # Fix A: surface whether verdict came from real debate or fallback exception
+    verdict_source = verdict_report.get("_source", "unknown")
+    if verdict_source == "fallback_exception":
+        data_quality["warnings"].append(
+            f"DEBATE ENGINE FAILED — verdict '{verdict}' at {confidence}% is the FALLBACK DEFAULT, "
+            f"not a computed result. Error: {verdict_report.get('_error', 'unknown')}. Fix your AI model config."
+        )
+        report["data_quality"]["warnings"] = data_quality["warnings"]  # refresh in report
+        print(f"  [!!!] WARNING: verdict_source=fallback_exception — surfaced in data_quality.warnings")
+
+    # Step 1: Write ESSENTIAL fields first — status=done must always land
+    # so the frontend unblocks even if extra columns don't exist in schema yet.
     update_validation(validation_id, {
         "status": "done",
         "verdict": verdict,
         "confidence": confidence,
         "report": json.dumps(report),
-        "posts_analyzed": len(top_posts),
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
+    print(f"  [DB] status=done written to Supabase", flush=True)
+
+    # Step 2: Write extra columns separately — non-fatal if they don't exist
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
+        r = requests.patch(url, json={
+            "posts_analyzed": len(sampled_posts),
+            "posts_found": len(posts),
+            "verdict_source": verdict_source,
+        }, headers=_supabase_headers(), timeout=10)
+        if r.status_code >= 400:
+            print(f"  [!] Extra columns update skipped (schema may not have them): {r.status_code}", flush=True)
+    except Exception as ex:
+        print(f"  [!] Extra columns update failed (non-fatal): {ex}", flush=True)
 
     print(f"\n  ═══════════════════════════════")
     print(f"  VERDICT: {verdict} ({confidence}% confidence)")
