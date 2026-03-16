@@ -1,14 +1,15 @@
 """
-RedditPulse — Pain Stream (Retention Alerts Engine)
+RedditPulse - Pain Stream (Retention Alerts Engine)
 Creates alerts from validation keywords, checks new posts for matches,
 and stores them for the user's alerts feed.
 
-Solves churn: user validates once → gets alerted about new relevant posts → returns daily.
+Solves churn: user validates once -> gets alerted about new relevant posts
+-> returns daily.
 """
 
 import os
 import re
-import time
+import uuid
 import requests
 from datetime import datetime, timezone
 
@@ -25,9 +26,33 @@ def _headers():
     }
 
 
-# ═══════════════════════════════════════════════════════
-# ALERT CREATION
-# ═══════════════════════════════════════════════════════
+def _compile_keyword_pattern(keyword: str):
+    clean = str(keyword or "").strip().lower()
+    if len(clean) < 2:
+        return None
+    escaped = re.escape(clean).replace(r"\ ", r"\s+")
+    return re.compile(rf"(?<!\w){escaped}(?!\w)", re.IGNORECASE)
+
+
+def _match_keywords(text: str, keywords: list) -> list:
+    matched = []
+    for keyword in keywords:
+        pattern = _compile_keyword_pattern(keyword)
+        if pattern and pattern.search(text):
+            matched.append(keyword)
+    return matched
+
+
+def _post_identity(post: dict) -> str:
+    canonical_url = str(post.get("permalink") or post.get("url") or "").strip()
+    if canonical_url:
+        return canonical_url
+
+    source = str(post.get("source") or post.get("subreddit") or "unknown").strip().lower()
+    subreddit = str(post.get("subreddit") or "unknown").strip().lower()
+    title = str(post.get("title") or "").strip().lower()
+    return f"{source}:{subreddit}:{title[:240]}"
+
 
 def create_alert(user_id: str, validation_id: str, keywords: list,
                  subreddits: list = None, min_score: int = 10) -> dict:
@@ -38,13 +63,13 @@ def create_alert(user_id: str, validation_id: str, keywords: list,
     Returns the created alert row or empty dict on failure.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("  [PainStream] Supabase not configured — skipping alert creation")
+        print("  [PainStream] Supabase not configured - skipping alert creation")
         return {}
 
     payload = {
         "user_id": user_id,
         "validation_id": validation_id,
-        "keywords": keywords[:10],  # cap at 10 keywords
+        "keywords": keywords[:10],
         "subreddits": (subreddits or [])[:20],
         "min_score": min_score,
         "is_active": True,
@@ -60,13 +85,12 @@ def create_alert(user_id: str, validation_id: str, keywords: list,
         if resp.status_code in (200, 201):
             data = resp.json()
             alert = data[0] if isinstance(data, list) else data
-            print(f"  [PainStream] ✓ Alert created: {len(keywords)} keywords, min_score={min_score}")
+            print(f"  [PainStream] OK Alert created: {len(keywords)} keywords, min_score={min_score}")
             return alert
-        else:
-            print(f"  [PainStream] ✗ Alert creation failed: {resp.status_code} {resp.text[:200]}")
-            return {}
-    except Exception as e:
-        print(f"  [PainStream] ✗ Alert creation error: {e}")
+        print(f"  [PainStream] X Alert creation failed: {resp.status_code} {resp.text[:200]}")
+        return {}
+    except Exception as exc:
+        print(f"  [PainStream] X Alert creation error: {exc}")
         return {}
 
 
@@ -129,22 +153,17 @@ def mark_matches_seen(user_id: str, match_ids: list = None) -> bool:
         return False
 
 
-# ═══════════════════════════════════════════════════════
-# ALERT CHECKING — run periodically via scraper_job.py
-# ═══════════════════════════════════════════════════════
-
 def check_alerts_against_posts(posts: list) -> int:
     """
     Check all active alerts against a batch of scraped posts.
     Creates alert_matches for any hits.
-    Returns count of new matches created.
+    Returns count of unique matches created or refreshed.
 
     Called from scraper_job.py after each scrape cycle.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
 
-    # Fetch all active alerts
     try:
         resp = requests.get(
             f"{SUPABASE_URL}/rest/v1/pain_alerts",
@@ -161,60 +180,63 @@ def check_alerts_against_posts(posts: list) -> int:
     if not alerts:
         return 0
 
-    matches_created = 0
     batch = []
+    seen_match_ids = set()
 
     for alert in alerts:
-        alert_kws = [kw.lower() for kw in (alert.get("keywords") or [])]
-        alert_subs = [s.lower() for s in (alert.get("subreddits") or [])]
-        min_score = alert.get("min_score", 10)
+        alert_keywords = [str(kw).strip() for kw in (alert.get("keywords") or []) if str(kw).strip()]
+        alert_subreddits = [str(sub).lower() for sub in (alert.get("subreddits") or []) if str(sub).strip()]
+        min_score = int(alert.get("min_score", 10) or 10)
 
         for post in posts:
-            score = post.get("score", 0)
+            score = int(post.get("score", 0) or 0)
             if score < min_score:
                 continue
 
-            # Subreddit filter (if specified)
-            post_sub = (post.get("subreddit") or "").lower()
-            if alert_subs and post_sub not in alert_subs:
+            post_subreddit = str(post.get("subreddit") or "").lower()
+            if alert_subreddits and post_subreddit not in alert_subreddits:
                 continue
 
-            # Keyword matching
-            text = (post.get("full_text") or post.get("title", "")).lower()
-            matched = [kw for kw in alert_kws if kw in text]
-            if len(matched) < 2:  # require 2+ keyword hits (same as scraper)
+            text = str(post.get("full_text") or post.get("title") or "")
+            matched = _match_keywords(text, alert_keywords)
+            if len(matched) < 2:
                 continue
+
+            identity = _post_identity(post)
+            match_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{alert['id']}::{identity}"))
+            if match_id in seen_match_ids:
+                continue
+            seen_match_ids.add(match_id)
 
             batch.append({
+                "id": match_id,
                 "alert_id": alert["id"],
                 "user_id": alert["user_id"],
-                "post_title": (post.get("title") or "")[:500],
+                "post_title": str(post.get("title") or "")[:500],
                 "post_score": score,
-                "post_url": post.get("permalink", ""),
-                "subreddit": post.get("subreddit", ""),
+                "post_url": str(post.get("permalink") or post.get("url") or ""),
+                "subreddit": str(post.get("subreddit") or ""),
                 "matched_keywords": matched,
             })
-            matches_created += 1
 
-    # Batch insert
     if batch:
         try:
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/alert_matches",
-                headers={**_headers(), "Prefer": "return=minimal"},
+                headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                params={"on_conflict": "id"},
                 json=batch,
                 timeout=15,
             )
             if resp.status_code in (200, 201):
-                print(f"  [PainStream] ✓ {len(batch)} new matches created across {len(alerts)} alerts")
+                print(f"  [PainStream] OK {len(batch)} unique matches upserted across {len(alerts)} alerts")
             else:
-                print(f"  [PainStream] ✗ Batch insert failed: {resp.status_code}")
-                matches_created = 0
-        except Exception as e:
-            print(f"  [PainStream] ✗ Batch insert error: {e}")
-            matches_created = 0
+                print(f"  [PainStream] X Batch upsert failed: {resp.status_code}")
+                return 0
+        except Exception as exc:
+            print(f"  [PainStream] X Batch upsert error: {exc}")
+            return 0
 
-    # Update last_checked timestamp on all alerts
     try:
         now = datetime.now(timezone.utc).isoformat()
         for alert in alerts:
@@ -228,7 +250,7 @@ def check_alerts_against_posts(posts: list) -> int:
     except Exception:
         pass
 
-    return matches_created
+    return len(batch)
 
 
 def deactivate_alert(alert_id: str, user_id: str) -> bool:

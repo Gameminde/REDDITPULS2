@@ -9,6 +9,7 @@ import time
 import json
 import requests
 from datetime import datetime
+from proxy_rotator import get_rotator
 
 
 IH_BASE = "https://www.indiehackers.com"
@@ -20,6 +21,22 @@ _ALGOLIA_API_KEY = "bd4403a4e5e03e34346e9bea8d4a1834"
 _keys_refreshed = False
 
 _session = None
+_rotator = get_rotator()
+
+
+def _proxy_kwargs():
+    proxies = _rotator.format_for_requests() if _rotator.has_proxies() else None
+    return {"proxies": proxies} if proxies else {}
+
+
+def _health_payload(posts=None, status="ok", error_code=None, error_detail=None, method=None):
+    return {
+        "posts": posts or [],
+        "status": status,
+        "error_code": error_code,
+        "error_detail": error_detail,
+        "method": method,
+    }
 
 
 def _get_session():
@@ -50,7 +67,7 @@ def _refresh_algolia_keys():
 
     try:
         # Step 1: Load IH homepage to find JS bundle URLs
-        resp = session.get(IH_BASE, timeout=15)
+        resp = session.get(IH_BASE, timeout=15, **_proxy_kwargs())
         if resp.status_code != 200:
             return False
 
@@ -79,7 +96,7 @@ def _refresh_algolia_keys():
                 url = f"{IH_BASE}{url}" if url.startswith("/") else f"{IH_BASE}/{url}"
 
             try:
-                js_resp = session.get(url, timeout=10)
+                js_resp = session.get(url, timeout=10, **_proxy_kwargs())
                 if js_resp.status_code != 200:
                     continue
                 js_text = js_resp.text
@@ -133,27 +150,46 @@ def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            resp = requests.post(algolia_url, json=payload, headers=headers, timeout=15)
+            resp = requests.post(algolia_url, json=payload, headers=headers, timeout=15, **_proxy_kwargs())
 
             if resp.status_code == 200:
                 data = resp.json()
                 results = data.get("results", [])
                 if results:
-                    return results[0].get("hits", []), results[0].get("nbPages", 0)
-                return [], 0
+                    return {
+                        "hits": results[0].get("hits", []),
+                        "total_pages": results[0].get("nbPages", 0),
+                        "status": "ok",
+                        "error_code": None,
+                        "error_detail": None,
+                    }
+                return {
+                    "hits": [],
+                    "total_pages": 0,
+                    "status": "ok",
+                    "error_code": None,
+                    "error_detail": None,
+                }
 
             elif resp.status_code in (401, 403):
                 # Keys might have rotated — try refreshing
                 if not _keys_refreshed:
-                    print(f"    [IH] Algolia auth failed ({resp.status_code}) — refreshing keys...")
+                    print(f"    [IH] Algolia auth failed ({resp.status_code}) - refreshing keys...")
                     if _refresh_algolia_keys():
                         # Update headers and retry
                         algolia_url = f"https://{_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries"
                         headers["x-algolia-application-id"] = _ALGOLIA_APP_ID
                         headers["x-algolia-api-key"] = _ALGOLIA_API_KEY
                         continue
-                print(f"    [IH] Algolia auth failed permanently — falling back to web")
-                return [], 0
+                detail = f"Algolia auth failed ({resp.status_code})"
+                print(f"    [IH] Algolia auth failed permanently - falling back to web")
+                return {
+                    "hits": [],
+                    "total_pages": 0,
+                    "status": "failed",
+                    "error_code": "algolia_auth_failed",
+                    "error_detail": detail,
+                }
 
             elif resp.status_code == 429:
                 wait = 2 * (attempt + 1)
@@ -162,8 +198,15 @@ def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
                 continue
 
             else:
+                detail = f"Algolia returned {resp.status_code}"
                 print(f"    [IH] Algolia returned {resp.status_code}")
-                return [], 0
+                return {
+                    "hits": [],
+                    "total_pages": 0,
+                    "status": "failed",
+                    "error_code": "algolia_http_error",
+                    "error_detail": detail,
+                }
 
         except requests.exceptions.Timeout:
             print(f"    [IH] Algolia timeout on attempt {attempt + 1}")
@@ -173,9 +216,21 @@ def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
             time.sleep(3)
         except Exception as e:
             print(f"    [IH] Algolia error: {e}")
-            return [], 0
+            return {
+                "hits": [],
+                "total_pages": 0,
+                "status": "failed",
+                "error_code": "algolia_exception",
+                "error_detail": str(e),
+            }
 
-    return [], 0
+    return {
+        "hits": [],
+        "total_pages": 0,
+        "status": "failed",
+        "error_code": "algolia_retry_exhausted",
+        "error_detail": "Algolia retries exhausted",
+    }
 
 
 def _scrape_ih_web(keyword):
@@ -193,6 +248,7 @@ def _scrape_ih_web(keyword):
             params={"q": keyword},
             headers={"Accept": "application/json"},
             timeout=15,
+            **_proxy_kwargs(),
         )
 
         if resp.status_code == 200:
@@ -228,7 +284,7 @@ def _scrape_ih_web(keyword):
     if not posts:
         try:
             for feed_path in ["/feed", "/popular"]:
-                resp = session.get(f"{IH_BASE}{feed_path}", timeout=15)
+                resp = session.get(f"{IH_BASE}{feed_path}", timeout=15, **_proxy_kwargs())
                 if resp.status_code != 200:
                     continue
 
@@ -294,7 +350,7 @@ def _parse_timestamp(ts_str):
         return time.time()
 
 
-def run_ih_scrape(keywords, max_pages=2):
+def run_ih_scrape(keywords, max_pages=2, return_health=False):
     """
     Run IndieHackers scrape with multi-layer fallback:
     1. Algolia search (best — full text search with scores)
@@ -304,6 +360,8 @@ def run_ih_scrape(keywords, max_pages=2):
     seen_ids = set()
     all_posts = []
     algolia_dead = False
+    algolia_error_code = None
+    algolia_error_detail = None
 
     for kw in keywords:
         print(f"    [IH] Searching: '{kw}'...")
@@ -311,11 +369,15 @@ def run_ih_scrape(keywords, max_pages=2):
         # Layer 1: Algolia (fast, structured data)
         if not algolia_dead:
             for page in range(max_pages):
-                hits, total_pages = _search_ih_algolia(kw, page=page)
+                algolia_result = _search_ih_algolia(kw, page=page)
+                hits = algolia_result.get("hits", [])
+                total_pages = algolia_result.get("total_pages", 0)
 
                 if not hits and page == 0:
                     algolia_dead = True
-                    print("    [IH] Algolia unavailable — switching to web scraping")
+                    algolia_error_code = algolia_result.get("error_code")
+                    algolia_error_detail = algolia_result.get("error_detail")
+                    print("    [IH] Algolia unavailable - switching to web scraping")
                     break
 
                 for hit in hits:
@@ -345,7 +407,28 @@ def run_ih_scrape(keywords, max_pages=2):
 
     method = "web-scrape" if algolia_dead else "Algolia"
     print(f"    [IH] Total: {len(all_posts)} posts (via {method})")
-    return all_posts
+    if not return_health:
+        return all_posts
+
+    if algolia_dead and all_posts:
+        return _health_payload(
+            posts=all_posts,
+            status="degraded",
+            error_code=algolia_error_code or "algolia_fallback",
+            error_detail=algolia_error_detail or "Algolia unavailable - using web fallback",
+            method=method,
+        )
+
+    if algolia_dead and not all_posts:
+        return _health_payload(
+            posts=[],
+            status="failed",
+            error_code=algolia_error_code or "algolia_fallback",
+            error_detail=algolia_error_detail or "Algolia unavailable and web fallback returned 0 posts",
+            method=method,
+        )
+
+    return _health_payload(posts=all_posts, status="ok", method=method)
 
 
 if __name__ == "__main__":

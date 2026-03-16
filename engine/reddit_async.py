@@ -24,10 +24,12 @@ except ImportError:
     print("  [!] aiohttp not installed: pip install aiohttp")
 
 from config import TARGET_SUBREDDITS, USER_AGENTS, SPAM_PATTERNS, HUMOR_INDICATORS
+from proxy_rotator import get_rotator
 
 # Compiled filters
 _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
+_rotator = get_rotator()
 
 # ═══════════════════════════════════════════════════════
 # RATE LIMITING
@@ -111,9 +113,11 @@ async def _fetch_subreddit(
 
     for attempt in range(RETRY_LIMIT + 1):
         await limiter.acquire()
+        proxy = _rotator.format_for_aiohttp() if _rotator.has_proxies() else None
         try:
             async with session.get(
                 url, headers=headers, params=params,
+                proxy=proxy,
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
             ) as resp:
                 if resp.status == 429:
@@ -240,7 +244,11 @@ def _sync_fallback(subreddits):
             try:
                 url = f"https://www.reddit.com/r/{sub}/{sort}.json"
                 headers = {"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"}
-                resp = requests.get(url, headers=headers, params={"limit": 100, "raw_json": 1}, timeout=15)
+                proxy_kwargs = {}
+                proxies = _rotator.format_for_requests() if _rotator.has_proxies() else None
+                if proxies:
+                    proxy_kwargs["proxies"] = proxies
+                resp = requests.get(url, headers=headers, params={"limit": 100, "raw_json": 1}, timeout=15, **proxy_kwargs)
                 if resp.status_code != 200:
                     continue
                 for child in resp.json().get("data", {}).get("children", []):

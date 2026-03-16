@@ -12,6 +12,8 @@ import requests
 
 from engine.stackoverflow_scraper import run_so_scrape
 from engine.github_issues_scraper import run_github_scrape
+from engine.g2_scraper import scrape_g2_signals
+from engine.appstore_scraper import scrape_appstore_signals
 
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", os.environ.get("NEXT_PUBLIC_SUPABASE_URL", ""))
@@ -60,7 +62,7 @@ def get_cached_enrichment(topic_slug):
         return None
 
 
-def save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps):
+def save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps, g2_data=None, appstore_data=None):
     """Save enrichment results to Supabase cache."""
     if not SUPABASE_URL:
         print("    [Enrich] No SUPABASE_URL — skipping cache save")
@@ -76,6 +78,10 @@ def save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps):
         "gh_issues": json.dumps(gh_data.get("issues", []))[:50000],
         "gh_total": gh_data.get("total", 0),
         "gh_top_repos": json.dumps(gh_data.get("top_repos", [])),
+        "g2_gaps": json.dumps((g2_data or {}).get("top_complaints", []))[:50000],
+        "g2_total": (g2_data or {}).get("total", 0),
+        "appstore_pains": json.dumps((appstore_data or {}).get("top_pains", []))[:50000],
+        "appstore_total": (appstore_data or {}).get("total", 0),
         "confirmed_gaps": json.dumps(confirmed_gaps),
         "enriched_at": now.isoformat(),
         "expires_at": (now + timedelta(days=7)).isoformat(),
@@ -104,7 +110,7 @@ def save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps):
     return None
 
 
-def detect_confirmed_gaps(so_data, gh_data):
+def detect_confirmed_gaps(so_data, gh_data, g2_data=None):
     """
     Triangulation: find gaps that appear in BOTH SO questions AND GitHub issues.
     When two independent sources point at the same missing feature, it's a confirmed gap.
@@ -161,6 +167,16 @@ def detect_confirmed_gaps(so_data, gh_data):
             seen.add(gap["gap_term"])
             unique_gaps.append(gap)
 
+    g2_phrases = {
+        str(item.get("phrase", "")).lower()
+        for item in (g2_data or {}).get("top_complaints", [])
+        if item.get("phrase")
+    }
+    for gap in unique_gaps:
+        if any(gap["gap_term"] in phrase for phrase in g2_phrases):
+            gap["confidence"] = "triple-confirmed"
+            gap["g2_match"] = True
+
     return unique_gaps[:5]  # Top 5 confirmed gaps
 
 
@@ -197,20 +213,29 @@ def enrich_idea(topic_slug, topic_name="", keywords=None, force_refresh=False):
     # Step 3: Scrape GitHub
     gh_data = run_github_scrape(topic_slug, keywords)
 
-    # Step 4: Detect confirmed gaps
-    confirmed_gaps = detect_confirmed_gaps(so_data, gh_data)
+    # Step 4: Scrape G2 + App Store signals
+    g2_data = scrape_g2_signals(topic_slug)
+    appstore_query = (keywords or [topic_name])[0]
+    appstore_data = scrape_appstore_signals(appstore_query)
+
+    # Step 5: Detect confirmed gaps
+    confirmed_gaps = detect_confirmed_gaps(so_data, gh_data, g2_data=g2_data)
 
     if confirmed_gaps:
         print(f"    [Enrich] 🎯 {len(confirmed_gaps)} Confirmed Gaps detected!")
         for gap in confirmed_gaps:
             print(f"      → '{gap['gap_term']}' (SO: {gap['so_question']['score']}⬆ + GH: {gap['gh_issue']['thumbs_up']}👍)")
 
-    # Step 5: Cache results
-    save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps)
+    # Step 6: Cache results
+    save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps, g2_data=g2_data, appstore_data=appstore_data)
 
     elapsed = time.time() - start
     print(f"\n    Enrichment complete in {elapsed:.1f}s")
-    print(f"    SO: {so_data['total']} questions | GH: {gh_data['total']} issues | Gaps: {len(confirmed_gaps)}")
+    print(
+        f"    SO: {so_data['total']} questions | GH: {gh_data['total']} issues | "
+        f"G2: {g2_data['total']} reviews | App Store: {appstore_data['total']} reviews | "
+        f"Gaps: {len(confirmed_gaps)}"
+    )
 
     return {
         "topic_slug": topic_slug,
@@ -218,6 +243,8 @@ def enrich_idea(topic_slug, topic_name="", keywords=None, force_refresh=False):
         "status": "done",
         "stackoverflow": so_data,
         "github": gh_data,
+        "g2": g2_data,
+        "appstore": appstore_data,
         "confirmed_gaps": confirmed_gaps,
         "enriched_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
@@ -248,6 +275,14 @@ def _format_cached(row):
             "total": row.get("gh_total", 0),
             "top_repos": parse_json(row.get("gh_top_repos")),
         },
+        "g2": {
+            "top_complaints": parse_json(row.get("g2_gaps")),
+            "total": row.get("g2_total", 0),
+        },
+        "appstore": {
+            "top_pains": parse_json(row.get("appstore_pains")),
+            "total": row.get("appstore_total", 0),
+        },
         "confirmed_gaps": parse_json(row.get("confirmed_gaps")),
         "enriched_at": row.get("enriched_at", ""),
         "cached": True,
@@ -262,4 +297,6 @@ if __name__ == "__main__":
     print(f"Results for: {result['topic_name']}")
     print(f"SO: {result['stackoverflow']['total']} questions")
     print(f"GH: {result['github']['total']} issues")
+    print(f"G2: {result['g2']['total']} reviews")
+    print(f"App Store: {result['appstore']['total']} reviews")
     print(f"Confirmed Gaps: {len(result['confirmed_gaps'])}")

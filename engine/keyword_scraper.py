@@ -259,6 +259,13 @@ def _select_subreddits(keywords: list) -> list:
     return result
 
 
+def discover_subreddits(keywords: list) -> list:
+    """Discover additional subreddits for a keyword set beyond the core defaults."""
+    selected = _select_subreddits(keywords)
+    extras = [sub for sub in selected if sub not in CORE_SUBREDDITS]
+    return extras[:20]
+
+
 def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
     """
     Run a keyword scan for the specified duration.
@@ -282,6 +289,9 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
         print(f"  [Reddit] ✓ Using official API (PRAW) — 100 req/min, legally compliant")
     else:
         print(f"  [Reddit] ⚠ Using anonymous scraping — consider setting REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET")
+        if not getattr(run_keyword_scan, "_proxy_warned", False):
+            print("[Reddit] Using proxy rotation (legal risk — apply for API)")
+            run_keyword_scan._proxy_warned = True
 
     print(f"  [>] Scanning for: {keywords}")
     print(f"  [>] Duration: {duration} ({max_seconds}s)")

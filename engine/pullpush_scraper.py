@@ -12,6 +12,7 @@ import re
 import time
 import requests
 from datetime import datetime
+from proxy_rotator import get_rotator
 
 from config import TARGET_SUBREDDITS, SPAM_PATTERNS, HUMOR_INDICATORS
 
@@ -20,6 +21,12 @@ PULLPUSH_COMMENTS = "https://api.pullpush.io/reddit/search/comment/"
 
 _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
+_rotator = get_rotator()
+
+
+def _proxy_kwargs():
+    proxies = _rotator.format_for_requests() if _rotator.has_proxies() else None
+    return {"proxies": proxies} if proxies else {}
 
 
 def _parse_pullpush_post(item: dict) -> dict | None:
@@ -88,11 +95,11 @@ def scrape_historical(
         params["q"] = keyword
 
     try:
-        resp = requests.get(PULLPUSH_API, params=params, timeout=20)
+        resp = requests.get(PULLPUSH_API, params=params, timeout=20, **_proxy_kwargs())
         if resp.status_code == 429:
             print(f"    [PP] r/{subreddit} rate limited, waiting 5s...")
             time.sleep(5)
-            resp = requests.get(PULLPUSH_API, params=params, timeout=20)
+            resp = requests.get(PULLPUSH_API, params=params, timeout=20, **_proxy_kwargs())
 
         if resp.status_code != 200:
             print(f"    [PP] r/{subreddit} returned {resp.status_code}")
@@ -184,7 +191,7 @@ def scrape_historical_comments(
         params["q"] = keyword
 
     try:
-        resp = requests.get(PULLPUSH_COMMENTS, params=params, timeout=20)
+        resp = requests.get(PULLPUSH_COMMENTS, params=params, timeout=20, **_proxy_kwargs())
         if resp.status_code != 200:
             return []
 

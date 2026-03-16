@@ -7,6 +7,7 @@ Zero authentication required. High-quality technical audience.
 import time
 import requests
 from datetime import datetime
+from proxy_rotator import get_rotator
 
 
 HN_SEARCH_API = "https://hn.algolia.com/api/v1/search"
@@ -14,13 +15,18 @@ HN_SEARCH_BY_DATE = "https://hn.algolia.com/api/v1/search_by_date"
 
 # Focus on "Ask HN" and "Show HN" — highest signal posts
 HN_TAGS = ["ask_hn", "show_hn"]
+_rotator = get_rotator()
 
 
 def _hn_request(url, params, max_retries=3):
     """Make a request to the HN Algolia API with retries."""
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url, params=params, timeout=15)
+            proxy_kwargs = {}
+            proxies = _rotator.format_for_requests() if _rotator.has_proxies() else None
+            if proxies:
+                proxy_kwargs["proxies"] = proxies
+            resp = requests.get(url, params=params, timeout=15, **proxy_kwargs)
             if resp.status_code == 200:
                 return resp.json()
             elif resp.status_code == 429:

@@ -5,9 +5,11 @@ runs a debate round on disagreements, then synthesizes final report.
 """
 
 import os
+import re
 import sys
 import json
 import time
+import logging
 import requests
 import concurrent.futures
 from typing import Optional
@@ -18,6 +20,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 # ── Supabase config ──
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
+logger = logging.getLogger(__name__)
 
 
 def _supabase_headers():
@@ -220,7 +223,7 @@ def call_ollama(prompt, system_prompt, api_key, model="custom", endpoint_url=Non
     return r.json().get("message", {}).get("content", "")
 
 
-def call_openrouter(prompt, system_prompt, api_key, model="anthropic/claude-3.5-sonnet", **_):
+def call_openrouter(prompt, system_prompt, api_key, model="openrouter/deepseek/deepseek-r1", **_):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -228,8 +231,9 @@ def call_openrouter(prompt, system_prompt, api_key, model="anthropic/claude-3.5-
         "HTTP-Referer": "https://redditpulse.app",
         "X-Title": "RedditPulse",
     }
+    api_model = model.replace("openrouter/", "", 1) if model.startswith("openrouter/") else model
     payload = {
-        "model": model,
+        "model": api_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -362,6 +366,10 @@ MODEL_ALIASES = {
     "deepseek-v3.2-speciale": "deepseek-chat",
     # OpenRouter — fix broken Qwen model ID
     "qwen/qwen3-coder-480b-a35b": "qwen/qwen2.5-72b-instruct",
+    "hunter-alpha": "openrouter/deepseek/deepseek-r1",
+    "openrouter/hunter-alpha": "openrouter/deepseek/deepseek-r1",
+    "openrouter/openrouter/hunter-alpha": "openrouter/deepseek/deepseek-r1",
+    "openrouter/deepseek/deepseek-r1:free": "openrouter/deepseek/deepseek-r1",
     # Together AI aliases
     "llama-3-70b": "meta-llama/Llama-3-70b-chat-hf",
     "llama-3.1-405b": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
@@ -385,6 +393,11 @@ MODEL_ALIASES = {
 def resolve_model(model_name):
     """Resolve a model name through aliases. Returns the correct API model ID."""
     return MODEL_ALIASES.get(model_name, model_name)
+
+
+def _assigned_roles(count: int):
+    """Return the ordered role list for the current agent count."""
+    return [AGENT_ROLES[i][0] for i in range(min(count, len(AGENT_ROLES)))]
 
 
 # Provider dispatcher
@@ -524,7 +537,20 @@ def call_provider(config, prompt, system_prompt):
     text = fn(**kwargs)
     _elapsed = _time.time() - _t0
     print(f"  [Brain] <<< {provider}/{model} responded in {_elapsed:.1f}s ({len(text)} chars)", flush=True)
+    if _elapsed > 30:
+        logger.warning(f"[Brain] ⚠ {provider} took {_elapsed:.1f}s — consider replacing")
     return provider, model, text
+
+
+def _is_413_error(err) -> bool:
+    """Treat provider 413s as run-scoped temporary unavailability."""
+    msg = str(err)
+    return bool(re.search(r"\b413\b", msg))
+
+
+def _short_model_label(model_name: str) -> str:
+    parts = [part for part in str(model_name).split("/") if part]
+    return parts[-1] if parts else str(model_name)
 
 
 def extract_json(text):
@@ -593,7 +619,22 @@ class AIBrain:
 
     def __init__(self, configs):
         """configs: list of user_ai_config rows from Supabase."""
-        self.configs = [c for c in configs if c.get("is_active", True)]
+        active_configs = [dict(c) for c in configs if c.get("is_active", True)]
+        deduped = []
+        seen_signatures = set()
+        for c in sorted(active_configs, key=lambda row: row.get("priority", 9999)):
+            provider = c.get("provider", "unknown")
+            resolved_model = resolve_model(c.get("selected_model", ""))
+            signature = (provider.lower(), resolved_model.lower())
+            if signature in seen_signatures:
+                msg = f"[Brain] ⚠ Duplicate model removed: {provider}/{resolved_model}"
+                print(f"  {msg}")
+                logger.warning(msg)
+                continue
+            c["selected_model"] = resolved_model
+            deduped.append(c)
+            seen_signatures.add(signature)
+        self.configs = deduped
         # Ensure every config has a unique id
         for i, c in enumerate(self.configs):
             if not c.get("id"):
@@ -601,31 +642,59 @@ class AIBrain:
         if not self.configs:
             raise Exception("No active AI models configured. Go to Settings → AI to add your API keys.")
         self._call_counter = 0
+        self._unavailable_config_ids = set()
         print(f"  [Brain] Initialized with {len(self.configs)} agents:")
         for c in self.configs:
             print(f"    [{c['priority']}] {c['provider']}/{c['selected_model']} (id={c['id'][:8]})")
 
+    def _candidate_configs(self, pinned_index=None):
+        total = len(self.configs)
+        if total == 0:
+            return []
+        start = 0 if pinned_index is None else pinned_index % total
+        candidates = []
+        for offset in range(total):
+            idx = (start + offset) % total
+            config = self.configs[idx]
+            if config["id"] in self._unavailable_config_ids:
+                continue
+            candidates.append((idx, config))
+        return candidates
+
     def single_call(self, prompt, system_prompt, pinned_index=None):
         """
-        Fix H: Always use the SAME model for sequential passes within a validation run.
-        Previously round-robined across models — meaning Pass 1, Pass 2, Pass 3 each went
-        to a DIFFERENT model, causing error cascade where each pass reasoned on a different
-        model's output of a digest of raw data.
-
-        Default: pin to self.configs[0] (highest priority model by Supabase ordering).
-        Pass pinned_index explicitly to override (e.g. for retry on different model).
+        Route sequential passes across configured models without shrinking the prompt.
+        413 responses mark a model unavailable for the rest of the validation run.
         """
-        if pinned_index is None:
-            # Always use highest-priority config for sequential reasoning passes
-            config = self.configs[0]
-            idx = 0
-        else:
-            idx = pinned_index % len(self.configs)
-            config = self.configs[idx]
         self._call_counter += 1
-        provider, model, text = call_provider(config, prompt, system_prompt)
-        print(f"  [Brain] Single call #{self._call_counter} → {provider}/{model} (pinned agent {idx+1}/{len(self.configs)}, {len(text)} chars)")
-        return text
+        last_error = None
+
+        candidates = self._candidate_configs(pinned_index=pinned_index)
+        if not candidates:
+            raise Exception("No available AI models remain for this validation run.")
+
+        for idx, config in candidates:
+            try:
+                provider, model, text = call_provider(config, prompt, system_prompt)
+                print(
+                    f"  [Brain] Single call #{self._call_counter} → {provider}/{model} "
+                    f"(pinned agent {idx+1}/{len(self.configs)}, {len(text)} chars)"
+                )
+                return text
+            except Exception as e:
+                last_error = e
+                if _is_413_error(e):
+                    self._unavailable_config_ids.add(config["id"])
+                    msg = f"[Brain] ⚠ {_short_model_label(config['selected_model'])} hit 413 — routing to next model"
+                    print(f"  {msg}")
+                    logger.warning(msg)
+                    continue
+                print(
+                    f"  [Brain] Single call failed on {config['provider']}/{config['selected_model']}: {e}",
+                    flush=True,
+                )
+
+        raise last_error or Exception("All AI models failed for this call.")
 
     def debate(self, prompt, system_prompt, on_progress=None, metadata=None):
         """
@@ -640,18 +709,38 @@ class AIBrain:
         # ══ ROUND 1: Independent Analysis with Adversarial Roles ══
         print(f"\n  [Brain] ══ ROUND 1: Independent Analysis ({n} models, adversarial roles) ══")
         if n < 3:
+            assigned_roles = "+".join(_assigned_roles(n))
             missing_roles = [AGENT_ROLES[i][0] for i in range(n, min(3, len(AGENT_ROLES)))]
-            print(f"  [Brain] ⚠ Only {n} model(s) — {'+'.join([AGENT_ROLES[i][0] for i in range(n)])} assigned. "
+            print(f"  [Brain] ⚠ Only {n} model(s) — {assigned_roles} assigned. "
                   f"Add {3 - n} more model(s) in Settings for {', '.join(missing_roles)} role(s).")
+            if n == 2:
+                msg = "[Brain] ⚠ Only 2 models — SKEPTIC+BULL assigned. Add 3rd for MARKET_ANALYST."
+                print(f"  {msg}")
+                logger.warning(msg)
         if on_progress:
             on_progress("debating", f"Round 1: {n} models analyzing independently")
 
         analyses = []
+        debate_log = []
+        unavailable_roles = []
 
         def _analyze(config, agent_index):
             # FIX 2: Each agent gets a unique role + FIX 3: Calibration
             role_prompt = get_role_system_prompt(agent_index, system_prompt)
             role_name = AGENT_ROLES.get(agent_index % len(AGENT_ROLES), ("ANALYST",))[0]
+
+            if config["id"] in self._unavailable_config_ids:
+                return {
+                    "config_id": config["id"],
+                    "provider": config["provider"],
+                    "model": config["selected_model"],
+                    "result": None,
+                    "raw": "",
+                    "error": "Skipped after earlier 413",
+                    "status": "unavailable_413",
+                    "role": role_name,
+                    "agent_index": agent_index,
+                }
 
             # FIX 4: Inject base rate context into prompt
             contextualized_prompt = prompt
@@ -674,7 +763,10 @@ class AIBrain:
                 return {
                     "config_id": config["id"], "provider": config["provider"],
                     "model": config["selected_model"], "result": None, "raw": "",
-                    "error": str(e), "role": role_name, "agent_index": agent_index,
+                    "error": str(e),
+                    "status": "unavailable_413" if _is_413_error(e) else "error",
+                    "role": role_name,
+                    "agent_index": agent_index,
                 }
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -684,7 +776,10 @@ class AIBrain:
             }
             for future in concurrent.futures.as_completed(futures):
                 analysis = future.result()
-                if analysis["error"]:
+                if analysis.get("status") == "unavailable_413":
+                    self._unavailable_config_ids.add(analysis["config_id"])
+                    unavailable_roles.append(analysis["role"])
+                elif analysis["error"]:
                     print(f"  [Brain] ✗ {analysis['provider']}/{analysis['model']} [{analysis['role']}]: {analysis['error']}")
                 else:
                     unknowns = len(analysis["result"].get("top_unknowns", []))
@@ -692,9 +787,28 @@ class AIBrain:
                           f"verdict={analysis['result'].get('verdict', '?')} "
                           f"conf={analysis['result'].get('confidence', '?')} "
                           f"unknowns={unknowns}")
+                    debate_log.append({
+                        "model": f"{analysis['provider']}/{analysis['model']}",
+                        "role": analysis["role"],
+                        "round": 1,
+                        "verdict": analysis["result"].get("verdict", "?"),
+                        "confidence": analysis["result"].get("confidence", 0),
+                        "reasoning": (
+                            analysis["result"].get("debate_note")
+                            or analysis["result"].get("executive_summary")
+                            or analysis["result"].get("summary", "")
+                        )[:500],
+                        "changed": False,
+                    })
                 analyses.append(analysis)
 
         valid = [a for a in analyses if a["result"] is not None]
+        if unavailable_roles and valid:
+            remaining_roles = " + ".join(a["role"] for a in valid)
+            for role in unavailable_roles:
+                msg = f"[Brain] ⚠ {role} unavailable (413) — debate running with {remaining_roles} only"
+                print(f"  {msg}")
+                logger.warning(msg)
 
         if len(valid) == 0:
             raise Exception("All AI models failed. Check your API keys in Settings.")
@@ -707,7 +821,18 @@ class AIBrain:
 
         if len(valid) == 1:
             print(f"  [Brain] Only 1 model succeeded → returning its analysis directly")
-            return valid[0]["result"]
+            single_result = dict(valid[0]["result"])
+            single_result.setdefault("models_used", [f"{valid[0]['provider']}/{valid[0]['model']}"])
+            single_result.setdefault("model_verdicts", {
+                f"{valid[0]['provider']}/{valid[0]['model']}": {
+                    "verdict": single_result.get("verdict", "?"),
+                    "role": valid[0].get("role", "ANALYST"),
+                }
+            })
+            single_result.setdefault("debate_mode", False)
+            single_result.setdefault("debate_log", debate_log)
+            single_result.setdefault("evidence_count", len(single_result.get("evidence", [])))
+            return single_result
 
         # ── Check for disagreements ──
         verdicts = [a["result"].get("verdict", "UNKNOWN") for a in valid]
@@ -716,7 +841,7 @@ class AIBrain:
 
         if len(unique_verdicts) == 1:
             print(f"  [Brain] ══ CONSENSUS: All models agree on '{verdicts[0]}' ══")
-            return self._weighted_merge(valid)
+            return self._weighted_merge(valid, debate_log=debate_log)
 
         # ══ ROUND 2: Debate with Sanitized Reasoning + Non-LLM Data ══
         print(f"\n  [Brain] ══ ROUND 2: Debate (models disagree — scores hidden from peers) ══")
@@ -787,10 +912,41 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                     "debate_note": result.get("debate_note", ""),
                 })
                 action = "HELD" if result.get("verdict") == a["result"].get("verdict") else "CHANGED"
+                debate_log.append({
+                    "model": f"{a['provider']}/{a['model']}",
+                    "role": a["role"],
+                    "round": 2,
+                    "verdict": result.get("verdict", "?"),
+                    "confidence": result.get("confidence", 0),
+                    "reasoning": (
+                        result.get("debate_note")
+                        or result.get("executive_summary")
+                        or result.get("summary", "")
+                    )[:500],
+                    "changed": result.get("verdict") != a["result"].get("verdict"),
+                })
                 print(f"  [Brain] Debate → [{a['role']}] {a['provider']}/{a['model']}: {action} → verdict={result.get('verdict', '?')} | {result.get('debate_note', '')[:80]}")
             except Exception as e:
+                if _is_413_error(e):
+                    self._unavailable_config_ids.add(config["id"])
                 print(f"  [Brain] Debate failed for {a['provider']}/{a['model']}: {e}")
                 debate_results.append({"provider": a["provider"], "model": a["model"], "result": a["result"], "role": a["role"]})
+                debate_log.append({
+                    "model": f"{a['provider']}/{a['model']}",
+                    "role": a["role"],
+                    "round": 2,
+                    "verdict": a["result"].get("verdict", "?"),
+                    "confidence": a["result"].get("confidence", 0),
+                    "reasoning": (
+                        a["result"].get("debate_note")
+                        or a["result"].get("executive_summary")
+                        or a["result"].get("summary", "")
+                    )[:500],
+                    "changed": False,
+                    "status": "round2_error",
+                    "fallback_to_round1": True,
+                    "round2_error": f"{type(e).__name__}: {e}",
+                })
 
         # ══ FINAL SYNTHESIS with Weighted Consensus ══
         print(f"\n  [Brain] ══ FINAL SYNTHESIS (uncertainty-weighted) ══")
@@ -798,10 +954,11 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             on_progress("synthesizing", "Synthesizing with uncertainty-weighted consensus")
 
         return self._weighted_merge(
-            [{"provider": d["provider"], "model": d["model"], "result": d["result"], "role": d.get("role", "ANALYST")} for d in debate_results]
+            [{"provider": d["provider"], "model": d["model"], "result": d["result"], "role": d.get("role", "ANALYST")} for d in debate_results],
+            debate_log=debate_log,
         )
 
-    def _weighted_merge(self, analyses):
+    def _weighted_merge(self, analyses, debate_log=None):
         """
         FIX 5 — Uncertainty-Weighted Consensus.
         Models that admitted more unknowns get LESS weight.
@@ -845,7 +1002,11 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             v = e["verdict"]
             verdict_weights[v] = verdict_weights.get(v, 0) + e["weight"]
 
-        final_verdict = max(verdict_weights, key=verdict_weights.get)
+        ranked_verdicts = sorted(verdict_weights.items(), key=lambda item: item[1], reverse=True)
+        top_weight = ranked_verdicts[0][1]
+        top_verdicts = [verdict for verdict, weight in ranked_verdicts if abs(weight - top_weight) < 1e-9]
+        tie_detected = len(top_verdicts) > 1
+        final_verdict = "RISKY" if tie_detected else ranked_verdicts[0][0]
         majority_count = sum(1 for e in weighted_entries if e["verdict"] == final_verdict)
 
         # ── Weighted confidence ──
@@ -857,7 +1018,10 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
 
         # Cap confidence if high dissent
         dissent_count = sum(1 for e in weighted_entries if e["verdict"] != final_verdict)
-        if dissent_count >= total_models / 2:
+        if tie_detected:
+            weighted_confidence = min(weighted_confidence, 40)
+            consensus_note = "tie"
+        elif dissent_count >= total_models / 2:
             weighted_confidence = min(weighted_confidence, 45)
             consensus_note = "high-dissent"
         elif majority_count == total_models:
@@ -975,8 +1139,10 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
         merged = {
             "verdict": final_verdict,
             "confidence": avg_confidence,
-            "summary": _pick_longest("summary"),
+            "executive_summary": _pick_longest("executive_summary") or _pick_longest("summary"),
+            "summary": _pick_longest("executive_summary") or _pick_longest("summary"),
             "evidence": all_evidence[:25],
+            "evidence_count": len(all_evidence),
             "audience_validation": _pick_longest("audience_validation"),
             "competitor_gaps": _pick_longest("competitor_gaps"),
             "price_signals": _pick_longest("price_signals"),
@@ -990,10 +1156,12 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             "models_used": models_used,
             "model_verdicts": model_verdicts,
             "debate_mode": len(analyses) > 1,
+            "debate_log": debate_log or [],
+            "debate_rounds": max((entry.get("round", 1) for entry in (debate_log or [])), default=1),
             # Weighted consensus metadata
-            "consensus_strength": f"{majority_count}/{total_models}",
+            "consensus_strength": f"{len(top_verdicts)}-way tie/{total_models}" if tie_detected else f"{majority_count}/{total_models}",
             "consensus_type": consensus_note,
-            "weighting_method": "inverse_uncertainty",
+            "weighting_method": "evidence_weighted",
             "dissent": dissent,
         }
 

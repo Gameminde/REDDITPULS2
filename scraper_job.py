@@ -31,6 +31,10 @@ from collections import Counter, defaultdict
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "engine"))
 
 from config import TARGET_SUBREDDITS, PAIN_PHRASES, USER_AGENTS, SPAM_PATTERNS, HUMOR_INDICATORS
+from pain_stream import check_alerts_against_posts
+from competitor_deathwatch import scan_for_complaints, save_complaints
+from competition import KNOWN_COMPETITORS
+from trends_aggregator import aggregate_trends
 import random
 
 # ── Supabase config ──
@@ -40,6 +44,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_K
 # ── Spam/humor compiled patterns ──
 _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
+BASE_SUBREDDITS = list(TARGET_SUBREDDITS)
 
 
 # ═══════════════════════════════════════════════════════
@@ -94,6 +99,136 @@ def sb_rpc(fn_name, params=None):
     return r
 
 
+def load_user_requested_subreddits():
+    """Merge user-discovered subreddits with the base scraper coverage."""
+    if not SUPABASE_URL:
+        return BASE_SUBREDDITS
+    rows = sb_select("user_requested_subreddits", "select=subreddit")
+    extra_subs = [row["subreddit"] for row in rows if row.get("subreddit")]
+    all_subs = list(dict.fromkeys(BASE_SUBREDDITS + extra_subs))
+    print(f"  [Scraper] Covering {len(all_subs)} subreddits ({len(extra_subs)} user-discovered)")
+    return all_subs
+
+
+def _to_iso_datetime(value):
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        except Exception:
+            return datetime.now(timezone.utc).isoformat()
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+        except Exception:
+            return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+
+def store_posts(rows):
+    """Persist raw posts so Realtime, alerts, and trend aggregation have live data."""
+    if not SUPABASE_URL or not rows:
+        return 0
+
+    payload = []
+    for post in rows[:2000]:
+        external_id = post.get("external_id") or post.get("id") or hashlib.md5(
+            f"{post.get('source', 'unknown')}::{post.get('title', '')}".encode("utf-8", errors="ignore")
+        ).hexdigest()
+        payload.append({
+            "id": f"{post.get('source', 'src')}_{external_id}",
+            "title": post.get("title", "")[:500],
+            "selftext": (post.get("body") or post.get("selftext") or "")[:5000],
+            "full_text": (post.get("full_text") or post.get("title") or "")[:8000],
+            "score": int(post.get("score", 0) or 0),
+            "upvote_ratio": float(post.get("upvote_ratio", 0.5) or 0.5),
+            "num_comments": int(post.get("num_comments", 0) or 0),
+            "created_utc": _to_iso_datetime(post.get("created_utc")),
+            "subreddit": post.get("subreddit", ""),
+            "permalink": post.get("permalink", ""),
+            "author": post.get("author", ""),
+            "url": post.get("url", post.get("permalink", "")),
+            "matched_phrases": post.get("matched_keywords", post.get("matched_phrases", [])) or [],
+            "scraped_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    saved = 0
+    for row in payload:
+        resp = sb_upsert("posts", [row], on_conflict="id")
+        if resp.status_code < 400:
+            saved += 1
+    return saved
+
+
+def update_validation_scores(new_posts):
+    """Small market-pulse confidence nudges for recent completed validations."""
+    if not SUPABASE_URL or not new_posts:
+        return 0
+
+    recent_validations = sb_select(
+        "idea_validations",
+        "select=id,confidence,created_at,report&status=eq.done&order=created_at.desc&limit=100",
+    )
+    now = datetime.now(timezone.utc)
+    updated = 0
+
+    for validation in recent_validations:
+        created_at = validation.get("created_at", "")
+        try:
+            created_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if created_dt < now - timedelta(days=30):
+            continue
+
+        report = validation.get("report") or {}
+        if isinstance(report, str):
+            try:
+                report = json.loads(report)
+            except Exception:
+                report = {}
+
+        keywords = report.get("keywords") or report.get("extracted_keywords") or []
+        if not keywords:
+            continue
+
+        new_matches = 0
+        for post in new_posts:
+            haystack = f"{post.get('title', '')} {post.get('full_text', '')} {post.get('body', '')}".lower()
+            if any(str(keyword).lower() in haystack for keyword in keywords[:5]):
+                new_matches += 1
+
+        if new_matches >= 3:
+            adjustment = min(3.0, new_matches * 0.5)
+        elif new_matches == 0:
+            adjustment = -0.5
+        else:
+            adjustment = 0.0
+
+        if adjustment == 0:
+            continue
+
+        current_conf = float(report.get("confidence", validation.get("confidence", 50)) or 50)
+        new_conf = max(35.0, min(85.0, current_conf + adjustment))
+        report["confidence"] = int(new_conf)
+        report["market_pulse"] = {
+            "previous_confidence": round(current_conf, 1),
+            "current_confidence": int(new_conf),
+            "delta": round(new_conf - current_conf, 1),
+            "new_matches": new_matches,
+            "last_updated_at": now.isoformat(),
+        }
+        resp = sb_patch("idea_validations", f"id=eq.{validation['id']}", {
+            "confidence": int(new_conf),
+            "report": report,
+        })
+        if resp.status_code < 400:
+            updated += 1
+            direction = "+" if new_conf >= current_conf else ""
+            print(f"  [Pulse] {validation['id']}: {current_conf}% -> {new_conf}% ({direction}{new_conf - current_conf:.1f}, {new_matches} new matches)")
+
+    return updated
+
+
 # ═══════════════════════════════════════════════════════
 # SCRAPING (REUSES EXISTING ENGINE SCRAPERS)
 # ═══════════════════════════════════════════════════════
@@ -142,11 +277,11 @@ def scrape_reddit_sub(subreddit, sort="new", limit=100):
     return posts
 
 
-def scrape_all_reddit():
+def scrape_all_reddit(subreddits=None):
     """Scrape all target subreddits."""
     all_posts = []
     seen = set()
-    for sub in TARGET_SUBREDDITS:
+    for sub in (subreddits or BASE_SUBREDDITS):
         for sort in ("new", "hot"):
             posts = scrape_reddit_sub(sub, sort, limit=100)
             for p in posts:
@@ -706,7 +841,7 @@ def determine_confidence(post_count, source_count):
 # MAIN JOB
 # ═══════════════════════════════════════════════════════
 
-def run_scraper_job(sources=None, topic_filter=None):
+def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="local"):
     """
     Run the full scraper pipeline:
     1. Scrape all sources
@@ -717,11 +852,17 @@ def run_scraper_job(sources=None, topic_filter=None):
     start_time = time.time()
     run_id = None
     sources = sources or ["reddit", "hackernews", "producthunt", "indiehackers"]
+    if mode == "quick":
+        sources = [source for source in sources if source in {"reddit", "hackernews"}]
+    elif mode == "trends":
+        sources = [source for source in sources if source in {"reddit", "hackernews", "producthunt"}]
 
     print("=" * 60)
     print("  Opportunity Engine — Scraper Job")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Sources: {', '.join(sources)}")
+    print(f"  Mode: {mode}")
+    print(f"  Caller: {source_label}")
     print("=" * 60)
 
     # Log run start
@@ -751,17 +892,19 @@ def run_scraper_job(sources=None, topic_filter=None):
                 added += 1
         return added
 
+    all_subs = load_user_requested_subreddits()
+
     if "reddit" in sources:
         # ── Layer 1: Async Reddit JSON API (~15s for 42 subs) ──
         print("\n  [1/6] Layer 1 — Async Reddit scrape...")
         try:
             from reddit_async import scrape_all_async
-            reddit_posts = asyncio.run(scrape_all_async())
+            reddit_posts = asyncio.run(scrape_all_async(subreddits=all_subs))
             added = _merge(reddit_posts)
             print(f"  [OK] Layer 1 (async): {added} fresh posts")
         except Exception as e:
             print(f"  [!] Layer 1 async failed, falling back to sync: {e}")
-            reddit_posts = scrape_all_reddit()
+            reddit_posts = scrape_all_reddit(subreddits=all_subs)
             added = _merge(reddit_posts)
             print(f"  [OK] Layer 1 (sync fallback): {added} posts")
 
@@ -769,7 +912,7 @@ def run_scraper_job(sources=None, topic_filter=None):
         print("\n  [2/6] Layer 2 — PullPush historical scrape...")
         try:
             from pullpush_scraper import scrape_historical_multi
-            pp_posts = scrape_historical_multi(days_back=90, size_per_sub=100, delay=0.5)
+            pp_posts = scrape_historical_multi(subreddits=all_subs, days_back=90, size_per_sub=100, delay=0.5)
             added = _merge(pp_posts)
             print(f"  [OK] Layer 2 (PullPush): +{added} historical posts")
         except Exception as e:
@@ -790,7 +933,7 @@ def run_scraper_job(sources=None, topic_filter=None):
             from reddit_auth import is_available as praw_available, scrape_all_authenticated
             if praw_available():
                 print("\n  [3.5/6] Layer 4 — PRAW authenticated deep dive...")
-                praw_posts = scrape_all_authenticated(TARGET_SUBREDDITS[:10], sorts=["rising"])
+                praw_posts = scrape_all_authenticated(all_subs[:10], sorts=["rising"])
                 added = _merge(praw_posts)
                 print(f"  [OK] Layer 4 (PRAW): +{added} authenticated posts")
         except Exception as e:
@@ -825,6 +968,40 @@ def run_scraper_job(sources=None, topic_filter=None):
                 "duration_seconds": round(time.time() - start_time, 1),
             })
         return
+
+    if SUPABASE_URL:
+        saved_posts = store_posts(all_posts)
+        print(f"  [OK] Stored {saved_posts} raw posts in Supabase")
+
+        try:
+            alert_matches = check_alerts_against_posts(all_posts)
+            if alert_matches:
+                print(f"  [PainStream] {alert_matches} new alert matches created")
+        except Exception as e:
+            print(f"  [PainStream] Alert check skipped: {e}")
+
+        try:
+            all_known_competitors = []
+            for competitor_list in KNOWN_COMPETITORS.values():
+                all_known_competitors.extend(competitor_list)
+            complaints = scan_for_complaints(all_posts, all_known_competitors)
+            if complaints:
+                saved_complaints = save_complaints(complaints)
+                print(f"  [Deathwatch] {saved_complaints} competitor pain signals saved")
+        except Exception as e:
+            print(f"  [Deathwatch] Scan skipped: {e}")
+
+        try:
+            aggregate_trends(posts=all_posts, select_fn=sb_select, patch_fn=sb_patch, upsert_fn=sb_upsert)
+        except Exception as e:
+            print(f"  [Trends] Aggregation skipped: {e}")
+
+        try:
+            pulse_updates = update_validation_scores(all_posts)
+            if pulse_updates:
+                print(f"  [Pulse] Updated {pulse_updates} active validations")
+        except Exception as e:
+            print(f"  [Pulse] Score updates skipped: {e}")
 
     # ── 2. Cluster posts → ideas ──
     print("\n  Clustering posts into idea topics...")
@@ -984,6 +1161,8 @@ if __name__ == "__main__":
                         help="Which sources to scrape")
     parser.add_argument("--topics", type=str, default=None,
                         help="Comma-separated topic slugs to update (e.g. 'invoice-automation,crm-for-freelancers')")
+    parser.add_argument("--mode", default="full", choices=["full", "trends", "quick"])
+    parser.add_argument("--source", default="local", help="Caller identifier for logging")
     args = parser.parse_args()
 
     topic_filter = None
@@ -991,7 +1170,12 @@ if __name__ == "__main__":
         topic_filter = [t.strip() for t in args.topics.split(",")]
 
     try:
-        run_scraper_job(sources=args.sources, topic_filter=topic_filter)
+        run_scraper_job(
+            sources=args.sources,
+            topic_filter=topic_filter,
+            mode=args.mode,
+            source_label=args.source,
+        )
     except Exception as e:
         print(f"\n  [FATAL] {e}")
         traceback.print_exc()

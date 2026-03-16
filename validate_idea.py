@@ -18,7 +18,7 @@ import requests
 # Add engine to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "engine"))
 
-from keyword_scraper import run_keyword_scan
+from keyword_scraper import run_keyword_scan, discover_subreddits
 from multi_brain import AIBrain, get_user_ai_configs, extract_json
 
 # ── Scraper imports (graceful fallback if any missing) ──
@@ -215,6 +215,44 @@ def _compute_weighted_score(post):
     return round(raw_score * platform_w * recency, 1)
 
 
+def _platform_warning(platform: str, health: dict, posts_count: int) -> dict | None:
+    status = str((health or {}).get("status") or "ok")
+    error_code = (health or {}).get("error_code")
+    error_detail = (health or {}).get("error_detail")
+
+    if status == "ok" and posts_count > 0:
+        return None
+
+    platform_label = {
+        "producthunt": "ProductHunt",
+        "indiehackers": "IndieHackers",
+        "hackernews": "Hacker News",
+        "reddit": "Reddit",
+    }.get(platform, platform.title())
+
+    if platform == "producthunt" and error_code == "graphql_auth_failed":
+        issue = f"{platform_label}: {error_detail} - data from Reddit + HN only"
+    elif platform == "producthunt" and status == "degraded":
+        issue = f"{platform_label}: {error_detail or 'RSS fallback only'} - coverage is limited"
+    elif platform == "indiehackers" and error_code == "algolia_auth_failed":
+        issue = f"{platform_label}: {error_detail} - data from Reddit + HN only"
+    elif platform == "indiehackers" and status == "degraded":
+        issue = f"{platform_label}: {error_detail or 'Web fallback only'} - coverage is limited"
+    elif posts_count == 0:
+        issue = f"{platform_label}: 0 posts returned"
+    else:
+        issue = f"{platform_label}: limited coverage"
+
+    return {
+        "platform": platform,
+        "status": status,
+        "error_code": error_code,
+        "error_detail": error_detail,
+        "posts": posts_count,
+        "issue": issue,
+    }
+
+
 # ═══════════════════════════════════════════════════════
 # PHASE 2: MARKET SCRAPING
 # ═══════════════════════════════════════════════════════
@@ -260,43 +298,64 @@ def phase2_scrape(keywords, validation_id):
     if PH_AVAILABLE:
         print("  [>] Scraping ProductHunt...")
         try:
-            ph_posts = run_ph_scrape(scrape_keywords, max_pages=2)
+            ph_result = run_ph_scrape(scrape_keywords, max_pages=2, return_health=True)
+            ph_posts = ph_result.get("posts", [])
             source_counts["producthunt"] = len(ph_posts)
             print(f"  [✓] ProductHunt: {len(ph_posts)} posts")
-            if len(ph_posts) == 0:
-                platform_warnings.append({
-                    "platform": "producthunt",
-                    "issue": "Limited to RSS fallback — GraphQL API requires auth (403). 0 posts returned. Data from Reddit+HN only."
-                })
-            elif len(ph_posts) <= 2:
-                platform_warnings.append({
-                    "platform": "producthunt",
-                    "issue": f"Only {len(ph_posts)} post(s) from RSS fallback — GraphQL requires auth. Coverage is minimal."
-                })
+            warning = _platform_warning("producthunt", ph_result, len(ph_posts))
+            if warning:
+                platform_warnings.append(warning)
         except Exception as e:
             print(f"  [!] ProductHunt scrape failed: {e}")
-            platform_warnings.append({"platform": "producthunt", "issue": f"Scrape error (infra): {str(e)[:100]}"})
+            platform_warnings.append({
+                "platform": "producthunt",
+                "status": "failed",
+                "error_code": "scraper_exception",
+                "error_detail": str(e)[:100],
+                "posts": 0,
+                "issue": f"ProductHunt: scrape error ({str(e)[:100]}) - data from Reddit + HN only",
+            })
     else:
-        platform_warnings.append({"platform": "producthunt", "issue": "Scraper not available (ph_scraper module missing)"})
+        platform_warnings.append({
+            "platform": "producthunt",
+            "status": "failed",
+            "error_code": "scraper_missing",
+            "error_detail": "ph_scraper module missing",
+            "posts": 0,
+            "issue": "ProductHunt: scraper not available - data from Reddit + HN only",
+        })
 
     # ── IndieHackers ──
     ih_posts = []
     if IH_AVAILABLE:
         print("  [>] Scraping IndieHackers...")
         try:
-            ih_posts = run_ih_scrape(scrape_keywords, max_pages=2)
+            ih_result = run_ih_scrape(scrape_keywords, max_pages=2, return_health=True)
+            ih_posts = ih_result.get("posts", [])
             source_counts["indiehackers"] = len(ih_posts)
             print(f"  [✓] IndieHackers: {len(ih_posts)} posts")
-            if len(ih_posts) == 0:
-                platform_warnings.append({
-                    "platform": "indiehackers",
-                    "issue": "Algolia API blocked (connection error on all retry attempts). 0 posts returned. Analysis based on Reddit+HN only."
-                })
+            warning = _platform_warning("indiehackers", ih_result, len(ih_posts))
+            if warning:
+                platform_warnings.append(warning)
         except Exception as e:
             print(f"  [!] IndieHackers scrape failed: {e}")
-            platform_warnings.append({"platform": "indiehackers", "issue": f"Scrape error (infra): {str(e)[:100]}"})
+            platform_warnings.append({
+                "platform": "indiehackers",
+                "status": "failed",
+                "error_code": "scraper_exception",
+                "error_detail": str(e)[:100],
+                "posts": 0,
+                "issue": f"IndieHackers: scrape error ({str(e)[:100]}) - data from Reddit + HN only",
+            })
     else:
-        platform_warnings.append({"platform": "indiehackers", "issue": "Scraper not available (ih_scraper module missing)"})
+        platform_warnings.append({
+            "platform": "indiehackers",
+            "status": "failed",
+            "error_code": "scraper_missing",
+            "error_detail": "ih_scraper module missing",
+            "posts": 0,
+            "issue": "IndieHackers: scraper not available - data from Reddit + HN only",
+        })
 
     # ── Merge + deduplicate + WEIGHT ──
     all_posts = reddit_posts + hn_posts + ph_posts + ih_posts
@@ -305,12 +364,30 @@ def phase2_scrape(keywords, validation_id):
     for p in all_posts:
         p["weighted_score"] = _compute_weighted_score(p)
 
-    seen_titles = set()
+    seen_post_keys = set()
     unique_posts = []
     for p in all_posts:
+        source_key = str(p.get("source") or p.get("subreddit") or "unknown").lower().strip()
+        external_id = str(p.get("external_id") or "").strip()
+        canonical_url = str(
+            p.get("permalink")
+            or p.get("url")
+            or p.get("post_url")
+            or ""
+        ).strip().lower()
         title_key = p.get("title", "").lower().strip()[:200]
-        if title_key and title_key not in seen_titles:
-            seen_titles.add(title_key)
+
+        if external_id:
+            dedupe_key = ("external_id", source_key, external_id)
+        elif canonical_url:
+            dedupe_key = ("url", source_key, canonical_url[:500])
+        elif title_key:
+            dedupe_key = ("title", source_key, title_key)
+        else:
+            dedupe_key = None
+
+        if dedupe_key and dedupe_key not in seen_post_keys:
+            seen_post_keys.add(dedupe_key)
             unique_posts.append(p)
 
     # Sort by weighted score — AI sees highest-signal posts first
@@ -836,15 +913,29 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
         if len(all_posts) <= budget:
             return all_posts
 
-        # Bucket 1: top 40 by score
-        sorted_by_score = sorted(all_posts, key=lambda p: p.get("score", 0), reverse=True)
+        # Bucket 1: top 40 by weighted signal score
+        sorted_by_score = sorted(
+            all_posts,
+            key=lambda p: p.get("weighted_score", _compute_weighted_score(p)),
+            reverse=True,
+        )
         top_n = min(40, budget * 4 // 10)
         top_picks = sorted_by_score[:top_n]
         top_ids = {p.get("id", "") for p in top_picks}
 
         # Bucket 2: 10 most recent (by created_utc or date)
         remaining = [p for p in all_posts if p.get("id", "") not in top_ids]
-        sorted_by_date = sorted(remaining, key=lambda p: p.get("created_utc", p.get("created_at", 0)), reverse=True)
+        def _parse_ts(p):
+            val = p.get("created_utc", p.get("created_at", 0))
+            if isinstance(val, str):
+                try:
+                    from datetime import datetime
+                    return datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    return 0
+            return float(val) if val else 0
+
+        sorted_by_date = sorted(remaining, key=_parse_ts, reverse=True)
         recent_picks = sorted_by_date[:10]
         recent_ids = {p.get("id", "") for p in recent_picks}
 
@@ -950,7 +1041,11 @@ Posts:
                 raw = brain.single_call(prompt, BATCH_SYSTEM)
                 data = extract_json(raw)
                 print(f"  [Batch {batch_idx+1}/{len(batches)}] ✓ {len(batch_posts)} posts", flush=True)
-                return data
+                return {
+                    "batch_size": len(batch_posts),
+                    "batch_index": batch_idx,
+                    "signals": data,
+                }
             except Exception as ex:
                 print(f"  [Batch {batch_idx+1}/{len(batches)}] ✗ {ex}", flush=True)
                 return None
@@ -969,19 +1064,24 @@ Posts:
             return None  # caller will use sampled posts_block instead
 
         # Merge all batch signals
+        successful_posts = sum(r.get("batch_size", 0) for r in batch_results)
+        partial_coverage = successful_posts < len(all_posts)
         all_pain_quotes, all_wtp, all_competitors, all_insights = [], [], [], []
         for r in batch_results:
-            all_pain_quotes.extend(r.get("pain_quotes", []) or [])
-            all_wtp.extend([w for w in (r.get("wtp_signals", []) or []) if w and w.lower() != "null"])
-            all_competitors.extend(r.get("competitor_mentions", []) or [])
-            if r.get("key_insight"):
-                all_insights.append(r["key_insight"])
+            signal_block = r.get("signals", {}) or {}
+            all_pain_quotes.extend(signal_block.get("pain_quotes", []) or [])
+            all_wtp.extend([w for w in (signal_block.get("wtp_signals", []) or []) if w and w.lower() != "null"])
+            all_competitors.extend(signal_block.get("competitor_mentions", []) or [])
+            if signal_block.get("key_insight"):
+                all_insights.append(signal_block["key_insight"])
 
         merged = {
-            "posts_analyzed": len(all_posts),
+            "posts_analyzed": successful_posts,
             "batches_succeeded": len(batch_results),
             "batches_total": len(batches),
-            "coverage": f"{len(all_posts)} posts ({len(batch_results)}/{len(batches)} batches)",
+            "partial_coverage": partial_coverage,
+            "failed_batches": max(0, len(batches) - len(batch_results)),
+            "coverage": f"{successful_posts}/{len(all_posts)} posts ({len(batch_results)}/{len(batches)} batches)",
             "pain_quotes": list(dict.fromkeys(all_pain_quotes))[:25],  # dedupe, keep order
             "wtp_signals": list(dict.fromkeys(all_wtp))[:15],
             "competitor_mentions": list(dict.fromkeys(all_competitors))[:10],
@@ -1012,7 +1112,7 @@ KEY INSIGHTS (one per batch):
 
 TOP {len(post_summaries)} REPRESENTATIVE POSTS (for title/score reference):
 {json.dumps(post_summaries, indent=2)}"""
-        posts_analyzed_count = len(pre_filtered)
+        posts_analyzed_count = batch_signals.get("posts_analyzed", len(sampled_posts))
     else:
         posts_block = f"TOP {len(post_summaries)} POSTS:\n{json.dumps(post_summaries, indent=2)}"
         posts_analyzed_count = len(sampled_posts)
@@ -1037,33 +1137,26 @@ DATA: {posts_filtered_count} filtered posts (from {len(posts)} total scraped) ac
     # ═══════════════════════════════════════
     print("\n  ── Pass 1/3: Market Analysis ──")
     update_validation(validation_id, {"status": "synthesizing (1/3 market analysis)"})
-    try:
-        pass1_prompt = f"""{context_block}
+    pass1_prompt = f"""{context_block}
 
 {posts_block}
 
 Analyze the MARKET signal. Find pain validation, WTP signals, and cite specific evidence posts."""
+    try:
         pass1_raw = brain.single_call(pass1_prompt, PASS1_SYSTEM)
         pass1 = extract_json(pass1_raw)
         evidence_count = len(pass1.get("evidence", []))
         print(f"  [✓] Pass 1 done: pain_validated={pass1.get('pain_validated')}, {evidence_count} evidence posts")
     except Exception as e:
-        print(f"  [!] Pass 1 failed: {e} — retrying with next model...")
-        try:
-            pass1_raw = brain.single_call(pass1_prompt, PASS1_SYSTEM)
-            pass1 = extract_json(pass1_raw)
-            print(f"  [✓] Pass 1 retry succeeded")
-        except Exception as e2:
-            print(f"  [!] Pass 1 retry also failed: {e2}")
-            pass1 = {"pain_validated": False, "pain_description": "Analysis failed", "evidence": []}
+        print(f"  [!] Pass 1 failed after routing all available models: {e}")
+        pass1 = {"pain_validated": False, "pain_description": "Analysis failed", "evidence": []}
 
     # ═══════════════════════════════════════
     # PASS 2: STRATEGY
     # ═══════════════════════════════════════
     print("\n  ── Pass 2/3: Strategy & Competition ──")
     update_validation(validation_id, {"status": "synthesizing (2/3 strategy)"})
-    try:
-        pass2_prompt = f"""{context_block}
+    pass2_prompt = f"""{context_block}
 
 MARKET ANALYSIS (from Pass 1):
 - Pain validated: {pass1.get('pain_validated')}
@@ -1075,25 +1168,21 @@ MARKET ANALYSIS (from Pass 1):
 
 Design the full strategy: ICP, competition landscape, pricing, and monetization.
 (Do NOT re-analyze raw posts — reason from the market analysis above.)"""
+    try:
         pass2_raw = brain.single_call(pass2_prompt, PASS2_SYSTEM)
         pass2 = extract_json(pass2_raw)
         competitors = pass2.get("competition_landscape", {}).get("direct_competitors", [])
         print(f"  [✓] Pass 2 done: {len(competitors)} competitors found, pricing model={pass2.get('pricing_strategy', {}).get('recommended_model', '?')}")
     except Exception as e:
-        print(f"  [!] Pass 2 failed: {e} — retrying with next model...")
-        try:
-            pass2_raw = brain.single_call(pass2_prompt, PASS2_SYSTEM)
-            pass2 = extract_json(pass2_raw)
-            print(f"  [✓] Pass 2 retry succeeded")
-        except Exception as e2:
-            print(f"  [!] Pass 2 retry also failed: {e2}")
-            pass2 = {"ideal_customer_profile": {}, "competition_landscape": {}, "pricing_strategy": {}}
+        print(f"  [!] Pass 2 failed after routing all available models: {e}")
+        pass2 = {"ideal_customer_profile": {}, "competition_landscape": {}, "pricing_strategy": {}}
 
     # ═══════════════════════════════════════
     # PASS 3: ACTION PLAN
     # ═══════════════════════════════════════
     print("\n  ── Pass 3/3: Action Plan ──")
     update_validation(validation_id, {"status": "synthesizing (3/3 action plan)"})
+    pass3_raw = ""
     try:
         pricing_summary = json.dumps(pass2.get("pricing_strategy", {}))
         icp_summary = pass2.get("ideal_customer_profile", {}).get("primary_persona", "Unknown")
@@ -1145,16 +1234,9 @@ Create the launch roadmap, revenue projections, risk matrix, and first 10 custom
         risk_count = len(pass3.get("risk_matrix", []))
         print(f"  [✓] Pass 3 done: {roadmap_steps} roadmap steps, {risk_count} risks, MVP features={pass3.get('mvp_features', [])}")
     except Exception as e:
-        print(f"  [!] Pass 3 failed: {e} — retrying with different model...")
-        try:
-            # Retry with third model (or wraps to first if only 2 configs)
-            pass3_raw = brain.single_call(pass3_prompt, PASS3_SYSTEM, pinned_index=2)
-            pass3 = extract_json(pass3_raw)
-            print(f"  [✓] Pass 3 retry succeeded")
-        except Exception as e2:
-            print(f"  [!] Pass 3 retry also failed: {e2}")
-            print(f"  [!] Raw Pass 3 output (first 500 chars): {pass3_raw[:500] if 'pass3_raw' in dir() else 'no output'}")
-            pass3 = {"launch_roadmap": [], "revenue_projections": {}, "risk_matrix": [], "first_10_customers_strategy": {}}
+        print(f"  [!] Pass 3 failed after routing all available models: {e}")
+        print(f"  [!] Raw Pass 3 output (first 500 chars): {pass3_raw[:500] if pass3_raw else 'no output'}")
+        pass3 = {"launch_roadmap": [], "revenue_projections": {}, "risk_matrix": [], "first_10_customers_strategy": {}}
 
     # ═══════════════════════════════════════
     # DATA QUALITY CHECK + CONTRADICTION DETECTION
@@ -1268,9 +1350,16 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     total_boost = min(15, boost)
     if total_boost > 0:
         boosted = min(capped_confidence + total_boost, 85)
-        print(f"  [Confidence] Cap={capped_confidence}% + Boost={total_boost}% → {boosted}%")
+        print(
+            f"  [Confidence] Cap={capped_confidence}% + Boost={total_boost}% "
+            f"→ {boosted}% | trends={_overall_trend or 'UNKNOWN'} "
+            f"comp={_comp_tier or 'UNKNOWN'} pain={_pain_ok} "
+            f"ev={_ev_count} wtp={_wtp_ok}"
+        )
         report["confidence"] = boosted
         capped_confidence = boosted  # update for downstream verdict overrides
+    else:
+        print(f"  [Confidence] No boost applied. Final={capped_confidence}%")
 
     # Override verdict if confidence was capped below thresholds
     if capped_confidence < 40 and report["verdict"] == "BUILD IT":
@@ -1287,7 +1376,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
                 "DONT_BUILD overridden to RISKY — confidence >80% with validated pain contradicts a hard negative. Review evidence."
             )
 
-    report["executive_summary"] = verdict_report.get("executive_summary", "")
+    report["executive_summary"] = verdict_report.get("executive_summary") or verdict_report.get("summary", "")
 
     # Pass 1: Market
     report["market_analysis"] = {
@@ -1320,6 +1409,9 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "pain_quotes_found": len((batch_signals or {}).get("pain_quotes", [])) if 'batch_signals' in dir() else 0,
         "wtp_signals_found": len((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else 0,
         "competitor_mentions": len((batch_signals or {}).get("competitor_mentions", [])) if 'batch_signals' in dir() else 0,
+        "partial_coverage": bool((batch_signals or {}).get("partial_coverage", False)) if 'batch_signals' in dir() else False,
+        "batches_succeeded": (batch_signals or {}).get("batches_succeeded", 0) if 'batch_signals' in dir() else 0,
+        "batches_total": (batch_signals or {}).get("batches_total", 0) if 'batch_signals' in dir() else 0,
         "data_sources": source_counts if 'source_counts' in dir() else {},
     }
 
@@ -1327,7 +1419,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     pass3_risks = pass3.get("risk_matrix", [])
     if not pass3_risks:
         # Extract risks from debate output — they're always generated, even when Pass 3 fails
-        debate_risks = verdict_report.get("risks", [])
+        debate_risks = verdict_report.get("risk_factors", [])
         if debate_risks:
             # Normalize to same structure as pass3 risk_matrix
             pass3_risks = [
@@ -1363,6 +1455,10 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
             report["market_analysis"]["evidence"].append(de)
             existing_titles.add(title_key)
     print(f"  [Evidence] Pass1={len(pass1.get('evidence', []))}, Debate={len(debate_evidence)}, Merged={len(report['market_analysis']['evidence'])}")
+    report["evidence_count"] = verdict_report.get(
+        "evidence_count",
+        len(debate_evidence) if debate_evidence else len(report["market_analysis"]["evidence"]),
+    )
 
     # ── Fix 1: Write full debate metadata to report so frontend displays it ──
     # debate() returns models_used, model_verdicts, debate_mode, consensus_type, dissent
@@ -1377,22 +1473,34 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["debate_mode"] = verdict_report.get("debate_mode", len(debate_models) > 1)
     report["models_used"] = debate_models
     report["model_verdicts"] = model_verdicts_flat
-    report["debate_rounds"] = 2 if verdict_report.get("debate_mode") else 1  # actual rounds used
+    report["debate_rounds"] = verdict_report.get("debate_rounds", 2 if verdict_report.get("debate_mode") else 1)
     report["consensus_type"] = verdict_report.get("consensus_type", "")
     report["consensus_strength"] = verdict_report.get("consensus_strength", "")
-    report["debate_log"] = []  # flat debate — no per-round log yet; placeholder for future
+    report["debate_log"] = verdict_report.get("debate_log", [])
     report["final_verdict"] = verdict_report.get("verdict", report.get("verdict", ""))
+    report["verdict_source"] = verdict_report.get("_source", "unknown")
 
     # Metadata
     report["data_sources"] = source_counts
+    report["platform_breakdown"] = source_counts
     report["platforms_used"] = platforms_used
     report["trends_data"] = intel.get("trends")
     report["competition_data"] = intel.get("competition")
     report["synthesis_method"] = "multi-pass-3"
+    report["keywords"] = decomposition.get("keywords", [])
     # Pipeline counts for UI
     report["posts_scraped"] = len(posts)
     report["posts_filtered"] = posts_filtered_count
     report["posts_analyzed"] = posts_analyzed_count
+    if batch_signals and batch_signals.get("partial_coverage"):
+        data_quality["warnings"].append(
+            f"Batch summarization partially succeeded — {batch_signals.get('batches_succeeded', 0)}/{batch_signals.get('batches_total', 0)} batches completed."
+        )
+    model_count = len(getattr(brain, "configs", []))
+    if model_count < 3:
+        data_quality["warnings"].append(
+            f"Only {model_count} model(s) — add more in Settings for richer debate. Min 3 recommended."
+        )
 
     # ── DATA QUALITY METADATA (new) ──
     report["data_quality"] = {
@@ -1401,6 +1509,9 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "data_sufficient": len(posts) >= 20,
         "platforms_with_data": platforms_used,
         "platforms_total": 4,
+        "partial_coverage": bool((batch_signals or {}).get("partial_coverage", False)) if 'batch_signals' in dir() else False,
+        "batches_succeeded": (batch_signals or {}).get("batches_succeeded", 0) if 'batch_signals' in dir() else 0,
+        "batches_total": (batch_signals or {}).get("batches_total", 0) if 'batch_signals' in dir() else 0,
         "confidence_was_capped": capped_confidence < raw_confidence,
         "original_confidence": raw_confidence,
         "cap_reason": data_quality["cap_reason"] if capped_confidence < raw_confidence else None,
@@ -1434,18 +1545,25 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     print(f"  [DB] status=done written to Supabase", flush=True)
 
     # Step 2: Write extra columns separately — non-fatal if they don't exist
-    # FIX 2: Only write columns that exist in the schema (posts_found, posts_analyzed)
-    # Removed posts_filtered and verdict_source which caused 400 errors
+    # These columns now exist in Supabase and should match the schema exactly.
     try:
         url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
         r = requests.patch(url, json={
             "posts_analyzed": posts_analyzed_count,
             "posts_found": len(posts),
+            "verdict_source": verdict_source,
+            "synthesis_method": report["synthesis_method"],
+            "debate_mode": "debate" if report["debate_mode"] else "single",
+            "platform_breakdown": source_counts,
         }, headers=_supabase_headers(), timeout=10)
         if r.status_code >= 400:
             print(f"  [!] Extra columns update skipped (schema may not have them): {r.status_code}", flush=True)
         else:
-            print(f"  [DB] Extra columns written: posts_found={len(posts)}, posts_analyzed={posts_analyzed_count}", flush=True)
+            print(
+                f"  [DB] Extra columns written: posts_found={len(posts)}, "
+                f"posts_analyzed={posts_analyzed_count}, verdict_source={verdict_source}",
+                flush=True,
+            )
     except Exception as ex:
         print(f"  [!] Extra columns update failed (non-fatal): {ex}", flush=True)
 
@@ -1520,7 +1638,7 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
                 fallback_configs.append({
                     "provider": "openrouter",
                     "api_key": os.environ["OPENROUTER_API_KEY"],
-                    "selected_model": "anthropic/claude-3.5-sonnet",
+                    "selected_model": "openrouter/deepseek/deepseek-r1",
                     "is_active": True,
                     "priority": 4,
                 })
@@ -1534,6 +1652,24 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
 
         # Phase 1: Decompose idea
         decomposition = phase1_decompose(idea_text, brain, validation_id)
+
+        # Dynamic subreddit expansion for future scraper coverage
+        if user_id:
+            try:
+                new_subs = discover_subreddits(decomposition.get("keywords", [])[:5])
+                if new_subs:
+                    requests.post(
+                        f"{SUPABASE_URL}/rest/v1/user_requested_subreddits",
+                        headers={**_supabase_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                        json=[
+                            {"subreddit": s, "requested_by": user_id, "keywords": decomposition.get("keywords", [])[:5]}
+                            for s in new_subs
+                        ],
+                        timeout=10,
+                    )
+                    print(f"  [Subs] Discovered {len(new_subs)} new subreddits: {new_subs}")
+            except Exception as e:
+                print(f"  [Subs] Discovery failed: {e}")
 
         # Phase 2: Scrape ALL platforms
         posts, source_counts, platform_warnings = phase2_scrape(decomposition["keywords"], validation_id)
@@ -1637,4 +1773,3 @@ if __name__ == "__main__":
         )
     else:
         validate_idea(args.validation_id, args.idea, args.user_id)
-

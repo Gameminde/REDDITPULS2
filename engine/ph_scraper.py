@@ -10,10 +10,27 @@ import json
 import requests
 from datetime import datetime
 from xml.etree import ElementTree
+from proxy_rotator import get_rotator
 
 
 # ── Session-based approach (survives cookie/header changes) ──
 _session = None
+_rotator = get_rotator()
+
+
+def _proxy_kwargs():
+    proxies = _rotator.format_for_requests() if _rotator.has_proxies() else None
+    return {"proxies": proxies} if proxies else {}
+
+
+def _health_payload(posts=None, status="ok", error_code=None, error_detail=None, method=None):
+    return {
+        "posts": posts or [],
+        "status": status,
+        "error_code": error_code,
+        "error_detail": error_detail,
+        "method": method,
+    }
 
 def _get_session():
     """Create a persistent session with browser-like headers."""
@@ -29,7 +46,7 @@ def _get_session():
         })
         # Warm the session — grab PH homepage to get cookies/CSRF
         try:
-            _session.get("https://www.producthunt.com", timeout=10)
+            _session.get("https://www.producthunt.com", timeout=10, **_proxy_kwargs())
         except Exception:
             pass
     return _session
@@ -85,22 +102,46 @@ def _search_ph_graphql(keyword, cursor="", max_retries=3):
                 json=query,
                 headers={"Content-Type": "application/json"},
                 timeout=15,
+                **_proxy_kwargs(),
             )
             if resp.status_code == 200:
                 data = resp.json()
                 # Check for GraphQL errors
                 if "errors" in data:
-                    print(f"    [PH] GraphQL schema error: {data['errors'][0].get('message', 'unknown')}")
-                    return [], "", False
+                    message = data["errors"][0].get("message", "unknown")
+                    print(f"    [PH] GraphQL schema error: {message}")
+                    return {
+                        "edges": [],
+                        "cursor": "",
+                        "has_next": False,
+                        "status": "failed",
+                        "error_code": "graphql_schema_error",
+                        "error_detail": message,
+                    }
 
                 search_data = data.get("data", {}).get("search", {})
                 if search_data is None:
-                    print(f"    [PH] GraphQL returned null search — schema may have changed")
-                    return [], "", False
+                    detail = "search returned null"
+                    print(f"    [PH] GraphQL returned null search - schema may have changed")
+                    return {
+                        "edges": [],
+                        "cursor": "",
+                        "has_next": False,
+                        "status": "failed",
+                        "error_code": "graphql_null_search",
+                        "error_detail": detail,
+                    }
 
                 edges = search_data.get("edges", [])
                 page_info = search_data.get("pageInfo", {})
-                return edges, page_info.get("endCursor", ""), page_info.get("hasNextPage", False)
+                return {
+                    "edges": edges,
+                    "cursor": page_info.get("endCursor", ""),
+                    "has_next": page_info.get("hasNextPage", False),
+                    "status": "ok",
+                    "error_code": None,
+                    "error_detail": None,
+                }
 
             elif resp.status_code == 429:
                 wait = 3 * (attempt + 1)
@@ -109,12 +150,28 @@ def _search_ph_graphql(keyword, cursor="", max_retries=3):
                 continue
 
             elif resp.status_code in (401, 403):
-                print(f"    [PH] Auth required ({resp.status_code}) — GraphQL endpoint locked, using fallback")
-                return [], "", False
+                detail = f"GraphQL auth failed ({resp.status_code})"
+                print(f"    [PH] Auth required ({resp.status_code}) - GraphQL endpoint locked, using fallback")
+                return {
+                    "edges": [],
+                    "cursor": "",
+                    "has_next": False,
+                    "status": "failed",
+                    "error_code": "graphql_auth_failed",
+                    "error_detail": detail,
+                }
 
             else:
+                detail = f"unexpected status {resp.status_code}"
                 print(f"    [PH] Unexpected status {resp.status_code}")
-                return [], "", False
+                return {
+                    "edges": [],
+                    "cursor": "",
+                    "has_next": False,
+                    "status": "failed",
+                    "error_code": "graphql_http_error",
+                    "error_detail": detail,
+                }
 
         except requests.exceptions.Timeout:
             print(f"    [PH] Timeout on attempt {attempt + 1}")
@@ -124,9 +181,23 @@ def _search_ph_graphql(keyword, cursor="", max_retries=3):
             time.sleep(3)
         except Exception as e:
             print(f"    [PH] GraphQL error: {e}")
-            return [], "", False
+            return {
+                "edges": [],
+                "cursor": "",
+                "has_next": False,
+                "status": "failed",
+                "error_code": "graphql_exception",
+                "error_detail": str(e),
+            }
 
-    return [], "", False
+    return {
+        "edges": [],
+        "cursor": "",
+        "has_next": False,
+        "status": "failed",
+        "error_code": "graphql_retry_exhausted",
+        "error_detail": "GraphQL retries exhausted",
+    }
 
 
 def _parse_ph_rss(keyword):
@@ -138,6 +209,7 @@ def _parse_ph_rss(keyword):
             PH_RSS_URL,
             headers={"Accept": "application/rss+xml, application/xml, text/xml"},
             timeout=15,
+            **_proxy_kwargs(),
         )
         if resp.status_code != 200:
             print(f"    [PH] RSS returned {resp.status_code}")
@@ -261,7 +333,7 @@ def _parse_timestamp(ts_str):
         return time.time()
 
 
-def run_ph_scrape(keywords, max_pages=2):
+def run_ph_scrape(keywords, max_pages=2, return_health=False):
     """
     Run ProductHunt scrape with multi-layer fallback:
     1. GraphQL (best data — votes, comments, descriptions)
@@ -270,6 +342,8 @@ def run_ph_scrape(keywords, max_pages=2):
     seen_ids = set()
     all_posts = []
     graphql_failed = False
+    graphql_error_code = None
+    graphql_error_detail = None
 
     for kw in keywords:
         print(f"    [PH] Searching: '{kw}'...")
@@ -278,12 +352,17 @@ def run_ph_scrape(keywords, max_pages=2):
         if not graphql_failed:
             cursor = ""
             for page in range(max_pages):
-                edges, cursor, has_next = _search_ph_graphql(kw, cursor)
+                graphql_result = _search_ph_graphql(kw, cursor)
+                edges = graphql_result.get("edges", [])
+                cursor = graphql_result.get("cursor", "")
+                has_next = graphql_result.get("has_next", False)
 
                 if not edges and page == 0:
                     # GraphQL is broken for this session — skip for all keywords
                     graphql_failed = True
-                    print("    [PH] GraphQL unavailable — switching to RSS for all keywords")
+                    graphql_error_code = graphql_result.get("error_code")
+                    graphql_error_detail = graphql_result.get("error_detail")
+                    print("    [PH] GraphQL unavailable - switching to RSS for all keywords")
                     break
 
                 for edge in edges:
@@ -335,7 +414,28 @@ def run_ph_scrape(keywords, max_pages=2):
 
     method = "RSS-only" if graphql_failed else "GraphQL"
     print(f"    [PH] Total: {len(all_posts)} posts (via {method})")
-    return all_posts
+    if not return_health:
+        return all_posts
+
+    if graphql_failed and all_posts:
+        return _health_payload(
+            posts=all_posts,
+            status="degraded",
+            error_code=graphql_error_code or "graphql_fallback",
+            error_detail=graphql_error_detail or "GraphQL unavailable - using RSS fallback",
+            method=method,
+        )
+
+    if graphql_failed and not all_posts:
+        return _health_payload(
+            posts=[],
+            status="failed",
+            error_code=graphql_error_code or "graphql_fallback",
+            error_detail=graphql_error_detail or "GraphQL unavailable and RSS returned 0 posts",
+            method=method,
+        )
+
+    return _health_payload(posts=all_posts, status="ok", method=method)
 
 
 if __name__ == "__main__":

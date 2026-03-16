@@ -150,7 +150,36 @@ Return ONLY valid JSON:
     system = "You are a startup advisor who has seen 10,000 pitches. Most ideas fail. Be honest about why."
 
     try:
-        configs = get_user_ai_configs()
+        configs = []
+        if os.environ.get("GEMINI_API_KEY"):
+            configs.append({
+                "id": "graveyard-gemini",
+                "provider": "gemini",
+                "api_key": os.environ["GEMINI_API_KEY"],
+                "selected_model": "gemini-2.0-flash",
+                "is_active": True,
+                "priority": 1,
+            })
+        if os.environ.get("OPENROUTER_API_KEY"):
+            configs.append({
+                "id": "graveyard-openrouter",
+                "provider": "openrouter",
+                "api_key": os.environ["OPENROUTER_API_KEY"],
+                "selected_model": "openrouter/deepseek/deepseek-r1",
+                "is_active": True,
+                "priority": 2,
+            })
+        if os.environ.get("OPENAI_API_KEY"):
+            configs.append({
+                "id": "graveyard-openai",
+                "provider": "openai",
+                "api_key": os.environ["OPENAI_API_KEY"],
+                "selected_model": "gpt-4o",
+                "is_active": True,
+                "priority": 3,
+            })
+        if not configs:
+            raise RuntimeError("No AI model environment variables configured for graveyard generation")
         brain = AIBrain(configs)
         raw = brain.single_call(prompt, system)
         result = extract_json(raw)

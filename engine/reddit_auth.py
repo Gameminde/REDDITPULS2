@@ -48,7 +48,13 @@ def _get_reddit() -> "praw.Reddit | None":
 
 def is_available() -> bool:
     """Check if authenticated Reddit access is available."""
-    return PRAW_AVAILABLE and bool(REDDIT_CLIENT_ID) and bool(REDDIT_CLIENT_SECRET)
+    has_creds = PRAW_AVAILABLE and bool(REDDIT_CLIENT_ID) and bool(REDDIT_CLIENT_SECRET)
+    if has_creds:
+        print("[Reddit] Using official API (pre-approved credentials)")
+    else:
+        print("[Reddit] ⚠ No official API credentials — using proxy scraping")
+        print("[Reddit] Apply for commercial access: reddit.com/wiki/api")
+    return has_creds
 
 
 def _submission_to_post(submission) -> dict:

@@ -496,7 +496,13 @@ python enrich_idea.py invoice-automation --keywords "invoice,billing"
 ## Deployment Notes
 
 - The Python engine runs as **child processes** spawned by Next.js API routes via `exec()`
-- For production, consider running the scraper as a **cron job** (every 6–12 hours)
+- The repo includes a GitHub Actions workflow at [`.github/workflows/scraper.yml`](./.github/workflows/scraper.yml)
+- The scraper is currently scheduled to run **every 2 hours** via cron: `0 */2 * * *`
+- On GitHub, add these Actions secrets before enabling the workflow: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PROXY_LIST`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `GH_TOKEN`
+- The workflow runs `python scraper_job.py --mode=full --source=github_actions`
+- Each scheduled run also stores posts, checks Pain Stream alerts, runs Competitor Deathwatch, updates `trend_signals`, updates Market Pulse scores, and calls `cleanup_old_posts()`
+- This repository is **public**, so standard GitHub-hosted Linux runner time is not constrained by the private-repo 2000-minute free allowance
+- Keep the workflow `timeout-minutes: 25` in mind when expanding sources or adding heavier enrichment steps
 - The `enrichment_cache` has a **7-day TTL** — stale data auto-expires via DB trigger
 - **Rate limits**: Reddit (2.5s delay), HN (0.5s), PH (1s per page), IH (0.5s), SO (monitored quota), GitHub (token recommended)
 - All Supabase tables have **RLS enabled** — the service role key bypasses RLS for backend writes
