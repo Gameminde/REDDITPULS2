@@ -85,6 +85,15 @@ def sb_patch(table, match_query, data):
     return r
 
 
+def sb_rpc(fn_name, params=None):
+    """Invoke a Supabase RPC function."""
+    url = f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}"
+    r = requests.post(url, json=params or {}, headers=_headers(), timeout=30)
+    if r.status_code >= 400:
+        print(f"    [!] Supabase RPC {fn_name} error {r.status_code}: {r.text[:200]}")
+    return r
+
+
 # ═══════════════════════════════════════════════════════
 # SCRAPING (REUSES EXISTING ENGINE SCRAPERS)
 # ═══════════════════════════════════════════════════════
@@ -957,6 +966,10 @@ def run_scraper_job(sources=None, topic_filter=None):
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": duration,
         })
+
+    if SUPABASE_URL:
+        print("\n  Running database cleanup...")
+        sb_rpc("cleanup_old_posts")
 
     print(f"\n{'=' * 60}")
     print(f"  Done! {len(all_posts)} posts → {ideas_updated} ideas updated")

@@ -153,6 +153,28 @@ KNOWN_COMPETITORS = {
         "wtp_floor": "$15",
         "wtp_ceiling": "$99",
     },
+    "idea_validation": {
+        "triggers": ["idea validation", "startup validation", "validate idea",
+                     "market validation", "idea testing", "validate startup",
+                     "product validation", "startup idea"],
+        "competitors": [
+            {"name": "Exploding Topics", "price": "$39-99/mo",
+             "weakness": "trend data only, no idea-specific validation", "users": "50,000+"},
+            {"name": "Glimpse", "price": "$71-199/mo",
+             "weakness": "Google Trends extension, no Reddit/HN scraping", "users": "20,000+"},
+            {"name": "SparkToro", "price": "$50-225/mo",
+             "weakness": "audience research only, no AI debate or verdict", "users": "15,000+"},
+            {"name": "IdeaBuddy", "price": "$49/mo",
+             "weakness": "static templates, no real-time market data", "users": "unknown"},
+            {"name": "Failory", "price": "free/paid",
+             "weakness": "post-mortem database only, no real-time validation", "users": "unknown"},
+            {"name": "Validated.com", "price": "$29/mo",
+             "weakness": "survey-based, no AI, no social scraping", "users": "unknown"},
+        ],
+        "saturation": "MEDIUM",
+        "wtp_floor": "$29",
+        "wtp_ceiling": "$99",
+    },
 }
 
 
@@ -173,15 +195,27 @@ def match_known_competitors(idea_text: str) -> Optional[dict]:
 def _google_result_count(query: str) -> int:
     """
     Estimate Google result count for a query.
-    Uses the 'About X results' text from Google search.
+    Detects CAPTCHA/block and returns -1 immediately.
+    Uses (connect, read) timeout tuple to prevent TCP-level hangs.
     """
     try:
         url = f"https://www.google.com/search?q={quote_plus(query)}&hl=en"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = requests.get(url, headers=HEADERS, timeout=(5, 8))
         if resp.status_code != 200:
+            print(f"    [COMP] Google HTTP {resp.status_code} — blocked or rate-limited")
             return -1
 
         text = resp.text
+
+        # ── Detect CAPTCHA / bot block ──
+        lower = text.lower()
+        if any(sig in lower for sig in [
+            "unusual traffic", "captcha", "are you a robot",
+            "recaptcha", "sorry/index", "blocked",
+        ]):
+            print(f"    [COMP] Google CAPTCHA/block detected")
+            return -1
+
         # Look for "About X results" or "X results"
         match = re.search(r'(?:About\s+)?([\d,]+)\s+results?', text)
         if match:
@@ -192,26 +226,59 @@ def _google_result_count(query: str) -> int:
         result_divs = text.count('class="g"')
         return result_divs * 10  # rough estimate
 
+    except requests.exceptions.Timeout:
+        print(f"    [COMP] Google timed out: {query[:50]}...")
+        return -1
+    except requests.exceptions.ConnectionError:
+        print(f"    [COMP] Google connection failed: {query[:50]}...")
+        return -1
     except Exception as e:
         print(f"    [COMP] Google search error: {e}")
         return -1
 
 
+def _bing_result_count(query: str) -> int:
+    """Fallback: estimate result count via Bing (less aggressive bot detection)."""
+    try:
+        bing_headers = {**HEADERS, "Referer": "https://www.bing.com/"}
+        url = f"https://www.bing.com/search?q={quote_plus(query)}"
+        resp = requests.get(url, headers=bing_headers, timeout=(5, 8))
+        if resp.status_code != 200:
+            return -1
+        text = resp.text
+        match = re.search(r'([\d,]+)\s+results?', text)
+        if match:
+            return int(match.group(1).replace(",", ""))
+        return text.count('class="b_algo"') * 10
+    except Exception as e:
+        print(f"    [COMP] Bing search error: {e}")
+        return -1
+
+
+def _robust_result_count(query: str) -> int:
+    """Try Google first, fall back to Bing if Google is blocked/down."""
+    count = _google_result_count(query)
+    if count >= 0:
+        return count
+    print(f"    [COMP] Google blocked — trying Bing")
+    return _bing_result_count(query)
+
+
 def _count_g2_products(keyword: str) -> int:
     """Estimate how many products exist on G2 for this keyword."""
-    count = _google_result_count(f'site:g2.com/products "{keyword}"')
+    count = _robust_result_count(f'site:g2.com/products "{keyword}"')
     return max(count, 0)
 
 
 def _count_ph_launches(keyword: str) -> int:
     """Estimate how many products launched on ProductHunt for this keyword."""
-    count = _google_result_count(f'site:producthunt.com/posts "{keyword}"')
+    count = _robust_result_count(f'site:producthunt.com/posts "{keyword}"')
     return max(count, 0)
 
 
 def _count_alternatives_searches(keyword: str) -> int:
     """Check how many people search for alternatives (high = market pain)."""
-    count = _google_result_count(f'"{keyword}" alternative')
+    count = _robust_result_count(f'"{keyword}" alternative')
     return max(count, 0)
 
 
@@ -309,21 +376,27 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
         print(f"    [COMP] Known category matched — skipping Google search to avoid timeout contamination")
         return results
 
-    # Step 2: Google discovery for each keyword (only when no known category matched)
+    # Step 2: Search engine discovery with Google→Bing fallback
+    all_failed = True
     for kw in keywords:
         print(f"    [COMP] Checking competition for: '{kw}'...")
 
-        g2 = _count_g2_products(kw)
-        time.sleep(2)
-        ph = _count_ph_launches(kw)
-        time.sleep(2)
-        alt = _count_alternatives_searches(kw)
-        time.sleep(2)
-
-        if g2 < 0 and ph < 0 and alt < 0:
-            print(f"    [COMP] All searches failed for '{kw}' — skipping")
+        try:
+            g2 = _count_g2_products(kw)
+            time.sleep(1)
+            ph = _count_ph_launches(kw)
+            time.sleep(1)
+            alt = _count_alternatives_searches(kw)
+            time.sleep(1)
+        except Exception as e:
+            print(f"    [COMP] Error analyzing '{kw}': {e}")
             continue
 
+        if g2 < 0 and ph < 0 and alt < 0:
+            print(f"    [COMP] All search engines failed for '{kw}'")
+            continue
+
+        all_failed = False
         g2 = max(g2, 0)
         ph = max(ph, 0)
         alt = max(alt, 0)
@@ -333,6 +406,21 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
         results[kw] = report
 
         print(f"    [COMP] {report}")
+
+    # ── Fallback: if ALL search engines blocked, assume COMPETITIVE ──
+    if not results and all_failed:
+        print(f"    [COMP] All search engines blocked — using COMPETITIVE fallback")
+        fallback = CompetitionReport("search_fallback", "COMPETITIVE", {
+            "g2_products": -1,
+            "ph_launches": -1,
+            "total_products": -1,
+            "alternatives_searches": -1,
+            "switch_demand": "unknown",
+            "source": "heuristic_fallback",
+            "note": "Search engines blocked — competition assumed COMPETITIVE (safe default)",
+        })
+        results["search_fallback"] = fallback
+        print(f"    [COMP] Fallback applied: COMPETITIVE")
 
     return results
 

@@ -1,515 +1,154 @@
-# RedditPulse — Complete System Cartography
+# RedditPulse — Complete System Cartography (Verified)
 
-## Table of Contents
-1. [Architecture Overview](#1-architecture-overview)
-2. [Tool Map — All Pages & Functions](#2-tool-map)
-3. [AI Model Setup — What the AI Sees](#3-ai-model-setup)
-4. [Debate Engine — How Models Fight](#4-debate-engine)
-5. [Scraper Architecture](#5-scraper-architecture)
-6. [Validation Pipeline — Phase by Phase](#6-validation-pipeline)
-7. [Report Structure — Every Field Explained](#7-report-structure)
-8. [Data Quality System](#8-data-quality-system)
-9. [Data Flow Diagram](#9-data-flow-diagram)
+## 1. Architecture Map
 
----
+### FRONTEND (Next.js 16 / TypeScript)
 
-## 1. Architecture Overview
+#### Core Configuration & Middleware
+- `next.config.ts`: Strict Content-Security-Policy blocking inline unsafe scripts, securing Supabase/Groq/OpenAI/Anthropic websockets & api endpoints.
+- `app/src/middleware.ts`: Intercepts `/dashboard/*`. Uses `@supabase/ssr` `createServerClient`. Redirects unauthenticated users to `/login` and authenticated users away from `/login`.
 
-```mermaid
-graph TB
-    subgraph Frontend["Next.js Frontend"]
-        Dashboard["Dashboard UI"]
-        Validate["Validate Page"]
-        Settings["Settings / AI Config"]
-        Intel["Intelligence Pages"]
-        Personal["Personal Pages"]
-    end
+#### Pages & Routes
+| Route | File Path | What It Renders / Does |
+|-------|-----------|------------------------|
+| `GET /` | `app/src/app/page.tsx` | Main landing page |
+| `GET /login` | `app/src/app/login/page.tsx` | Authentication UI |
+| `GET /dashboard` | `app/src/app/dashboard/page.tsx` | Dashboard home (stats, recent scans) |
+| `GET /dashboard/validate` | `app/src/app/dashboard/validate/page.tsx` | Idea submission and live pipeline visualization |
+| `GET /dashboard/settings` | `app/src/app/dashboard/settings/page.tsx` | Profile and AI Model configuration UI (with verify hooks) |
+| `GET /dashboard/reports` | `app/src/app/dashboard/reports/page.tsx` | List of all past validation reports |
+| `GET /dashboard/reports/[id]` | `app/src/app/dashboard/reports/[id]/page.tsx` | Full detailed report view `<ResultsView />` |
+| `GET /dashboard/scans` | `app/src/app/dashboard/scans/page.tsx` | Keyword scans list |
+| `GET /dashboard/explore` | `app/src/app/dashboard/explore/page.tsx` | Community ideas feed (reading `ideas` table) |
+| `GET /dashboard/trends` | `app/src/app/dashboard/trends/page.tsx` | Intelligence: Market trends |
+| `GET /dashboard/wtp` | `app/src/app/dashboard/wtp/page.tsx` | Intelligence: Willingness-to-pay signals |
+| `GET /dashboard/competitors`| `app/src/app/dashboard/competitors/page.tsx`| Intelligence: Competitor analysis |
+| `GET /dashboard/sources` | `app/src/app/dashboard/sources/page.tsx` | Intelligence: Data sources |
+| `GET /dashboard/saved` | `app/src/app/dashboard/saved/page.tsx` | Bookmarked ideas |
+| `GET /dashboard/digest` | `app/src/app/dashboard/digest/page.tsx` | Timeline of findings |
 
-    subgraph API["API Routes (Next.js)"]
-        ValAPI["/api/validate"]
-        SettingsAPI["/api/settings/ai"]
-        IntelAPI["/api/intelligence"]
-        ScanAPI["/api/scan"]
-        WatchAPI["/api/watchlist"]
-    end
+#### API Routes
+| Method/Route | File Path | Purpose |
+|--------------|-----------|---------|
+| `POST /api/validate` | `app/src/app/api/validate/route.ts` | Rate limits (5/hr), Premium check, Spawns Python `child_process` orchestrator with `--config-file`, Returns `validationId`. |
+| `GET /api/validate/[id]`| `app/src/app/api/validate/[id]/route.ts` | Polling endpoint for `idea_validations` row. |
+| `GET/POST/DELETE /api/settings/ai`| `app/src/app/api/settings/ai/route.ts` | Manage `user_ai_config` (calls RPC `upsert_ai_config_encrypted` vs plaintext fallback). |
+| `POST /api/settings/ai/verify`| `app/src/app/api/settings/ai/verify/route.ts` | Verifies AI provider API key live via `/engines/models/verify_key` logic. |
+| `GET /api/intelligence` | `app/src/app/api/intelligence/route.ts` | Aggregates & extracts JSON from `report` field across all runs. |
+| `GET/POST /api/scan` | `app/src/app/api/scan/route.ts` | Triggers background global keyword scans (`run_scan.py`). |
+| `GET /api/scan/[id]` | `app/src/app/api/scan/[id]/route.ts` | Fetch specific scan results. |
+| `GET/POST /api/watchlist`| `app/src/app/api/watchlist/route.ts` | Manage saved items on the `watchlists` table. |
+| `GET /api/ideas` | `app/src/app/api/ideas/route.ts` | Fetch global ideas `ideas` table ("stock market"). |
 
-    subgraph Engine["Python Engine"]
-        VI["validate_idea.py"]
-        MB["multi_brain.py"]
-        KS["keyword_scraper.py"]
-        HN["hn_scraper.py"]
-        PH["ph_scraper.py"]
-        IH["ih_scraper.py"]
-        TR["trends.py"]
-        CO["competition.py"]
-        ICP_M["icp.py"]
-    end
+#### Internal Components
+- **`ValidatePage`**: Accepts idea text. Submits to `/api/validate`. Spawns `PhaseTimeline` and polls `setInterval(() => fetch(...), 3000)`.
+- **`PhaseTimeline`**: Props `{ status: string }`. Consumes validation status string to render mapped step icons/text.
+- **`ResultsView`**: Props `{ validation: Validation }`. Consumes `validation.report` JSON directly to map DOM nodes.
+- **`ConfidenceMeter`**: Renders `<div style={{ width: \`${value}%\` }} />`.
+- **`VerdictBadge`**: Renders pill badge (Green=BUILD IT, Red=DON'T BUILD, Yellow=RISKY).
+- **`app-sidebar`**: Global navigation.
+- **`premium-gate`**: Paywall component masking nested children logic.
+- **`motion`**: Framer Motion wrapper (`app/components/motion.tsx`).
 
-    subgraph External["External APIs"]
-        Reddit["Reddit JSON API"]
-        HN_API["HN Algolia API"]
-        Google["Google Trends / Search"]
-        Gemini["Gemini API"]
-        OpenAI_API["OpenAI API"]
-        Groq_API["Groq API"]
-        Anthropic_API["Anthropic API"]
-        DeepSeek["DeepSeek API"]
-        More["+ Grok, Minimax, OpenRouter, Ollama"]
-    end
-
-    subgraph DB["Supabase"]
-        Users["users / profiles"]
-        Configs["user_ai_config"]
-        Validations["idea_validations"]
-        Scans["scan_results"]
-        Watch["watchlist"]
-    end
-
-    Dashboard --> ValAPI
-    Settings --> SettingsAPI
-    Intel --> IntelAPI
-    ValAPI --> VI
-    VI --> MB
-    VI --> KS --> Reddit
-    VI --> HN --> HN_API
-    VI --> TR --> Google
-    VI --> CO --> Google
-    MB --> Gemini
-    MB --> OpenAI_API
-    MB --> Groq_API
-    MB --> Anthropic_API
-    MB --> DeepSeek
-    MB --> More
-    SettingsAPI --> Configs
-    ValAPI --> Validations
-    IntelAPI --> Validations
-```
+#### Environment Variables
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (Used in Route Handlers to bypass RLS for background triggers).
+- `AI_ENCRYPTION_KEY` (Used by AI config endpoint to manage `pgp_sym_encrypt` / `pgp_sym_decrypt`).
 
 ---
 
-## 2. Tool Map
+### BACKEND (Python engine/ Orchestrators)
 
-### Core Tools
-| Page | Route | Function | Data Source |
-|------|-------|----------|-------------|
-| **Validate** | `/dashboard/validate` | Submit idea → get scored report | `idea_validations` table |
-| **Explore** | `/dashboard/explore` | Browse community ideas | `ideas` table |
-| **Scans** | `/dashboard/scans` | Keyword scan across Reddit | `scan_results` table |
-| **Settings** | `/dashboard/settings` | AI model config + profile | `user_ai_config` table |
+#### Root Scripts (Callable via `child_process.spawn`)
+- `validate_idea.py`: Orchestrates idea decomposition, scraping, intel gathering, deep batch LLM synthesis, and consensus debate.
+- `enrich_idea.py`: Supplemental data fetcher (Stack Overflow + GitHub issues). Caches to `enrichment_cache`. Detects "confirmed gaps".
+- `generate_report.py`: Safe CLI wrapper replacing old RCE-vulnerable inline string passing. Reads from `--config-file` to reconstruct `ReportSynthesizer`.
+- `scraper_job.py`: Massive cron-capable worker targeting massive subreddits spanning 45 static hardcoded topics to populate the global "Stock Market" (`ideas` / `posts`).
 
-### Intelligence Tools (auto-populated from validations)
-| Page | Route | What It Shows | Source |
-|------|-------|---------------|--------|
-| **Trends** | `/dashboard/trends` | Market timing, pain intensity, TAM | Parsed from `report.market_analysis` |
-| **WTP Detection** | `/dashboard/wtp` | Willingness-to-pay signals + pricing | Parsed from `report.market_analysis.willingness_to_pay` + `report.pricing_strategy` |
-| **Competitors** | `/dashboard/competitors` | Direct/indirect competitors, saturation, moat | Parsed from `report.competition_landscape` |
-| **Sources** | `/dashboard/sources` | Platforms used, post counts, AI models | Parsed from `report.data_sources` + `report.models_used` |
+#### Engine Modules (`/engine/`)
+- **Core Pipeline:** `multi_brain.py` (parallel LLM adapter + debate consensus logic), `config.py` (master scraping dictionaries), `report_synthesizer.py`.
+- **Scraping Layer (6-tier architecture):**
+  - Layer 1: `reddit_async.py` (async JSON API across 42 subs)
+  - Layer 2: `pullpush_scraper.py` (90 days historical pushshift/pullpush)
+  - Layer 3: `sitemap_listener.py` (realtime discovery)
+  - Layer 4: `reddit_auth.py` (PRAW authenticated deeper scrape)
+  - Additional: `hn_scraper.py` (Algolia), `ph_scraper.py` (GraphQL), `ih_scraper.py` (Algolia).
+- **Data Enrichment & Triangulation:** `github_issues_scraper.py`, `stackoverflow_scraper.py`
+- **Intelligence Analytics:** `competition.py` (calculates market saturation), `trends.py` (Google Trends velocity mapping).
+- **Inference Modeling:** `icp.py` (Persona generation), `scorer.py` (Data-driven metric calculation), `ai_analyzer.py` / `analyzer.py`, `credibility.py` (filters out AI slop, spam, and humor).
 
-### Personal Tools
-| Page | Route | What It Shows | Source |
-|------|-------|---------------|--------|
-| **Reports** | `/dashboard/reports` | Full validation reports with all sections | `idea_validations` table directly |
-| **Saved** | `/dashboard/saved` | Bookmarked ideas | `watchlist` table |
-| **Digest** | `/dashboard/digest` | Timeline of all findings | `idea_validations` table |
-| **Watchlist** | `/dashboard/watchlist` | Tracked items | `watchlist` table |
-
----
-
-## 3. AI Model Setup
-
-### What Happens When You Add a Model
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Settings UI
-    participant /api/settings/ai
-    participant /api/settings/ai/verify
-    participant Supabase
-    participant AI Provider
-
-    User->>Settings UI: Select provider + paste API key
-    Settings UI->>/api/settings/ai: POST {provider, api_key, model, priority}
-    /api/settings/ai->>/api/settings/ai/verify: verifyKey(provider, key, model)
-    /api/settings/ai/verify->>AI Provider: Tiny test prompt "Say hello"
-    AI Provider-->>/api/settings/ai/verify: Response (success/fail)
-    /api/settings/ai/verify-->>/api/settings/ai: {status, message, resolved_model}
-    /api/settings/ai->>Supabase: INSERT/UPDATE user_ai_config (encrypted key)
-    /api/settings/ai-->>Settings UI: {ok, verification result}
-    Settings UI-->>User: ✓ Model added + verification status
-```
-
-### Supported Providers (9 total)
-
-| Provider | Models Available | Max Tokens | Temperature | Special |
-|----------|----------------|------------|-------------|---------|
-| **Gemini** | 3.1 Pro, 3.1 Flash-Lite, 3 Flash | 16,384 | 0.3 | Uses `system_instruction` field |
-| **Anthropic** | Opus 4.6, Sonnet 4.6, Haiku 4.5 | 16,384 | 0.3 | Uses `system` parameter |
-| **OpenAI** | GPT-5.4, GPT-5.3 Codex, GPT-5.2 | 16,384 | 0.3 | Standard chat format |
-| **Groq** | Llama 4 Scout, Llama 3.3 70B, Llama 3.1 8B | **8,192** | 0.3 | Hard API limit, fastest inference |
-| **Grok** | 4.1, 4.1 Fast | 16,384 | 0.3 | x.ai API |
-| **DeepSeek** | V4, V3.2 Speciale, Reasoner | 16,384 | 0.3 | Model name remapping |
-| **Minimax** | MiniMax-01 | Default | 0.3 | Custom API format |
-| **OpenRouter** | Claude 3.5 Sonnet, GPT-4o, Qwen3 480B, Llama 405B, Mixtral 8x22B, DeepSeek V3, Gemini 2.0 Flash | 16,384 | 0.3 | Meta-provider, routes to others |
-| **Ollama** | Custom (local) | Default | — | Self-hosted, needs `endpoint_url` |
-
-### Model Name Resolution
-Stale/wrong model names auto-correct via `MODEL_ALIASES`:
-```
-gemini-3.1-pro → gemini-2.0-flash
-claude-opus-4.6 → claude-sonnet-4-20250514
-gpt-5.2 → gpt-4o
-deepseek-v4 → deepseek-chat
-```
-
-### Config Rules
-- **Max 6 active agents** per user
-- **Priority 1-6** — lower number = higher priority
-- **API keys encrypted** in Supabase (via `upsert_ai_config_encrypted` RPC)
-- **Keys masked** on frontend: `•••••••••XXXX` (last 4 chars only)
-- **Rate limit**: max 10 config changes per hour
-- **Premium required** for all AI features
+#### API Call Graph (Validation Run)
+1. `validate_idea.py` fires `multi_brain` DECOMPOSE.
+2. Parallel fanout to Scrapers (`reddit`, `hn`, `ph`, `ih`).
+3. Intelligence sweeps (`trends.py`, `competition.py`).
+4. Output fan-in: `_batch_summarize_all` merges posts into dense signal context.
+5. Synthesis Passes (1. Market, 2. Strategy, 3. Action Plan) running sequentially, preferring pinned highest priority model (usually Gemini 2.0 Flash or Claude 3.5 Sonnet).
+6. Multi-Model Debate: Submits the unified context across ALL configured LLMs.
+7. Disagreement? → Hides score, exposes raw reasoning, fires Round 2. Evaluates `_weighted_merge` to spit out the `final JSON blob`.
+8. Updates Supabase REST API `idea_validations` with exponential backoff retry.
 
 ---
 
-## 4. Debate Engine
+### DATABASE (Supabase / PostgreSQL)
 
-### How Models Debate — Step by Step
+**Schema Files (`/sql/`)**: `schema_saas.sql`, `schema_stock_market.sql`, `schema_scans.sql`, `schema_validations.sql`, `schema_ai_config.sql`, `schema_settings.sql`, `schema_enrichment.sql`, `schema_queue.sql`.
 
-```mermaid
-flowchart TD
-    A["All models receive SAME prompt + system prompt"] --> B["Each model analyzes independently (parallel threads)"]
-    B --> C{How many succeeded?}
-    C -->|0| ERROR["ERROR: All models failed"]
-    C -->|1| SINGLE["Return single model's result directly"]
-    C -->|2-6| CHECK["Check verdicts: do they agree?"]
-    CHECK -->|All same verdict| CONSENSUS["CONSENSUS → Merge analyses"]
-    CHECK -->|Different verdicts| DEBATE["ROUND 2: Debate"]
-    DEBATE --> D["Each model sees:\n- Its own analysis\n- All other models' analyses"]
-    D --> E["Each model can:\n1. HOLD position (stronger evidence)\n2. CHANGE verdict (missed a point)"]
-    E --> F["Collect debate results"]
-    F --> MERGE["FINAL SYNTHESIS → Merge all"]
-    MERGE --> REPORT["Output merged report"]
-    CONSENSUS --> MERGE
-```
+#### Schema Definition (14 Tables)
+| Table | Key Roles & Constraints |
+|-------|-------------------------|
+| `profiles` | Linked via trigger to `auth.users`. Tracks stripe subs. RLS: Auth UID only. |
+| `projects` | User grouping mechanism (`subreddits`, `pain_phrases`). RLS: Auth UID only. |
+| `posts` | Heavy text blob storing scraped signals. Evaluated fields (`data_quality`, `ai_slop_score`, `opportunity_final_score`). Linked to project or global. |
+| `ideas` | **The Idea Stock Market**. Unique `slug`. Holds `current_score`, `score_24h_ago`, `change_24h`, `trend_direction`, `keywords`, `reddit_velocity`. |
+| `idea_history` | Historical archive for charting stock prices of global ideas. |
+| `watchlists` | Bridges `user_id` and `idea_id` for "Portfolio tracking". |
+| `scraper_runs` | Audit logs for background master job duration and error states. |
+| `scans` | User-initiated global keyword sweeps. Arrays of `keywords`. RLS protected. |
+| `ai_analysis` | Bridges `scan_id` to individual `post_id` with LLM responses (`problem_description`, `willingness_to_pay`). |
+| `idea_validations`| The primary table for `validate/page.tsx`! Holds `status`, `verdict`, `confidence`, and the massive `report` JSONB. |
+| `user_ai_config` | Holds user's BYOK LLM keys. Uses `pgp_sym_encrypt` storing `api_key_encrypted` (BYTEA). Max 6 active per user. |
+| `user_settings` | Notification prefs & scan limits. |
+| `enrichment_cache`| Short-lived (7 day TTL via `expires_at`). Caches GitHub/StackOverflow triangulated JSON blobs to prevent heavy re-scraping. |
+| `validation_queue`| Serializer task table holding async process requests. (Worker system). |
 
-### What Each Model Receives
-
-**Round 1 — Independent Analysis:**
-- System prompt (role instructions + JSON schema)
-- User prompt with: idea text, audience, pain hypothesis, competitors, keywords, scraped posts data, trend data, competition data
-
-**Round 2 — Debate (only if verdicts disagree):**
-```
-Your colleague AI models analyzed the SAME data and reached DIFFERENT conclusions.
-
-YOUR ORIGINAL ANALYSIS:
-{your JSON result}
-
-OTHER MODELS' ANALYSES:
-=== gemini/gemini-2.0-flash (Verdict: BUILD IT) ===
-{their full JSON}
-=== groq/llama-3.3-70b (Verdict: RISKY) ===
-{their full JSON}
-
-Given this disagreement, reconsider your verdict. You may:
-1. HOLD your position if you believe your evidence is stronger
-2. CHANGE your verdict if a colleague raised a point you missed
-```
-
-### Merge Rules (`_merge_analyses`)
-
-| Field | Merge Strategy |
-|-------|---------------|
-| **Verdict** | Majority vote (most common verdict wins) |
-| **Confidence** | Average of all models' confidence scores |
-| **Evidence** | Union of all models' evidence, deduplicated by first 200 chars |
-| **Suggestions** | Union, deduplicated by first 200 chars |
-| **Risk factors** | Union, deduplicated |
-| **Action plan** | Union, deduplicated |
-| **Top posts** | Union, deduplicated by title |
-| **Text fields** (summary, audience_validation, competitor_gaps, etc.) | **Pick longest** version across all models |
-
-### Single Call (non-debate)
-For Phase 1-3, models are called one at a time via **round-robin**:
-```
-Call 1 → Model A (priority 1)
-Call 2 → Model B (priority 2)
-Call 3 → Model C (priority 3)
-Call 4 → Model A again
-...
-```
-This distributes load evenly across configured models.
+*Note: The actual LLM `report` JSON Schema generated by `validate_idea.py` matches exactly what is rendered by `<ResultsView>`, mapped out in the section below.*
 
 ---
 
-## 5. Scraper Architecture
+## 2. Broken Things Inventory 🚨
+*(Mismatches between Python JSON generation & Frontend Component Rendering)*
 
-### Reddit Scraper ([keyword_scraper.py](file:///c:/Users/PC/Desktop/youcef/A/RedditPulse/engine/keyword_scraper.py))
-- **API**: Reddit public JSON (`reddit.com/search.json`)
-- **Method**: Global search + subreddit-specific search
-- **Query format**: `"keyword1" OR keyword2 OR "keyword 3"`
-- **Time window**: Last month (`t=month`)
-- **Rate management**: Random user-agent rotation, sleep on 429
-- **Spam filter**: Regex patterns for affiliate links, promo codes, [removed]
-- **Scoring**: `score * 2 + num_comments * 3` (comments weighted higher = real engagement)
-- **Scan durations**: 10min, 1h, 10h, 48h (continuous collection loops)
+**1. The "Summary" Mismatch**
+- **Frontend reads:** `<p>{report.summary}</p>`
+- **Python writes:** `"executive_summary"` in the Verdict pass JSON.
+- *Result:* Blank summary shown in the UI.
 
-### HN Scraper ([hn_scraper.py](file:///c:/Users/PC/Desktop/youcef/A/RedditPulse/engine/hn_scraper.py))
-- **API**: HN Algolia API (free, no auth)
-- **Focus**: `Ask HN` + `Show HN` posts (highest signal)
-- **Retries**: 3 attempts with exponential backoff on 429
+**2. The "Action Plan" Mismatch**
+- **Frontend expects:** `report.action_plan` array mapped to `{ step, title, description }`.
+- **Python writes:** `"launch_roadmap"` array mapped to `{ week, title, tasks, cost, outcome }`.
+- *Result:* Action Plan UI section silently fails to map and drops from view.
 
-### Competition Analyzer ([competition.py](file:///c:/Users/PC/Desktop/youcef/A/RedditPulse/engine/competition.py))
-- **Method**: Google Search result count estimation
-- **Queries**: `site:g2.com/products "keyword"` + `site:producthunt.com/posts "keyword"` + `"keyword" alternative`
-- **Tiers**: BLUE_OCEAN (≤5 products) → EMERGING (≤20) → COMPETITIVE (≤100) → SATURATED (100+)
-- **Switch demand**: alternatives_searches > 50K = high demand
+**3. The "Intelligence Grids" Mismatch**
+- **Frontend expects:** `report.audience_validation`, `report.competitor_gaps`, and `report.price_signals` at the absolute root of the JSON blob.
+- **Python writes:** Those data points live deeply nested inside `"ideal_customer_profile"`, `"competition_landscape.your_unfair_advantage"`, and `"pricing_strategy.tiers"`.
+- *Result:* The Audience + Pain, Competitor Gaps, and Price Signals cards are never rendered in the Dashboard report view.
 
-### Google Trends ([trends.py](file:///c:/Users/PC/Desktop/youcef/A/RedditPulse/engine/trends.py))
-- **API**: pytrends (free wrapper for Google Trends)
-- **Timeframe**: Last 12 months by default
-- **Classification**: Recent 3 months avg vs older 9 months avg
-- **Tiers + Score Multipliers**:
-
-| Tier | Change | Multiplier |
-|------|--------|-----------|
-| EXPLODING | > +50% | 1.8x |
-| GROWING | > +15% | 1.4x |
-| STABLE | -15% to +15% | 1.0x |
-| DECLINING | -40% to -15% | 0.7x |
-| DEAD | < -40% or interest ≤5 | 0.3x |
-
-### ICP Detector ([icp.py](file:///c:/Users/PC/Desktop/youcef/A/RedditPulse/engine/icp.py))
-- Aggregates persona data from AI-analyzed posts
-- Outputs: primary persona, tools mentioned + sentiment, budget signals, pain intensity distribution
+**4. The "Data Sources" Metadata Error (Clarified)**
+- Current logic inside `validate_idea.py` does correctly assign `report["data_sources"] = source_counts`. However, the frontend currently has no code inside `<ResultsView>` mapping or iterating `report.data_sources`, causing the metrics to be swallowed into the ether despite successful Python computation.
 
 ---
 
-## 6. Validation Pipeline
+## 3. Redesign Constraints (The 2026 Paradigm)
 
-```mermaid
-flowchart LR
-    subgraph P1["Phase 1: AI Decomposition"]
-        Idea["Idea text"] --> AI1["Single AI call"]
-        AI1 --> KW["Keywords (5-15)"]
-        AI1 --> Comp["Competitors"]
-        AI1 --> Aud["Audience"]
-        AI1 --> Pain["Pain hypothesis"]
-    end
+**What is SAFE TO REDESIGN & DESTROY:**
+1. **The Entire `.tsx` Frontend Topology:** I can utterly decimate and rebuild every single `.tsx` file, removing the generic layout entirely and replacing it with the **Spatial Bento Grid framework**.
+2. **Glassmorphic Component Replacements:** I can swap the basic UI inputs, grids, and dashboards for dynamic, floating HUD panels mimicking spatial computing UX.
+3. **Data Mappings (within the UI):** I can freely remap `validation.report.launch_roadmap` (from Python) directly into the new UI's action renderer (fixing the previous Broken Things), bypassing the old `report.action_plan` mapping entirely.
+4. **CSS & Styling:** I can safely remove all default tailwind and apply the extreme glassmorphic aesthetics LO dictates.
 
-    subgraph P2["Phase 2: Market Scraping"]
-        KW --> Reddit["Reddit (keyword_scraper)"]
-        KW --> HN_S["Hacker News (hn_scraper)"]
-        KW --> PH_S["ProductHunt (ph_scraper)"]
-        KW --> IH_S["IndieHackers (ih_scraper)"]
-        Reddit --> Posts["Merged + deduplicated posts"]
-        HN_S --> Posts
-        PH_S --> Posts
-        IH_S --> Posts
-    end
-
-    subgraph P2b["Phase 2b: Intelligence"]
-        KW --> Trends["Google Trends (top 5 kw)"]
-        KW --> CompA["Competition Analysis (top 3 kw)"]
-    end
-
-    subgraph P3["Phase 3: Multi-Pass AI Synthesis"]
-        Posts --> Pass1["Pass 1: Market Analysis"]
-        Pass1 --> Pass2["Pass 2: Strategy"]
-        Pass2 --> Pass3["Pass 3: Action Plan"]
-        Pass3 --> QC["Data Quality Check"]
-        QC --> Verdict["Final Verdict (DEBATE)"]
-        Verdict --> Report["Merged Report JSON"]
-    end
-```
-
-### The 4 System Prompts (What the AI Sees)
-
-#### Pass 1 System: Market Research Analyst
-**Role**: "You are a market research analyst"
-**Task**: Analyze scraped posts for pain validation, WTP signals, market timing, TAM
-**Output JSON**:
-- `pain_validated` (bool)
-- `pain_description` (exact quotes from posts)
-- `pain_frequency` (daily/weekly/monthly)
-- `pain_intensity` (LOW/MEDIUM/HIGH)
-- `willingness_to_pay` (specific $ signals or "No explicit WTP signals found")
-- `market_timing` (GROWING/STABLE/DECLINING)
-- `tam_estimate` (rough TAM with reasoning)
-- `evidence[]` (min 5 posts with exact titles, source, score, insight)
-
-**Rules**: Never invent post titles. Search for "$", "I'd pay", "take my money". Reference subreddit sizes.
-
-#### Pass 2 System: Startup Strategist
-**Role**: "You are a startup strategist"
-**Task**: Design ICP, competition landscape, pricing, monetization
-**Output JSON**:
-- `ideal_customer_profile` (persona, demographics, psychographics, where they hang out, budget, triggers)
-- `competition_landscape` (direct competitors with names/prices/weaknesses, indirect, saturation, unfair advantage, moat)
-- `pricing_strategy` (model + 3 tiers with $ amounts)
-- `monetization_channels[]` (3 channels with timelines)
-
-**Rules**: Reference specific competitor names/prices. ICP must be email-cold-able. Moat must be actionable.
-
-#### Pass 3 System: Launch Advisor
-**Role**: "You are a startup launch advisor"
-**Task**: Create actionable build plan
-**Output JSON**:
-- `launch_roadmap[]` (week-by-week with real costs)
-- `revenue_projections` (month 1/3/6/12 with **stated assumptions**)
-- `risk_matrix[]` (min 1 technical + 1 market + 1 execution risk)
-- `first_10_customers_strategy` (specific subreddits, exact outreach templates)
-- `mvp_features[]` (max 4-5)
-- `cut_features[]`
-
-**Rules**: CONSERVATIVE estimates. Real costs. Name specific subreddits.
-
-#### Verdict System: Venture Analyst
-**Role**: "You are a venture analyst delivering a final verdict"
-**Task**: Synthesize all 3 passes into BUILD IT / RISKY / DON'T BUILD
-**Scoring Rules**:
-- **BUILD IT** = 50+ posts, multi-platform, WTP mentions, growing trends, clear gaps
-- **RISKY** = 20-50 posts, few WTP, unclear differentiation, mixed trends
-- **DON'T BUILD** = <20 posts, no WTP, saturated, declining trends
-- Must be *brutally honest*
-
----
-
-## 7. Report Structure
-
-Every completed validation produces this JSON:
-
-```json
-{
-  "verdict": "BUILD IT | RISKY | DON'T BUILD",
-  "confidence": 0-100,
-  "executive_summary": "4-5 sentence data-driven summary",
-
-  "market_analysis": {
-    "pain_validated": true/false,
-    "pain_description": "exact quotes from posts",
-    "pain_frequency": "daily/weekly/monthly",
-    "pain_intensity": "LOW/MEDIUM/HIGH",
-    "willingness_to_pay": "$ signals or 'No explicit WTP signals found'",
-    "market_timing": "GROWING/STABLE/DECLINING",
-    "tam_estimate": "rough estimate with reasoning",
-    "evidence": [{"post_title", "source", "score", "what_it_proves"}]
-  },
-
-  "ideal_customer_profile": {
-    "primary_persona": "who exactly",
-    "demographics": "age, income, tech level",
-    "psychographics": "motivations, frustrations",
-    "where_they_hang_out": ["subreddits", "communities"],
-    "budget_range": "$X-$Y/mo",
-    "buying_triggers": ["trigger1", "trigger2"]
-  },
-
-  "competition_landscape": {
-    "direct_competitors": [{"name", "weakness", "price", "users"}],
-    "indirect_competitors": ["tool — why indirect"],
-    "market_saturation": "EMPTY/LOW/MEDIUM/HIGH",
-    "your_unfair_advantage": "specific gap",
-    "moat_strategy": "how to defend over 12 months"
-  },
-
-  "pricing_strategy": {
-    "recommended_model": "freemium/subscription/etc",
-    "tiers": [{"name", "price", "features[]", "purpose"}],
-    "reasoning": "why this pricing"
-  },
-
-  "launch_roadmap": [{"week", "title", "tasks[]", "cost", "outcome"}],
-  "revenue_projections": {"month_1/3/6/12": {"users", "paying", "mrr", "assumptions"}},
-  "risk_matrix": [{"risk", "severity", "likelihood", "mitigation"}],
-  "first_10_customers_strategy": {"step_1..step_5"},
-  "mvp_features": ["feature1", "feature2"],
-  "cut_features": ["cut1", "cut2"],
-  "top_posts": [{"title", "source", "score", "relevance"}],
-
-  "data_sources": {"reddit": N, "hackernews": N, ...},
-  "platforms_used": N,
-  "trends_data": {...},
-  "competition_data": {...},
-
-  "data_quality": {
-    "total_posts_scraped": N,
-    "minimum_recommended": 20,
-    "data_sufficient": true/false,
-    "confidence_was_capped": true/false,
-    "original_confidence": N,
-    "cap_reason": "why capped",
-    "contradictions": ["WTP MISMATCH: ..."],
-    "warnings": ["LOW DATA: ..."],
-    "platform_warnings": [{"platform", "issue"}]
-  }
-}
-```
-
----
-
-## 8. Data Quality System
-
-### Confidence Cap Rules
-
-| Condition | Cap | Reason |
-|-----------|-----|--------|
-| < 5 posts | 30% | Extremely thin data |
-| 5-9 posts | 45% | Low data |
-| 10-19 posts | 65% | Below minimum 20 |
-| Single platform | 55% | No cross-validation |
-| No WTP + specific pricing tiers | 60% | WTP mismatch contradiction |
-| Pain not validated | 50% | Weak foundation |
-| Few evidence posts (< 3) | 60% | Insufficient citations |
-| Declining/Dead market | 55% | High risk timing |
-
-### Contradiction Detection (6 checks)
-
-1. **WTP Mismatch** — Pass 1 says "no WTP" but Pass 2 has specific pricing tiers
-2. **Price vs Pain** — LOW pain_intensity but highest tier > $50/mo
-3. **Conversion Fantasy** — Month 12 assumes > 10% conversion (industry avg: 2-5%)
-4. **Unvalidated Pain** — pain_validated = false undermines everything
-5. **Declining Market** — market_timing = DECLINING/DEAD
-6. **Weak Differentiation** — HIGH/MEDIUM saturation + unfair_advantage < 50 chars
-
-### Verdict Override
-If confidence capped below 40% and AI said "BUILD IT" → auto-corrected to "RISKY"
-
----
-
-## 9. Data Flow Diagram
-
-```mermaid
-flowchart TD
-    User["👤 User types idea"] --> FE["Frontend /dashboard/validate"]
-    FE --> API["/api/validate POST"]
-    API --> DB1["INSERT idea_validations (status: starting)"]
-    API --> PY["exec python validate_idea.py"]
-
-    PY --> P1["Phase 1: AI Decomposition"]
-    P1 --> DB2["UPDATE status: decomposed"]
-    P1 --> P2["Phase 2: Scrape 4 platforms"]
-    P2 --> DB3["UPDATE status: scraped, posts_found: N"]
-    P2 --> P2b["Phase 2b: Trends + Competition"]
-    P2b --> DB4["UPDATE status: analyzing_trends"]
-
-    P2 --> P3["Phase 3: Pass 1 → Pass 2 → Pass 3"]
-    P3 --> QC["Data Quality Check"]
-    QC --> DEBATE["Verdict Debate (all models)"]
-    DEBATE --> MERGE["Merge + Cap Confidence"]
-    MERGE --> DB5["UPDATE status: done, verdict, confidence, report JSON"]
-
-    DB5 --> Dashboard["Dashboard reads from idea_validations"]
-    DB5 --> Reports["Reports page shows full JSON"]
-    DB5 --> Intel["Intelligence pages parse report sections"]
-    DB5 --> Digest["Digest builds timeline"]
-
-    style User fill:#818cf8
-    style DB5 fill:#10b981
-    style DEBATE fill:#f59e0b
-```
-
----
-
-*Generated from source code analysis — March 2026*
+**What MUST BE PRESERVED (Do Not Touch 🚫):**
+1. **Database Table Structures:** `posts`, `ideas`, `idea_validations`, `scans`, `user_ai_config`, etc. Altering these will crash the Python Orchestrators which lack auto-remapping ORM logic and rely heavily on raw REST patches/inserts parsing these exact named structures.
+2. **Python System Prompts / Keys:** I must not rename `launch_roadmap` to `action_plan` inside `VERDICT_SYSTEM` or `validate_idea.py` — I must mold the *frontend* to consume what Python outputs, not the inverse. Changing Python keys risks breaking the LLM's comprehension and `extract_json` parsing.
+3. **Subprocess Polling Architectures:** The `POST /api/validate` spawn logic (`python validate_idea.py --config-file ...`) and the `GET /api/validate/[id]` long-poll loops MUST remain intact. The 3000ms polling sequence is the lifeline connecting the isolated Python runtime back to the Next.js React hydration cycle.
+4. **Environment Variables & Keys:** `AI_ENCRYPTION_KEY`, `SUPABASE_KEY` / `url` must stay structurally identical to properly allow the RPC logic in Postgres (`pgp_sym_encrypt`) to process BYOK keys.

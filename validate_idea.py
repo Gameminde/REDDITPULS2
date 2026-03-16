@@ -59,6 +59,19 @@ try:
 except ImportError:
     ICP_AVAILABLE = False
 
+# ── Retention + Intelligence imports ──
+try:
+    from pain_stream import create_alert as create_pain_alert
+    PAIN_STREAM_AVAILABLE = True
+except ImportError:
+    PAIN_STREAM_AVAILABLE = False
+
+try:
+    from competitor_deathwatch import scan_for_complaints, save_complaints
+    DEATHWATCH_AVAILABLE = True
+except ImportError:
+    DEATHWATCH_AVAILABLE = False
+
 # ── Supabase config ──
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
@@ -360,8 +373,20 @@ def phase2b_intelligence(keywords, validation_id, idea_text=""):
         print("\n  ══ PHASE 2c: Competition Analysis ══")
         update_validation(validation_id, {"status": "analyzing_competition"})
         try:
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
             comp_keywords = keywords[:3]  # Top 3 for competition
-            comp_results = analyze_competition(comp_keywords, idea_text=idea_text)
+            # Hard 90s timeout - prevents stuck validation if search engines hang
+            # NOTE: Do NOT use 'with' context manager — its __exit__ calls shutdown(wait=True)
+            # which blocks until the hung thread finishes, defeating the timeout.
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(analyze_competition, comp_keywords, idea_text=idea_text)
+            try:
+                comp_results = future.result(timeout=90)
+            except FuturesTimeout:
+                print("  [!] Competition analysis timed out after 90s - continuing without it")
+                comp_results = {}
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
             comp_report = competition_summary(comp_results)
             intel["competition"] = comp_report
             intel["comp_prompt"] = competition_prompt_section(comp_results, idea_text=idea_text)
@@ -412,19 +437,51 @@ PASS2_SYSTEM = """You are a startup strategist. Given the market analysis result
 Return ONLY valid JSON:
 {
   "ideal_customer_profile": {
-    "primary_persona": "WHO exactly — job title, industry, company size, daily workflow",
-    "demographics": "Age range, income level, tech savviness, geographic focus",
-    "psychographics": "Motivations, frustrations, values, buying behavior",
-    "where_they_hang_out": ["Specific subreddits", "forums", "communities", "Slack groups"],
+    "primary_persona": "WHO exactly — SPECIFIC person: job title + company size + number of side projects attempted + current revenue range + specific pain scenario from actual post evidence. BAD: 'Indie hacker who codes at nights'. GOOD: 'Ex-FAANG engineer turned solo founder, 2-3 failed MVPs in 18 months, currently at $0-500 MRR, posts roast-my-idea threads on r/SaaS every 6 weeks'",
+    "demographics": "Age range, income level, tech savviness, geographic focus (EVIDENCE-BASED from posts, default: Global remote-first)",
+    "psychographics": "Motivations, frustrations, values, buying behavior — derived from post language",
+    "specific_communities": [
+      {"name": "r/SaaS", "subscribers": "220,000", "relevance": "PRIMARY — direct ICP"},
+      {"name": "Hacker News Show HN", "monthly_active": "5M+", "relevance": "HIGH — technical founders"}
+    ],
+    "influencers_they_follow": [
+      "Creator Name (@handle) — follower count, why relevant"
+    ],
+    "tools_they_already_use": [
+      "Tool Name ($price/mo) — what they use it for"
+    ],
+    "buying_objections": [
+      "Specific objection from post evidence — what STOPS them from buying"
+    ],
+    "previous_solutions_tried": [
+      "What they used BEFORE — and why it failed them"
+    ],
+    "day_in_the_life": "One specific paragraph describing their workflow when they encounter this pain. Include time of day, specific actions, specific frustrations. Make it feel like you watched them over their shoulder.",
+    "willingness_to_pay_evidence": [
+      "Direct quote showing WTP — 'quote' — [source, score]. If none found: 'No explicit WTP quotes found — inferred from competitor pricing: $X-Y/mo'"
+    ],
     "budget_range": "$X-$Y per month — based on evidence",
     "buying_triggers": ["Event that makes them search for a solution", "Trigger 2", "Trigger 3"]
   },
   "competition_landscape": {
     "direct_competitors": [
-      {"name": "Tool name", "weakness": "Specific weakness from complaints", "price": "$X/mo", "users": "estimated user count"}
+      {
+        "name": "Tool name",
+        "price": "$X/mo",
+        "users": "estimated user count or 'unknown'",
+        "founded": "year or 'unknown'",
+        "funding": "$X raised or 'bootstrapped' or 'unknown'",
+        "weakness": "Specific technical/product weakness",
+        "user_complaints": "What their users complain about most — from actual reviews/posts",
+        "switching_trigger": "What makes their users switch — specific event or frustration",
+        "your_attack_angle": "HOW TO WIN against this competitor — specific positioning strategy",
+        "threat_level": "HIGH/MEDIUM/LOW"
+      }
     ],
     "indirect_competitors": ["Tool 1 — and why it's indirect", "Tool 2"],
-    "market_saturation": "EMPTY/LOW/MEDIUM/HIGH",
+    "market_saturation": "EMPTY/LOW/MEDIUM/HIGH/SATURATED",
+    "biggest_threat": "Competitor name — because reason (most dangerous competitor)",
+    "easiest_win": "Competitor name — because their weakness (easiest to steal users from)",
     "your_unfair_advantage": "The specific gap NO competitor fills. Be concrete.",
     "moat_strategy": "How to build a defensible competitive advantage over 12 months"
   },
@@ -444,12 +501,22 @@ Return ONLY valid JSON:
   ]
 }
 
-RULES:
+ICP RULES — NON-NEGOTIABLE:
+- Every ICP field must be EVIDENCE-BASED from the scraped posts. Never invent demographics.
+- specific_communities: List EXACT subreddits/forums with real subscriber counts.
+- influencers_they_follow: Name SPECIFIC creators with follower counts.
+- buying_objections: What STOPS them from buying — from actual post language.
+- day_in_the_life: Must read like you watched them. Include time of day, specific tools, specific frustrations.
+- FORBIDDEN in primary_persona: "who codes at night", "passionate about", "tech-savvy professional". Be SPECIFIC.
+- Geographic focus must be EVIDENCE-BASED. Default: "Global (remote-first)". NEVER hallucinate regions.
+
+COMPETITION RULES — NON-NEGOTIABLE:
 - Reference SPECIFIC competitor names, prices, and weaknesses from the data.
+- user_complaints: Quote or paraphrase REAL complaints from posts/reviews.
+- your_attack_angle: Must be a specific strategy, not "build better product".
+- threat_level: HIGH = direct overlap + large user base. MEDIUM = partial overlap. LOW = tangential.
 - Pricing tiers must have concrete dollar amounts, not placeholders.
-- ICP must be specific enough to write a cold email to this person.
 - Moat strategy must be actionable, not generic "build a great product".
-- Geographic focus in ICP must be EVIDENCE-BASED from the post data. If no geographic signal exists in scraped posts, say "Global (remote-first)". NEVER hallucinate specific regions like "small towns" without data to support it.
 """
 
 PASS3_SYSTEM = """You are a startup launch advisor. Given the market analysis and strategy, create the ACTION PLAN.
@@ -457,11 +524,15 @@ PASS3_SYSTEM = """You are a startup launch advisor. Given the market analysis an
 Return ONLY valid JSON:
 {
   "launch_roadmap": [
-    {"week": "Week 1-2", "title": "Validate & Build MVP", "tasks": ["Specific task 1", "Task 2", "Task 3"], "cost": "$0-$X", "outcome": "What you'll have"},
-    {"week": "Week 3-4", "title": "Alpha Launch", "tasks": ["Task 1", "Task 2"], "cost": "$X", "outcome": "What you'll have"},
-    {"week": "Week 5-6", "title": "Early Access", "tasks": ["Task 1", "Task 2"], "cost": "$X", "outcome": "What you'll have"},
-    {"week": "Week 7-8", "title": "Public Launch", "tasks": ["Task 1", "Task 2"], "cost": "$X", "outcome": "What you'll have"},
-    {"week": "Month 3-6", "title": "Growth", "tasks": ["Task 1", "Task 2"], "cost": "$X/mo", "outcome": "Target MRR"}
+    {
+      "week": "Week 1-2",
+      "title": "Action verb + specific outcome — NOT generic like 'Alpha Launch'",
+      "tasks": ["Specific task with exact channel name", "Task with exact tool name", "Task with exact number target"],
+      "validation_gate": "Do NOT proceed until: [specific metric, e.g. '3 people say I'd pay $X right now']",
+      "cost_estimate": "$0",
+      "channel": "r/SaaS or Show HN or Product Hunt etc.",
+      "expected_outcome": "50 signups or 3 paying users etc."
+    }
   ],
   "revenue_projections": {
     "month_1": {"users": "X", "paying": "X", "mrr": "$X", "assumptions": "Based on..."},
@@ -469,36 +540,72 @@ Return ONLY valid JSON:
     "month_6": {"users": "X", "paying": "X", "mrr": "$X", "assumptions": "Based on..."},
     "month_12": {"users": "X", "paying": "X", "mrr": "$X", "assumptions": "Based on..."}
   },
+  "financial_reality": {
+    "break_even_users": "You need N paying users at $price to cover monthly costs of $X",
+    "time_to_1k_mrr": "Estimated X months — methodology: [conversion rate] × [traffic source]",
+    "time_to_10k_mrr": "Estimated X months — requires [growth channel] at [specific rate]",
+    "cac_budget": "You can spend max $X to acquire each user (LTV/3 rule)",
+    "gross_margin": "Estimated X% after AI inference costs ($Y per validation)"
+  },
   "risk_matrix": [
-    {"risk": "Specific risk", "severity": "HIGH/MEDIUM/LOW", "likelihood": "HIGH/MEDIUM/LOW", "mitigation": "Exact steps to handle it"},
-    {"risk": "Another risk", "severity": "HIGH/MEDIUM/LOW", "likelihood": "HIGH/MEDIUM/LOW", "mitigation": "Steps"},
-    {"risk": "Third risk", "severity": "HIGH/MEDIUM/LOW", "likelihood": "HIGH/MEDIUM/LOW", "mitigation": "Steps"}
+    {
+      "risk": "Specific risk naming a real competitor/technology/market condition",
+      "severity": "HIGH/MEDIUM/LOW",
+      "probability": "HIGH/MEDIUM/LOW",
+      "mitigation": "Exact steps to handle it",
+      "owner": "founder/engineering/marketing — who should own this risk"
+    }
   ],
   "first_10_customers_strategy": {
-    "step_1": "First action — be hyper-specific (which subreddit, what to post, word for word)",
-    "step_2": "Second action — outreach method, exact message template",
-    "step_3": "Third action — partnership or community tactic",
-    "step_4": "Fourth action — content or demo strategy",
-    "step_5": "Conversion tactic — how to turn free users into paying"
+    "customers_1_3": {
+      "source": "Exact community or channel name (e.g. r/SaaS, IndieHackers)",
+      "tactic": "Exact outreach method — what to post, word for word",
+      "script": "Exact message template or post copy"
+    },
+    "customers_4_7": {
+      "source": "Scaling channel name",
+      "tactic": "Conversion method — how to get them from aware to paying",
+      "script": "Follow-up message or demo offer template"
+    },
+    "customers_8_10": {
+      "source": "Referral or content channel",
+      "tactic": "How to leverage first customers for word-of-mouth",
+      "script": "Referral ask template or content strategy"
+    }
   },
   "mvp_features": ["Core feature 1 (must have for launch)", "Core feature 2", "Core feature 3", "Core feature 4"],
   "cut_features": ["Feature that seems important but wastes time pre-launch", "Another one", "Third one"]
 }
 
-RULES:
-- Launch roadmap must have REAL costs (domain, hosting, tools), REAL timelines, REAL tasks.
-- Revenue projections must state assumptions. NEVER use 'based on continued growth' or circular reasoning.
-  Each month's assumptions must cite a SPECIFIC comparable (e.g. 'similar to Grammarly's free-to-paid rate of 3%').
-  If no comparable exists, say 'conservative assumption — no comparable found'.
-  Use CONSERVATIVE estimates unless the data explicitly shows strong WTP.
-- Risk matrix RULES (CRITICAL):
-  * Each risk MUST name a specific competitor, technology, or real market condition — not a category.
-  * BAD: 'Market competition risk' | GOOD: 'GitHub Copilot has 1.3M users at $10/mo — direct price overlap'
-  * BAD: 'Technical debt' | GOOD: 'Real-time diff engine at scale: N+1 DB queries become critical at 1k concurrent users'
-  * FORBIDDEN phrases in risks: 'Market competition', 'Technical debt', 'User adoption', 'unique features', 'differentiate', 'repayment'.
-  * Must include: 1 risk naming a specific named competitor with market share/price data, 1 platform/infra risk with specific failure mode, 1 go-to-market risk citing a specific channel and why it may fail.
-- First 10 customers: name SPECIFIC subreddits, communities, exact outreach templates.
-- MVP features: max 4-5 features. Everything else is a cut feature.
+LAUNCH ROADMAP RULES — NON-NEGOTIABLE:
+- Every step must be specific to THIS exact idea and ICP.
+- Never write generic startup advice like "gather feedback" or "invite users".
+- Each step MUST have a validation_gate — a specific metric before proceeding.
+- channel must name a SPECIFIC platform (r/SaaS, not "Reddit").
+- tasks must include exact numbers (50 users, $29/month, 100 replies).
+- tasks must name exact tools (Stripe, Vercel, Supabase — not "tech stack").
+- FORBIDDEN phrases: "gather feedback", "iterate on product", "expand marketing",
+  "build MVP" (replace with specific feature list), "invite users" (replace with exact source).
+- The roadmap must read like advice from a $500/hour growth consultant.
+
+REVENUE RULES:
+- Revenue projections must state assumptions. NEVER use 'based on continued growth'.
+- Each month must cite a SPECIFIC comparable conversion rate (e.g. 'Grammarly free-to-paid 3%').
+- If no comparable exists, say 'conservative assumption — no comparable found'.
+- Use CONSERVATIVE estimates unless the data explicitly shows strong WTP.
+
+RISK MATRIX RULES (CRITICAL):
+- Each risk MUST name a specific competitor, technology, or real market condition — not a category.
+- BAD: 'Market competition risk' | GOOD: 'GitHub Copilot has 1.3M users at $10/mo — direct price overlap'
+- FORBIDDEN phrases: 'Market competition', 'Technical debt', 'User adoption', 'unique features', 'differentiate'.
+- Must include: 1 risk naming a specific named competitor, 1 platform/infra risk, 1 GTM risk.
+- MINIMUM 5 risks.
+
+FIRST 10 CUSTOMERS RULES:
+- Name SPECIFIC subreddits, communities, exact outreach templates.
+- Include word-for-word post copy or DM templates.
+
+MVP FEATURES: max 4-5 features. Everything else is a cut feature.
 """
 
 VERDICT_SYSTEM = """You are a venture analyst delivering a final verdict on a startup idea. You've been given the full analysis (market data, strategy, action plan, and scraped posts). Synthesize into a final decision.
@@ -864,9 +971,9 @@ Posts:
         # Merge all batch signals
         all_pain_quotes, all_wtp, all_competitors, all_insights = [], [], [], []
         for r in batch_results:
-            all_pain_quotes.extend(r.get("pain_quotes", []))
-            all_wtp.extend([w for w in r.get("wtp_signals", []) if w and w.lower() != "null"])
-            all_competitors.extend(r.get("competitor_mentions", []))
+            all_pain_quotes.extend(r.get("pain_quotes", []) or [])
+            all_wtp.extend([w for w in (r.get("wtp_signals", []) or []) if w and w.lower() != "null"])
+            all_competitors.extend(r.get("competitor_mentions", []) or [])
             if r.get("key_insight"):
                 all_insights.append(r["key_insight"])
 
@@ -1141,14 +1248,39 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         print(f"  [Q] Confidence capped: {raw_confidence}% → {capped_confidence}% (reason: {data_quality['cap_reason']})")
     report["confidence"] = capped_confidence
 
+    # ── CONFIDENCE BOOST: counterbalance aggressive caps when real signals exist ──
+    boost = 0
+    _trends = intel.get("trends", {}) or {}
+    _comp = intel.get("competition", {}) or {}
+    _overall_trend = str(_trends.get("overall_trend", "")).upper()
+    _comp_tier = str(_comp.get("overall_tier", "")).upper()
+    _pain_ok = pass1.get("pain_validated", False)
+    _ev_count = len(report.get("market_analysis", {}).get("evidence", []) or pass1.get("evidence", []))
+    _wtp_raw = str(pass1.get("willingness_to_pay", "")).lower()
+    _wtp_ok = bool(_wtp_raw) and not any(neg in _wtp_raw[:30] for neg in ["no ", "none", "not found", "no explicit"])
+
+    if "GROWING" in _overall_trend:   boost += 5
+    if "EXPLODING" in _overall_trend: boost += 10
+    if _comp_tier in ("LOW", "MEDIUM"): boost += 5
+    if _pain_ok and _ev_count >= 10:    boost += 5
+    if _wtp_ok:                         boost += 5
+
+    total_boost = min(15, boost)
+    if total_boost > 0:
+        boosted = min(capped_confidence + total_boost, 85)
+        print(f"  [Confidence] Cap={capped_confidence}% + Boost={total_boost}% → {boosted}%")
+        report["confidence"] = boosted
+        capped_confidence = boosted  # update for downstream verdict overrides
+
     # Override verdict if confidence was capped below thresholds
     if capped_confidence < 40 and report["verdict"] == "BUILD IT":
         report["verdict"] = "RISKY"
         print(f"  [Q] Verdict overridden: BUILD IT → RISKY (confidence too low after cap)")
 
     # Fix E: symmetric override — DONT_BUILD at high confidence + validated pain is contradictory
+    # NOTE: Uses pass1 directly since report["market_analysis"] isn't built yet at this point
     if capped_confidence > 80 and report["verdict"] == "DONT_BUILD":
-        if report.get("market_analysis", {}).get("pain_validated"):
+        if pass1.get("pain_validated"):
             report["verdict"] = "RISKY"
             print(f"  [Q] Verdict overridden: DONT_BUILD → RISKY (high confidence + validated pain contradicts negative verdict)")
             data_quality["warnings"].append(
@@ -1178,6 +1310,18 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     # Pass 3: Action Plan
     report["launch_roadmap"] = pass3.get("launch_roadmap", [])
     report["revenue_projections"] = pass3.get("revenue_projections", {})
+    report["financial_reality"] = pass3.get("financial_reality", {})
+
+    # Signal summary (from batch analysis)
+    report["signal_summary"] = {
+        "posts_scraped": len(posts),
+        "posts_filtered": posts_filtered_count if 'posts_filtered_count' in dir() else len(posts),
+        "posts_analyzed": posts_analyzed_count if 'posts_analyzed_count' in dir() else 0,
+        "pain_quotes_found": len((batch_signals or {}).get("pain_quotes", [])) if 'batch_signals' in dir() else 0,
+        "wtp_signals_found": len((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else 0,
+        "competitor_mentions": len((batch_signals or {}).get("competitor_mentions", [])) if 'batch_signals' in dir() else 0,
+        "data_sources": source_counts if 'source_counts' in dir() else {},
+    }
 
     # Risk fallback: Pass 3 often truncates on Groq 8K limit — use debate risks if empty
     pass3_risks = pass3.get("risk_matrix", [])
@@ -1187,7 +1331,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         if debate_risks:
             # Normalize to same structure as pass3 risk_matrix
             pass3_risks = [
-                {"risk": r if isinstance(r, str) else r.get("risk", str(r)), "severity": "HIGH", "mitigation": ""}
+                {"risk": r if isinstance(r, str) else r.get("risk", str(r)), "severity": "HIGH", "probability": "HIGH", "mitigation": ""}
                 for r in debate_risks
             ]
             print(f"  [Risks] Pass 3 empty — using {len(pass3_risks)} risks from debate output")
@@ -1199,6 +1343,26 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
 
     # Verdict extras
     report["top_posts"] = verdict_report.get("top_posts", [])
+
+    # FIX 1: Write debate evidence to report — _weighted_merge deduplicates across all models
+    # Pass 1 evidence (market_analysis.evidence) has 6 posts from initial analysis
+    # Debate evidence (verdict_report.evidence) has 21 deduplicated across all models
+    # Both must be in the report so the frontend can show the full count
+    debate_evidence = verdict_report.get("evidence", [])
+    report["debate_evidence"] = debate_evidence
+    # Also merge into market_analysis.evidence — deduplicate by post_title
+    existing_titles = set()
+    for e in report["market_analysis"].get("evidence", []):
+        if isinstance(e, dict):
+            existing_titles.add(e.get("post_title", "").lower().strip())
+        else:
+            existing_titles.add(str(e).lower().strip())
+    for de in debate_evidence:
+        title_key = (de.get("post_title", "") if isinstance(de, dict) else str(de)).lower().strip()
+        if title_key and title_key not in existing_titles:
+            report["market_analysis"]["evidence"].append(de)
+            existing_titles.add(title_key)
+    print(f"  [Evidence] Pass1={len(pass1.get('evidence', []))}, Debate={len(debate_evidence)}, Merged={len(report['market_analysis']['evidence'])}")
 
     # ── Fix 1: Write full debate metadata to report so frontend displays it ──
     # debate() returns models_used, model_verdicts, debate_mode, consensus_type, dissent
@@ -1270,16 +1434,18 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     print(f"  [DB] status=done written to Supabase", flush=True)
 
     # Step 2: Write extra columns separately — non-fatal if they don't exist
+    # FIX 2: Only write columns that exist in the schema (posts_found, posts_analyzed)
+    # Removed posts_filtered and verdict_source which caused 400 errors
     try:
         url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
         r = requests.patch(url, json={
             "posts_analyzed": posts_analyzed_count,
             "posts_found": len(posts),
-            "posts_filtered": posts_filtered_count,
-            "verdict_source": verdict_source,
         }, headers=_supabase_headers(), timeout=10)
         if r.status_code >= 400:
             print(f"  [!] Extra columns update skipped (schema may not have them): {r.status_code}", flush=True)
+        else:
+            print(f"  [DB] Extra columns written: posts_found={len(posts)}, posts_analyzed={posts_analyzed_count}", flush=True)
     except Exception as ex:
         print(f"  [!] Extra columns update failed (non-fatal): {ex}", flush=True)
 
@@ -1405,6 +1571,37 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
                                    source_counts=source_counts, intel=intel,
                                    platform_warnings=platform_warnings)
 
+        # ── Post-Phase: Pain Stream alert (auto-create for return visits) ──
+        if PAIN_STREAM_AVAILABLE and user_id:
+            try:
+                kws = decomposition.get("keywords", [])[:5]
+                if kws:
+                    create_pain_alert(
+                        user_id=user_id,
+                        validation_id=validation_id,
+                        keywords=kws,
+                        subreddits=[p.get("subreddit", "") for p in posts[:20] if p.get("subreddit")],
+                    )
+            except Exception as e:
+                print(f"  [PainStream] Alert creation skipped: {e}")
+
+        # ── Post-Phase: Competitor Deathwatch scan ──
+        if DEATHWATCH_AVAILABLE:
+            try:
+                comp_names = []
+                comp_landscape = report.get("competition_landscape", {})
+                for comp in comp_landscape.get("direct_competitors", []):
+                    name = comp.get("name", "") if isinstance(comp, dict) else str(comp)
+                    if name:
+                        comp_names.append(name)
+                if comp_names:
+                    complaints = scan_for_complaints(posts, comp_names)
+                    if complaints:
+                        save_complaints(complaints)
+                        report["competitor_complaints"] = complaints[:10]
+            except Exception as e:
+                print(f"  [Deathwatch] Scan skipped: {e}")
+
         print("\n  [✓] Validation complete!")
 
     except Exception as e:
@@ -1412,6 +1609,7 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
         traceback.print_exc()
         update_validation(validation_id, {
             "status": "failed",
+            "error": str(e),
             "report": json.dumps({"error": str(e)}),
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })

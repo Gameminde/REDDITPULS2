@@ -2,6 +2,8 @@
 RedditPulse — Keyword-Based Reddit Scraper
 Searches Reddit for user-specified keywords across all relevant subreddits.
 Supports timed scans (10min, 1h, 10h, 48h) with continuous collection.
+
+Priority: Official Reddit API (PRAW) → Async anonymous → Sequential fallback
 """
 
 import re
@@ -9,6 +11,17 @@ import time
 import random
 import requests
 from datetime import datetime
+
+# ── Try to import PRAW-based authenticated scraper ──
+try:
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from reddit_auth import is_available as praw_available, search_authenticated, scrape_all_authenticated
+    PRAW_IMPORTED = True
+except ImportError:
+    PRAW_IMPORTED = False
+    praw_available = lambda: False
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
@@ -263,6 +276,13 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
     seen_ids = set()
     all_posts = []
 
+    # ── Determine scraping mode: Official API vs Anonymous ──
+    use_official_api = PRAW_IMPORTED and praw_available()
+    if use_official_api:
+        print(f"  [Reddit] ✓ Using official API (PRAW) — 100 req/min, legally compliant")
+    else:
+        print(f"  [Reddit] ⚠ Using anonymous scraping — consider setting REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET")
+
     print(f"  [>] Scanning for: {keywords}")
     print(f"  [>] Duration: {duration} ({max_seconds}s)")
 
@@ -270,83 +290,124 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
     if on_progress:
         on_progress(0, "Searching Reddit globally...")
 
-    after = ""
-    for page in range(5):  # Max 5 pages = 500 results from global
-        if time.time() - start_time > max_seconds:
-            break
-
-        result = search_reddit(keywords, after=after)
-        if isinstance(result, tuple):
-            children, after = result
-        else:
-            children, after = result, ""
-
-        for child in children:
-            post = _parse_post(child, keywords)
-            if post and post["id"] not in seen_ids:
-                seen_ids.add(post["id"])
-                all_posts.append(post)
-
-        if on_progress:
-            on_progress(len(all_posts), f"Global search page {page+1}: {len(all_posts)} posts")
-        
-        if not after:
-            break
-        time.sleep(2.5)
-
-    # ── Phase 2: Async subreddit-specific searches ──
-    selected_subs = _select_subreddits(keywords)
-    if on_progress:
-        on_progress(len(all_posts), f"Async scanning {len(selected_subs)} subreddits...")
-
-    try:
-        import asyncio
-        import sys
-        import os
-        sys.path.insert(0, os.path.dirname(__file__))
-        from reddit_async import scrape_all_async, AIOHTTP_AVAILABLE
-
-        if AIOHTTP_AVAILABLE:
-            async_posts = asyncio.run(scrape_all_async(
-                subreddits=selected_subs,
-                sorts=["new"],
-                max_concurrent=6,
-            ))
-            for post_data in async_posts:
-                # Word-level partial matching — any keyword word in post text
+    if use_official_api:
+        # ── PRAW path: use authenticated search (fast + legal) ──
+        praw_posts = search_authenticated(keywords, sort="new", time_filter="month", limit=250)
+        for post_data in praw_posts:
+            eid = post_data.get("external_id", post_data.get("id", ""))
+            if eid and eid not in seen_ids:
+                seen_ids.add(eid)
                 text_lower = post_data.get("full_text", "").lower()
                 matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                if matched_kw and post_data.get("external_id") not in seen_ids:
-                    seen_ids.add(post_data["external_id"])
+                if matched_kw:
                     post_data["matched_keywords"] = matched_kw
-                    post_data["id"] = post_data.get("external_id", "")
+                    post_data["id"] = eid
                     post_data["selftext"] = post_data.get("body", "")
-                    post_data["permalink"] = post_data.get("permalink", "")
                     all_posts.append(post_data)
-
-            if on_progress:
-                on_progress(len(all_posts), f"Async scan done: {len(all_posts)} posts")
-        else:
-            raise ImportError("aiohttp not available")
-    except Exception as e:
-        # Fallback to sequential
-        print(f"    [!] Async unavailable ({e}), using sequential scan")
-        for sub in selected_subs:
+        print(f"    [PRAW] Global search: {len(all_posts)} posts")
+        if on_progress:
+            on_progress(len(all_posts), f"Official API global search: {len(all_posts)} posts")
+    else:
+        # ── Anonymous path: paginated search ──
+        after = ""
+        for page in range(5):  # Max 5 pages = 500 results from global
             if time.time() - start_time > max_seconds:
                 break
-            if on_progress:
-                on_progress(len(all_posts), f"Searching r/{sub}...")
-            children, _ = search_subreddit(sub, keywords)
-            new_count = 0
+
+            result = search_reddit(keywords, after=after)
+            if isinstance(result, tuple):
+                children, after = result
+            else:
+                children, after = result, ""
+
             for child in children:
                 post = _parse_post(child, keywords)
                 if post and post["id"] not in seen_ids:
                     seen_ids.add(post["id"])
                     all_posts.append(post)
-                    new_count += 1
-            if new_count > 0:
-                print(f"    r/{sub}: +{new_count} posts (total: {len(all_posts)})")
+
+            if on_progress:
+                on_progress(len(all_posts), f"Global search page {page+1}: {len(all_posts)} posts")
+            
+            if not after:
+                break
             time.sleep(2.5)
+
+    # ── Phase 2: Subreddit-specific searches ──
+    selected_subs = _select_subreddits(keywords)
+    if on_progress:
+        on_progress(len(all_posts), f"Scanning {len(selected_subs)} subreddits...")
+
+    if use_official_api:
+        # ── PRAW path: authenticated subreddit scrape ──
+        praw_sub_posts = scrape_all_authenticated(
+            subreddits=selected_subs,
+            sorts=["new", "hot"],
+            limit=100,
+        )
+        for post_data in praw_sub_posts:
+            eid = post_data.get("external_id", post_data.get("id", ""))
+            if eid and eid not in seen_ids:
+                text_lower = post_data.get("full_text", "").lower()
+                matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
+                if matched_kw:
+                    seen_ids.add(eid)
+                    post_data["matched_keywords"] = matched_kw
+                    post_data["id"] = eid
+                    post_data["selftext"] = post_data.get("body", "")
+                    all_posts.append(post_data)
+        print(f"    [PRAW] Subreddit scan: {len(all_posts)} total posts")
+        if on_progress:
+            on_progress(len(all_posts), f"Official API subreddit scan done: {len(all_posts)} posts")
+    else:
+        # ── Anonymous path: async or sequential ──
+        try:
+            import asyncio
+            import sys as _sys
+            import os as _os
+            _sys.path.insert(0, _os.path.dirname(__file__))
+            from reddit_async import scrape_all_async, AIOHTTP_AVAILABLE
+
+            if AIOHTTP_AVAILABLE:
+                async_posts = asyncio.run(scrape_all_async(
+                    subreddits=selected_subs,
+                    sorts=["new"],
+                    max_concurrent=6,
+                ))
+                for post_data in async_posts:
+                    text_lower = post_data.get("full_text", "").lower()
+                    matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
+                    if matched_kw and post_data.get("external_id") not in seen_ids:
+                        seen_ids.add(post_data["external_id"])
+                        post_data["matched_keywords"] = matched_kw
+                        post_data["id"] = post_data.get("external_id", "")
+                        post_data["selftext"] = post_data.get("body", "")
+                        post_data["permalink"] = post_data.get("permalink", "")
+                        all_posts.append(post_data)
+
+                if on_progress:
+                    on_progress(len(all_posts), f"Async scan done: {len(all_posts)} posts")
+            else:
+                raise ImportError("aiohttp not available")
+        except Exception as e:
+            # Fallback to sequential
+            print(f"    [!] Async unavailable ({e}), using sequential scan")
+            for sub in selected_subs:
+                if time.time() - start_time > max_seconds:
+                    break
+                if on_progress:
+                    on_progress(len(all_posts), f"Searching r/{sub}...")
+                children, _ = search_subreddit(sub, keywords)
+                new_count = 0
+                for child in children:
+                    post = _parse_post(child, keywords)
+                    if post and post["id"] not in seen_ids:
+                        seen_ids.add(post["id"])
+                        all_posts.append(post)
+                        new_count += 1
+                if new_count > 0:
+                    print(f"    r/{sub}: +{new_count} posts (total: {len(all_posts)})")
+                time.sleep(2.5)
 
     # ── Phase 2.5: PullPush.io historical backfill ──
     if on_progress:

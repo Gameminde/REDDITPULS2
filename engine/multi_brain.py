@@ -528,7 +528,7 @@ def call_provider(config, prompt, system_prompt):
 
 
 def extract_json(text):
-    """Extract JSON from LLM response."""
+    """Extract JSON from LLM response, with truncated JSON repair."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -537,8 +537,45 @@ def extract_json(text):
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1:
-        text = text[start:end + 1]
+        candidate = text[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass  # Fall through to repair
+    # Try to repair truncated JSON — LLMs sometimes cut off mid-output
+    if start != -1:
+        candidate = text[start:]
+        repaired = _repair_truncated_json(candidate)
+        if repaired is not None:
+            return repaired
+    # Last resort: original parse (will raise with clear error)
+    if start != -1 and end != -1:
+        return json.loads(text[start:end + 1])
     return json.loads(text)
+
+
+def _repair_truncated_json(text):
+    """Try to close unclosed brackets/braces in truncated JSON output.
+    Returns parsed dict on success, None on failure."""
+    # Strip trailing incomplete key-value pairs (common truncation pattern)
+    # e.g., '..."key": "some incomplete value' → remove the dangling entry
+    import re
+    # Remove any trailing string that's clearly cut off (no closing quote)
+    text = re.sub(r',\s*"[^"]*":\s*"[^"]*$', '', text)
+    text = re.sub(r',\s*"[^"]*":\s*$', '', text)
+    text = re.sub(r',\s*$', '', text)
+
+    open_braces = text.count('{') - text.count('}')
+    open_brackets = text.count('[') - text.count(']')
+    if open_braces <= 0 and open_brackets <= 0:
+        return None  # Not a truncation issue
+    repaired = text + (']' * max(0, open_brackets)) + ('}' * max(0, open_braces))
+    try:
+        result = json.loads(repaired)
+        print(f"  [JSON-REPAIR] Successfully repaired truncated JSON (closed {open_brackets} brackets, {open_braces} braces)")
+        return result
+    except json.JSONDecodeError:
+        return None
 
 
 # ═══════════════════════════════════════════════════════
@@ -602,6 +639,10 @@ class AIBrain:
 
         # ══ ROUND 1: Independent Analysis with Adversarial Roles ══
         print(f"\n  [Brain] ══ ROUND 1: Independent Analysis ({n} models, adversarial roles) ══")
+        if n < 3:
+            missing_roles = [AGENT_ROLES[i][0] for i in range(n, min(3, len(AGENT_ROLES)))]
+            print(f"  [Brain] ⚠ Only {n} model(s) — {'+'.join([AGENT_ROLES[i][0] for i in range(n)])} assigned. "
+                  f"Add {3 - n} more model(s) in Settings for {', '.join(missing_roles)} role(s).")
         if on_progress:
             on_progress("debating", f"Round 1: {n} models analyzing independently")
 
@@ -657,6 +698,12 @@ class AIBrain:
 
         if len(valid) == 0:
             raise Exception("All AI models failed. Check your API keys in Settings.")
+
+        # FIX 3: Detect if SKEPTIC role is missing from valid analyses
+        valid_roles = {a["role"] for a in valid}
+        if "SKEPTIC" not in valid_roles and n > 0:
+            print(f"  [Brain] ⚠ SKEPTIC role missing from valid results! "
+                  f"Roles present: {valid_roles}. Debate may lack adversarial tension.")
 
         if len(valid) == 1:
             print(f"  [Brain] Only 1 model succeeded → returning its analysis directly")
@@ -929,7 +976,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             "verdict": final_verdict,
             "confidence": avg_confidence,
             "summary": _pick_longest("summary"),
-            "evidence": all_evidence[:15],
+            "evidence": all_evidence[:25],
             "audience_validation": _pick_longest("audience_validation"),
             "competitor_gaps": _pick_longest("competitor_gaps"),
             "price_signals": _pick_longest("price_signals"),

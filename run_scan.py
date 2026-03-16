@@ -86,40 +86,55 @@ def update_scan(scan_id, updates):
         print(f"  [!] Supabase update failed: {e}")
 
 
-def upload_posts(posts, scan_id):
-    """Upload scraped posts to Supabase in batches."""
-    url = f"{SUPABASE_URL}/rest/v1/scan_posts"
+def _normalize_timestamp(value):
+    """Normalize mixed epoch/ISO timestamps to a JSON-safe value for Supabase."""
+    if isinstance(value, (int, float)):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        return value or None
+    return None
+
+
+def upload_posts(posts, scan_id, user_id=""):
+    """Upload scraped posts to the canonical posts table in batches."""
+    url = f"{SUPABASE_URL}/rest/v1/posts?on_conflict=id"
     batch_size = 50
+    headers = _supabase_headers()
+    headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
 
     for i in range(0, len(posts), batch_size):
         batch = posts[i:i + batch_size]
         rows = []
         for p in batch:
             rows.append({
-                "scan_id": scan_id,
-                "post_id": p.get("id", ""),
+                "id": p.get("id", ""),
                 "title": (p.get("title") or "")[:500],
                 "selftext": (p.get("selftext") or "")[:5000],
+                "full_text": (p.get("full_text") or p.get("selftext") or p.get("title") or "")[:5000],
                 "subreddit": p.get("subreddit", ""),
                 "score": p.get("score", 0),
+                "upvote_ratio": p.get("upvote_ratio", 0.5),
                 "num_comments": p.get("num_comments", 0),
                 "permalink": p.get("permalink", ""),
                 "author": p.get("author", ""),
-                "created_utc": p.get("created_utc", 0),
-                "source": p.get("source", "reddit"),
+                "url": p.get("url", ""),
+                "created_utc": _normalize_timestamp(p.get("created_utc")),
+                "matched_phrases": p.get("matched_keywords", p.get("matched_phrases", [])),
+                "scan_id": scan_id,
+                "user_id": user_id or None,
             })
 
         try:
-            r = requests.post(url, json=rows, headers=_supabase_headers(), timeout=30)
+            r = requests.post(url, json=rows, headers=headers, timeout=30)
             if r.status_code >= 400:
-                print(f"  [!] Post upload batch {i//batch_size + 1}: {r.status_code}")
+                print(f"  [!] Post upload batch {i//batch_size + 1}: {r.status_code} {r.text[:200]}")
         except Exception as e:
             print(f"  [!] Post upload failed: {e}")
 
 
 def upload_analysis(results, scan_id):
     """Upload AI analysis results to Supabase in batches."""
-    url = f"{SUPABASE_URL}/rest/v1/scan_analysis"
+    url = f"{SUPABASE_URL}/rest/v1/ai_analysis"
     batch_size = 50
 
     for i in range(0, len(results), batch_size):
@@ -136,13 +151,14 @@ def upload_analysis(results, scan_id):
                 "opportunity_type": r_item.get("opportunity_type", "none"),
                 "market_size": r_item.get("market_size", "niche"),
                 "solution_idea": r_item.get("solution_idea", ""),
-                "confidence": r_item.get("confidence", 0),
+                "ai_model_used": r_item.get("ai_model_used", ""),
+                "raw_ai_response": r_item,
             })
 
         try:
             r = requests.post(url, json=rows, headers=_supabase_headers(), timeout=30)
             if r.status_code >= 400:
-                print(f"  [!] Analysis upload batch {i//batch_size + 1}: {r.status_code}")
+                print(f"  [!] Analysis upload batch {i//batch_size + 1}: {r.status_code} {r.text[:200]}")
         except Exception as e:
             print(f"  [!] Analysis upload failed: {e}")
 
@@ -150,7 +166,7 @@ def upload_analysis(results, scan_id):
 def upload_synthesis(synthesis, scan_id):
     """Upload AI synthesis report to scan row."""
     update_scan(scan_id, {
-        "synthesis_report": json.dumps(synthesis),
+        "synthesis_report": synthesis,
     })
 
 
@@ -272,7 +288,7 @@ def run_scan(scan_id: str, keywords: list, duration: str = "10min", user_id: str
             "status": "scraped",
             "posts_found": len(unique_posts),
             "credibility_tier": credibility.tier,
-            "credibility_data": json.dumps(credibility.to_dict()),
+            "credibility_data": credibility.to_dict(),
         })
 
         print(f"  [✓] Total unique posts: {len(unique_posts)}")
@@ -285,7 +301,7 @@ def run_scan(scan_id: str, keywords: list, duration: str = "10min", user_id: str
                 "posts_analyzed": 0,
                 "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "credibility_tier": credibility.tier,
-                "credibility_data": json.dumps(credibility.to_dict()),
+                "credibility_data": credibility.to_dict(),
             })
             if not unique_posts:
                 print("  [!] No posts found — try different keywords")
@@ -331,7 +347,7 @@ def run_scan(scan_id: str, keywords: list, duration: str = "10min", user_id: str
 
         # ── Phase 2: Upload posts ──
         print("\n  ══ PHASE 2: Uploading Posts ══")
-        upload_posts(unique_posts, scan_id)
+        upload_posts(unique_posts, scan_id, user_id=user_id)
         print(f"  [✓] Uploaded {len(unique_posts)} posts")
 
         # ── Phase 3: AI Per-Post Analysis ──
@@ -477,14 +493,14 @@ Include ICP analysis and competition findings in your verdict."""
             "posts_analyzed": len(results),
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "credibility_tier": credibility.tier,
-            "credibility_data": json.dumps(credibility.to_dict()),
+            "credibility_data": credibility.to_dict(),
         }
         if trend_summary.get("available"):
-            final_data["trend_data"] = json.dumps(trend_summary)
+            final_data["trend_data"] = trend_summary
         if icp_data:
-            final_data["icp_data"] = json.dumps(icp_data)
+            final_data["icp_data"] = icp_data
         if comp_summary_data.get("available"):
-            final_data["competition_data"] = json.dumps(comp_summary_data)
+            final_data["competition_data"] = comp_summary_data
         update_scan(scan_id, final_data)
 
         print(f"\n  [>] Scan complete! {len(unique_posts)} posts, {len(results)} analyzed")
@@ -501,6 +517,7 @@ Include ICP analysis and competition findings in your verdict."""
         traceback.print_exc()
         update_scan(scan_id, {
             "status": "failed",
+            "synthesis_report": {"error": str(e)},
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
 
