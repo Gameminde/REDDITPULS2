@@ -45,6 +45,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_K
 _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
 BASE_SUBREDDITS = list(TARGET_SUBREDDITS)
+_SCHEMA_CACHE = {}
 
 
 # ═══════════════════════════════════════════════════════
@@ -99,6 +100,30 @@ def sb_rpc(fn_name, params=None):
     return r
 
 
+def table_has_column(table, column):
+    """Best-effort schema check so scraper upgrades don't break older DBs."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return True
+
+    cache_key = (table, column)
+    if cache_key in _SCHEMA_CACHE:
+        return _SCHEMA_CACHE[cache_key]
+
+    try:
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_headers(),
+            params={"select": column, "limit": 1},
+            timeout=10,
+        )
+        exists = resp.status_code == 200
+    except Exception:
+        exists = False
+
+    _SCHEMA_CACHE[cache_key] = exists
+    return exists
+
+
 def load_user_requested_subreddits():
     """Merge user-discovered subreddits with the base scraper coverage."""
     if not SUPABASE_URL:
@@ -122,6 +147,74 @@ def _to_iso_datetime(value):
         except Exception:
             return datetime.now(timezone.utc).isoformat()
     return datetime.now(timezone.utc).isoformat()
+
+
+def _to_epoch_timestamp(value):
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+def _build_source_breakdown(posts):
+    counter = Counter(post.get("source", "unknown") for post in posts if post.get("source"))
+    return [
+        {"platform": platform, "count": count}
+        for platform, count in counter.most_common()
+    ]
+
+
+def _build_pain_summary(posts, topic_name=""):
+    phrase_counter = Counter()
+    supporting_titles = []
+    matched_posts = 0
+
+    sorted_posts = sorted(
+        posts,
+        key=lambda post: int(post.get("score", 0) or 0) + int(post.get("num_comments", 0) or 0),
+        reverse=True,
+    )
+
+    for post in sorted_posts:
+        text_lower = f"{post.get('title', '')} {post.get('full_text', '')} {post.get('body', '')}".lower()
+        matches = []
+        for phrase in PAIN_PHRASES[:30]:
+            normalized = phrase.lower()
+            if normalized in text_lower:
+                matches.append(normalized)
+
+        if not matches:
+            continue
+
+        matched_posts += 1
+        phrase_counter.update(matches[:3])
+        title = (post.get("title", "") or "").strip()
+        if title and len(supporting_titles) < 2:
+            supporting_titles.append(title[:120])
+
+    if matched_posts == 0:
+        return None, 0
+
+    top_phrases = [phrase for phrase, _ in phrase_counter.most_common(2)]
+    if top_phrases:
+        if len(top_phrases) == 1:
+            summary = f"People repeatedly complain about {top_phrases[0]}."
+        else:
+            summary = f"People repeatedly complain about {top_phrases[0]} and {top_phrases[1]}."
+    else:
+        summary = f"People repeatedly describe friction around {topic_name.lower() if topic_name else 'this theme'}."
+
+    if supporting_titles:
+        summary += f" A representative discussion was: {supporting_titles[0]}."
+
+    return summary[:420], matched_posts
 
 
 def store_posts(rows):
@@ -692,22 +785,25 @@ def classify_post_to_topics(post):
     matches = []
 
     for slug, topic_info in TRACKED_TOPICS.items():
-        hits = sum(1 for kw in topic_info["keywords"] if kw.lower() in text)
-        if hits >= 1:
-            matches.append((slug, hits))
+        score = 0
+        phrase_hit = False
+        for keyword in topic_info["keywords"]:
+            normalized = keyword.lower().strip()
+            if not normalized:
+                continue
+            if " " in normalized or "-" in normalized or "/" in normalized:
+                if normalized in text:
+                    score += 2
+                    phrase_hit = True
+            elif re.search(rf"\b{re.escape(normalized)}\b", text):
+                score += 1
 
-    # Sort by hit count, return top 3
+        if phrase_hit or score >= 2:
+            matches.append((slug, score))
+
+    # Sort by match score, return top 2 strongest themes.
     matches.sort(key=lambda x: x[1], reverse=True)
-
-    # If no match found, try dynamic categorization by subreddit
-    if not matches:
-        subreddit = post.get("subreddit", "")
-        if subreddit:
-            # Create a dynamic topic from the subreddit
-            dynamic_slug = f"sub-{subreddit.lower()}"
-            return [dynamic_slug]
-
-    return [m[0] for m in matches[:3]]
+    return [match[0] for match in matches[:2]]
 
 
 # ═══════════════════════════════════════════════════════
@@ -729,23 +825,19 @@ def calculate_idea_score(topic_slug, posts, existing_idea=None):
         return 0.0, {}
 
     now = time.time()
+    twenty_four_hours_ago = now - 86400
     seven_days_ago = now - 7 * 86400
     thirty_days_ago = now - 30 * 86400
 
     # Parse timestamps
-    def to_epoch(val):
-        if isinstance(val, (int, float)):
-            return float(val) if val > 1e9 else 0
-        if isinstance(val, str):
-            try:
-                return datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
-            except (ValueError, TypeError):
-                return 0
-        return 0
+    post_count_24h = sum(1 for post in posts if _to_epoch_timestamp(post.get("created_utc", 0)) > twenty_four_hours_ago)
 
     # ── Velocity (how many posts in last 7 days vs previous) ──
-    recent_count = sum(1 for p in posts if to_epoch(p.get("created_utc", 0)) > seven_days_ago)
-    older_count = sum(1 for p in posts if seven_days_ago >= to_epoch(p.get("created_utc", 0)) > thirty_days_ago)
+    recent_count = sum(1 for post in posts if _to_epoch_timestamp(post.get("created_utc", 0)) > seven_days_ago)
+    older_count = sum(
+        1 for post in posts
+        if seven_days_ago >= _to_epoch_timestamp(post.get("created_utc", 0)) > thirty_days_ago
+    )
 
     if older_count > 0:
         velocity_ratio = recent_count / older_count
@@ -755,8 +847,9 @@ def calculate_idea_score(topic_slug, posts, existing_idea=None):
     velocity_score = min(velocity_ratio * 15, 100)
 
     # ── Cross-platform (how many different sources) ──
-    sources = set(p.get("source", "reddit") for p in posts)
-    source_count = len(sources)
+    source_breakdown = _build_source_breakdown(posts)
+    source_names = [item["platform"] for item in source_breakdown]
+    source_count = len(source_breakdown)
     cross_platform_multipliers = {1: 1.0, 2: 1.5, 3: 2.2, 4: 3.0}
     cp_mult = cross_platform_multipliers.get(source_count, 3.0)
     cross_platform_score = min(source_count * 25 * cp_mult / 3.0, 100)
@@ -796,9 +889,12 @@ def calculate_idea_score(topic_slug, posts, existing_idea=None):
         "pain_signal": round(pain_boost, 1),
         "volume_bonus": round(volume_bonus, 1),
         "source_count": source_count,
-        "sources": sorted(sources),
+        "sources": source_breakdown,
+        "source_names": source_names,
+        "post_count_24h": post_count_24h,
         "post_count_7d": recent_count,
         "post_count_total": len(posts),
+        "pain_count": pain_count,
     }
 
     return final_score, breakdown
@@ -1026,6 +1122,11 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         rows = sb_select("ideas", "select=*")
         for row in rows:
             existing_ideas[row["slug"]] = row
+    idea_optional_columns = {
+        "post_count_24h": table_has_column("ideas", "post_count_24h"),
+        "pain_count": table_has_column("ideas", "pain_count"),
+        "pain_summary": table_has_column("ideas", "pain_summary"),
+    }
 
     # ── 4. Calculate scores + upsert ──
     print("\n  Calculating idea scores...")
@@ -1071,6 +1172,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             "comments": p.get("num_comments", 0),
             "url": p.get("permalink", ""),
         } for p in top_posts]
+        pain_summary, pain_count = _build_pain_summary(posts, topic_name)
 
         idea_row = {
             "topic": topic_name,
@@ -1096,6 +1198,13 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             "keywords": json.dumps(topic_info.get("keywords", [])),
             "last_updated": datetime.now(timezone.utc).isoformat(),
         }
+
+        if idea_optional_columns["post_count_24h"]:
+            idea_row["post_count_24h"] = breakdown.get("post_count_24h", 0)
+        if idea_optional_columns["pain_count"]:
+            idea_row["pain_count"] = pain_count or breakdown.get("pain_count", 0)
+        if idea_optional_columns["pain_summary"] and pain_summary:
+            idea_row["pain_summary"] = pain_summary
 
         ideas_to_upsert.append(idea_row)
         ideas_updated += 1

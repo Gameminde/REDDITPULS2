@@ -1,15 +1,21 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, Minus, AlertCircle, ExternalLink, Search } from "lucide-react";
+import {
+    Activity,
+    AlertCircle,
+    ArrowUpRight,
+    BarChart3,
+    Layers3,
+    Search,
+    Sparkles,
+    TrendingDown,
+    TrendingUp,
+} from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 
-/**
- * Matches REAL `ideas` table from schema_stock_market.sql.
- * Every field here exists in the live Supabase DB.
- */
 interface IdeaRow {
     id: string;
     topic: string;
@@ -21,6 +27,7 @@ interface IdeaRow {
     trend_direction: string;
     confidence_level: string;
     post_count_total: number;
+    post_count_24h?: number;
     post_count_7d: number;
     source_count: number;
     sources: Array<{ platform: string; count: number }>;
@@ -29,17 +36,33 @@ interface IdeaRow {
     icp_data: Record<string, unknown> | null;
     top_posts: Array<{ title: string; subreddit?: string; score?: number; permalink?: string }>;
     keywords: string[];
+    pain_count?: number;
+    pain_summary?: string;
     first_seen: string;
     last_updated: string;
 }
 
-const verdictConfig: Record<string, { className: string; arrow: string }> = {
-    "BUILD IT": { className: "bg-build/10 text-build border border-build/25", arrow: "▲" },
-    "RISKY": { className: "bg-risky/10 text-risky border border-risky/25", arrow: "" },
-    "DON'T BUILD": { className: "bg-dont/10 text-dont border border-dont/25", arrow: "▼" },
+type IdeaVerdict = "BUILD IT" | "RISKY" | "DON'T BUILD";
+
+const verdictConfig: Record<IdeaVerdict, { className: string; tone: string; summary: string }> = {
+    "BUILD IT": {
+        className: "bg-build/10 text-build border border-build/25",
+        tone: "text-build",
+        summary: "Demand and momentum are lining up.",
+    },
+    "RISKY": {
+        className: "bg-risky/10 text-risky border border-risky/25",
+        tone: "text-risky",
+        summary: "There is signal here, but it still needs sharper proof.",
+    },
+    "DON'T BUILD": {
+        className: "bg-dont/10 text-dont border border-dont/25",
+        tone: "text-dont",
+        summary: "Weak signal or too much downside right now.",
+    },
 };
 
-function scoreToVerdict(score: number): string {
+function scoreToVerdict(score: number): IdeaVerdict {
     if (score >= 65) return "BUILD IT";
     if (score >= 35) return "RISKY";
     return "DON'T BUILD";
@@ -49,10 +72,109 @@ function formatTimeAgo(dateStr: string): string {
     const diff = Date.now() - new Date(dateStr).getTime();
     const hours = Math.floor(diff / 3600000);
     if (hours < 1) return "just now";
-    if (hours < 24) return hours + "h ago";
+    if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    if (days < 7) return days + "d ago";
-    return Math.floor(days / 7) + "w ago";
+    if (days < 7) return `${days}d ago`;
+    return `${Math.floor(days / 7)}w ago`;
+}
+
+function formatSigned(value: number, digits = 1): string {
+    return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+}
+
+function formatCompact(value: number): string {
+    return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function getMomentumLabel(change24h: number): string {
+    if (change24h >= 20) return "Heating up quickly";
+    if (change24h >= 5) return "Gaining attention";
+    if (change24h <= -10) return "Cooling down";
+    return "Holding steady";
+}
+
+function getTrendLabel(trendDirection: string): string {
+    switch (trendDirection?.toLowerCase()) {
+        case "rising":
+            return "Rising trend";
+        case "falling":
+            return "Falling trend";
+        case "new":
+            return "Newly detected";
+        default:
+            return "Stable trend";
+    }
+}
+
+function getConfidenceLabel(confidenceLevel: string): string {
+    switch ((confidenceLevel || "").toUpperCase()) {
+        case "HIGH":
+            return "High confidence";
+        case "MEDIUM":
+            return "Moderate confidence";
+        case "LOW":
+            return "Low confidence";
+        default:
+            return "Confidence unclear";
+    }
+}
+
+function describeIdea(idea: IdeaRow): string {
+    if (idea.pain_summary) {
+        return idea.pain_summary;
+    }
+    const category = idea.category ? idea.category.replace(/-/g, " ") : "general";
+    const recentPosts = idea.post_count_7d || idea.post_count_total;
+    return `${category} opportunity with ${recentPosts} recent posts feeding this score.`;
+}
+
+function getTopSignal(idea: IdeaRow): string {
+    const topPost = Array.isArray(idea.top_posts) ? idea.top_posts[0] : null;
+    if (topPost?.title) return topPost.title;
+    if (Array.isArray(idea.keywords) && idea.keywords.length > 0) {
+        return `Conversations keep clustering around ${idea.keywords.slice(0, 3).join(", ")}.`;
+    }
+    return "No representative post headline is available yet.";
+}
+
+function getSourceMix(sources: IdeaRow["sources"]): string {
+    if (!Array.isArray(sources) || sources.length === 0) {
+        return "Source mix still forming";
+    }
+
+    return sources
+        .slice(0, 3)
+        .map((source) => `${source.platform}: ${source.count}`)
+        .join(" | ");
+}
+
+function getTopSourceLabel(sources: IdeaRow["sources"]): string {
+    if (!Array.isArray(sources) || sources.length === 0) return "No source data";
+    const topSource = [...sources].sort((a, b) => b.count - a.count)[0];
+    return `${topSource.platform} leads`;
+}
+
+function MetricCard({
+    icon,
+    label,
+    value,
+    hint,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    value: string;
+    hint: string;
+}) {
+    return (
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+            <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                {icon}
+                <span>{label}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-foreground">{value}</div>
+            <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        </div>
+    );
 }
 
 export default function ExplorePage() {
@@ -68,7 +190,7 @@ export default function ExplorePage() {
         const load = async () => {
             try {
                 const sortParam = sort === "trending" ? "trending" : sort === "new" ? "new" : "score";
-                const res = await fetch(`/api/ideas?sort=${sortParam}&limit=50`);
+                const res = await fetch(`/api/ideas?sort=${sortParam}&limit=50`, { cache: "no-store" });
                 const data = await res.json();
                 if (data.ideas) setIdeas(data.ideas);
             } catch (err) {
@@ -83,197 +205,318 @@ export default function ExplorePage() {
     useEffect(() => {
         const channel = supabase
             .channel("ideas-live")
-            .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "ideas",
-            }, (payload: any) => {
-                const row = payload.new as IdeaRow;
-                if (!row?.id) return;
-                setIdeas((prev) => {
-                    if (payload.eventType === "INSERT") {
-                        return [row, ...prev].slice(0, 100);
-                    }
-                    if (payload.eventType === "UPDATE") {
-                        return prev.map((idea) => idea.id === row.id ? row : idea);
-                    }
-                    return prev;
-                });
-            })
+            .on(
+                "postgres_changes" as any,
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "ideas",
+                } as any,
+                (payload: { eventType: string; new: IdeaRow }) => {
+                    const row = payload.new;
+                    if (!row?.id) return;
+                    setIdeas((prev) => {
+                        if (payload.eventType === "INSERT") {
+                            return [row, ...prev].slice(0, 100);
+                        }
+                        if (payload.eventType === "UPDATE") {
+                            return prev.map((idea) => (idea.id === row.id ? row : idea));
+                        }
+                        return prev;
+                    });
+                },
+            )
             .subscribe();
 
-        return () => { supabase.removeChannel(channel); };
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [supabase]);
 
-    // Derive verdict from real score
-    const enhancedIdeas = ideas.map(idea => ({
-        ...idea,
-        verdict: scoreToVerdict(idea.current_score),
-    }));
+    const enhancedIdeas = useMemo(
+        () =>
+            ideas.map((idea) => ({
+                ...idea,
+                verdict: scoreToVerdict(idea.current_score),
+            })),
+        [ideas],
+    );
 
-    // Filter by verdict + search
     const filtered = enhancedIdeas
-        .filter(idea => filter === "All" || idea.verdict === filter)
-        .filter(idea => !searchQuery || idea.topic.toLowerCase().includes(searchQuery.toLowerCase()));
+        .filter((idea) => filter === "All" || idea.verdict === filter)
+        .filter((idea) => !searchQuery || idea.topic.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const summary = useMemo(() => {
+        const buildIdeas = enhancedIdeas.filter((idea) => idea.verdict === "BUILD IT").length;
+        const risingIdeas = enhancedIdeas.filter((idea) => idea.change_24h > 0).length;
+        const averageScore = enhancedIdeas.length
+            ? Math.round(enhancedIdeas.reduce((sum, idea) => sum + idea.current_score, 0) / enhancedIdeas.length)
+            : 0;
+        return {
+            tracked: enhancedIdeas.length,
+            buildIdeas,
+            risingIdeas,
+            averageScore,
+        };
+    }, [enhancedIdeas]);
 
     return (
-        <div className="max-w-6xl mx-auto relative z-10 pt-8">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6 px-6">
+        <div className="max-w-7xl mx-auto relative z-10 px-4 pb-24 pt-8 sm:px-6">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
                 <h1 className="text-[32px] font-bold font-display tracking-tight-custom text-white">Explore Ideas</h1>
-                <p className="text-muted-foreground mt-1 text-sm font-mono">
-                    Live idea market · {ideas.length} tracked opportunities
+                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                    A live board of startup opportunities. Each card answers three things: how strong the signal is, what
+                    is driving it, and whether the momentum looks worth investigating.
                 </p>
             </motion.div>
 
-            {/* Controls row */}
-            <div className="flex items-center gap-3 mb-5 px-6 flex-wrap">
-                {/* Filter tabs */}
-                <div className="flex gap-1 p-1 rounded-[10px] w-fit" style={{ background: "hsl(0 0% 100% / 0.03)", border: "1px solid hsl(0 0% 100% / 0.07)" }}>
-                    {filters.map((f) => (
-                        <button
-                            key={f}
-                            onClick={() => setFilter(f)}
-                            className={`px-[18px] py-1.5 rounded-[7px] text-[11px] font-medium tracking-wider transition-all ${
-                                f === filter
-                                    ? "text-primary"
-                                    : "text-muted-foreground hover:text-foreground"
-                            }`}
-                            style={f === filter ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" } : { border: "1px solid transparent" }}
-                        >
-                            {f}
-                        </button>
-                    ))}
-                </div>
+            <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <MetricCard
+                    icon={<Layers3 className="h-3.5 w-3.5" />}
+                    label="Tracked"
+                    value={summary.tracked.toString()}
+                    hint="Ideas currently ranked in the market board"
+                />
+                <MetricCard
+                    icon={<Sparkles className="h-3.5 w-3.5" />}
+                    label="Build It"
+                    value={summary.buildIdeas.toString()}
+                    hint="Ideas currently scoring into the highest tier"
+                />
+                <MetricCard
+                    icon={<TrendingUp className="h-3.5 w-3.5" />}
+                    label="Rising Today"
+                    value={summary.risingIdeas.toString()}
+                    hint="Cards with positive 24h movement"
+                />
+                <MetricCard
+                    icon={<BarChart3 className="h-3.5 w-3.5" />}
+                    label="Avg Score"
+                    value={summary.averageScore.toString()}
+                    hint="Average market score across the board"
+                />
+            </div>
 
-                {/* Sort */}
-                <select
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value)}
-                    className="text-[11px] font-mono px-3 py-1.5 rounded-[7px] bg-white/[0.03] border border-white/[0.07] text-foreground outline-none"
-                >
-                    <option value="score">Top Score</option>
-                    <option value="trending">Trending</option>
-                    <option value="new">Newest</option>
-                </select>
+            <div className="mb-6 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-4 backdrop-blur-xl">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="space-y-3">
+                        <div>
+                            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                Opportunity Filter
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                                {filters.map((item) => (
+                                    <button
+                                        key={item}
+                                        onClick={() => setFilter(item)}
+                                        className={`rounded-full border px-4 py-2 text-[11px] font-mono uppercase tracking-[0.12em] transition ${
+                                            item === filter
+                                                ? "border-primary/30 bg-primary/10 text-primary"
+                                                : "border-white/[0.07] bg-white/[0.02] text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                                        }`}
+                                    >
+                                        {item}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
 
-                {/* Search */}
-                <div className="relative flex-1 max-w-[240px] ml-auto">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
-                    <input
-                        type="text"
-                        placeholder="Search ideas..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full text-[11px] font-mono pl-8 pr-3 py-1.5 rounded-[7px] bg-white/[0.03] border border-white/[0.07] text-foreground outline-none placeholder:text-muted-foreground/40"
-                    />
+                        <div className="flex flex-wrap gap-3">
+                            <label className="flex flex-col gap-2">
+                                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                    Sort By
+                                </span>
+                                <select
+                                    value={sort}
+                                    onChange={(e) => setSort(e.target.value)}
+                                    className="min-w-[170px] rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2 text-sm font-mono text-foreground outline-none"
+                                >
+                                    <option value="score">Top Score</option>
+                                    <option value="trending">Strongest 24h momentum</option>
+                                    <option value="new">Newest opportunities</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+
+                    <label className="w-full max-w-sm">
+                        <span className="mb-2 block text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                            Search Ideas
+                        </span>
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
+                            <input
+                                type="text"
+                                placeholder="Search topics, niches, or themes"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full rounded-xl border border-white/[0.07] bg-black/20 py-2.5 pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-muted-foreground/45"
+                            />
+                        </div>
+                    </label>
                 </div>
             </div>
 
-            {/* Loading state */}
             {loading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[14px] px-6 pb-24">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                        <div key={i} className="bento-cell p-5 rounded-[14px] h-[200px]">
-                            <div className="h-4 w-20 bg-white/5 rounded-[4px] mb-3" />
-                            <div className="h-3 w-[80%] bg-white/[0.03] rounded-[4px] mb-2" />
-                            <div className="h-3 w-[50%] bg-white/[0.03] rounded-[4px]" />
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                        <div key={index} className="bento-cell p-5">
+                            <div className="skeleton mb-4 h-6 w-28" />
+                            <div className="skeleton mb-3 h-5 w-3/4" />
+                            <div className="skeleton mb-5 h-10 w-full" />
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="skeleton h-20" />
+                                <div className="skeleton h-20" />
+                                <div className="skeleton h-20" />
+                            </div>
+                            <div className="skeleton mt-4 h-24 w-full" />
                         </div>
                     ))}
                 </div>
             ) : filtered.length > 0 ? (
-                /* Card grid — real data only */
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[14px] px-6 pb-24">
-                    {filtered.map((idea, i) => {
-                        const v = verdictConfig[idea.verdict];
-                        const scoreColor = idea.current_score >= 70 ? "text-build" : idea.current_score >= 40 ? "text-risky" : "text-dont";
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {filtered.map((idea, index) => {
+                        const verdict = verdictConfig[idea.verdict];
+                        const scoreColor =
+                            idea.current_score >= 70
+                                ? "text-build"
+                                : idea.current_score >= 40
+                                  ? "text-risky"
+                                  : "text-dont";
 
                         return (
-                            <motion.div
+                            <motion.article
                                 key={idea.id}
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: i * 0.03 }}
-                                className="flip-wrap h-[200px]"
+                                transition={{ delay: index * 0.03 }}
+                                className="bento-cell flex h-full min-h-[360px] flex-col p-5"
                             >
-                                <div className="flip-inner">
-                                    {/* Front */}
-                                    <div
-                                        className="flip-front p-5 flex flex-col gap-2.5 rounded-[14px]"
-                                        style={{
-                                            background: "hsl(0 0% 100% / 0.025)",
-                                            border: "1px solid hsl(0 0% 100% / 0.07)",
-                                            backdropFilter: "blur(20px)",
-                                        }}
-                                    >
-                                        <div className="absolute top-0 left-0 right-0 h-px rounded-t-[14px]" style={{ background: "linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.07), transparent)" }} />
-                                        <div className="flex items-center gap-2">
-                                            <span className={`inline-flex items-center gap-[5px] text-[10px] font-bold tracking-wider px-2.5 py-1 rounded-full w-fit font-mono ${v.className}`}>
-                                                {v.arrow && <span className="text-[8px]">{v.arrow}</span>}
+                                <div className="mb-4 flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                                            <span
+                                                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${verdict.className}`}
+                                            >
                                                 {idea.verdict}
                                             </span>
-                                            <span className={`text-[13px] font-bold font-mono ${scoreColor}`}>
+                                            <span className={`text-xl font-semibold font-mono ${scoreColor}`}>
                                                 {Math.round(idea.current_score)}
                                             </span>
-                                            <span className={`text-[10px] font-mono ml-auto ${idea.change_24h >= 0 ? "text-build" : "text-dont"}`}>
-                                                {idea.change_24h >= 0 ? "+" : ""}{idea.change_24h.toFixed(1)} 24h
+                                            <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                                {idea.category || "General"}
                                             </span>
                                         </div>
-                                        <Link href={`/dashboard/idea/${idea.slug}`}>
-                                            <h3 className="text-sm font-medium leading-snug text-foreground flex-1 line-clamp-3 hover:underline cursor-pointer">{idea.topic}</h3>
+
+                                        <Link href={`/dashboard/idea/${idea.slug}`} className="block">
+                                            <h2 className="text-xl font-semibold leading-tight text-white transition hover:text-primary">
+                                                {idea.topic}
+                                            </h2>
                                         </Link>
-                                        <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground mt-auto">
-                                            <span className="capitalize">{idea.category}</span>
-                                            <span>{formatTimeAgo(idea.last_updated)}</span>
-                                        </div>
+                                        <p className="mt-2 text-sm text-muted-foreground">{describeIdea(idea)}</p>
                                     </div>
 
-                                    {/* Back */}
-                                    <div
-                                        className="flip-back p-5 flex flex-col justify-center gap-2 rounded-[14px]"
-                                        style={{
-                                            background: "hsla(0,0%,4%,0.97)",
-                                            border: "1px solid hsl(16 100% 50% / 0.2)",
-                                            backdropFilter: "blur(20px)",
-                                            boxShadow: "inset 0 0 30px hsla(16,100%,50%,0.04)",
-                                        }}
-                                    >
-                                        {[
-                                            { label: "Score", value: Math.round(idea.current_score).toString() },
-                                            { label: "Posts", value: idea.post_count_total.toString() },
-                                            { label: "Sources", value: idea.source_count.toString() },
-                                            { label: "7d Change", value: (idea.change_7d >= 0 ? "+" : "") + idea.change_7d.toFixed(1) },
-                                        ].map((stat) => (
-                                            <div key={stat.label} className="flex justify-between items-center text-[13px] text-muted-foreground pb-1.5" style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.04)" }}>
-                                                <span>{stat.label}</span>
-                                                <strong className="text-foreground font-mono">{stat.value}</strong>
-                                            </div>
-                                        ))}
-                                        <div className="flex gap-1.5 mt-1">
-                                            <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 capitalize">
-                                                {idea.trend_direction}
-                                            </span>
-                                            <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-white/5 text-muted-foreground border border-white/10">
-                                                {idea.confidence_level}
-                                            </span>
-                                        </div>
-                                        <Link
-                                            href={`/dashboard/idea/${idea.slug}`}
-                                            className="absolute top-4 right-4 text-xs text-primary hover:underline font-mono flex items-center gap-1"
+                                    <div className="shrink-0 text-right">
+                                        <div
+                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-mono ${
+                                                idea.change_24h >= 0 ? "bg-build/10 text-build" : "bg-dont/10 text-dont"
+                                            }`}
                                         >
-                                            <ExternalLink className="w-3 h-3" /> Detail
-                                        </Link>
+                                            {idea.change_24h >= 0 ? (
+                                                <TrendingUp className="h-3.5 w-3.5" />
+                                            ) : (
+                                                <TrendingDown className="h-3.5 w-3.5" />
+                                            )}
+                                            {formatSigned(idea.change_24h)} 24h
+                                        </div>
+                                        <div className="mt-3 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                            Updated
+                                        </div>
+                                        <div className="mt-1 text-sm font-mono text-foreground">{formatTimeAgo(idea.last_updated)}</div>
                                     </div>
                                 </div>
-                            </motion.div>
+
+                                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                            <Activity className="h-3.5 w-3.5" />
+                                            Momentum
+                                        </div>
+                                        <div className="text-lg font-semibold font-mono text-foreground">
+                                            {getMomentumLabel(idea.change_24h)}
+                                        </div>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {formatSigned(idea.change_24h)} today, {formatSigned(idea.change_7d)} over 7d
+                                        </p>
+                                    </div>
+
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                            <BarChart3 className="h-3.5 w-3.5" />
+                                            Posts
+                                        </div>
+                                        <div className="text-lg font-semibold font-mono text-foreground">
+                                            {formatCompact(idea.post_count_total)}
+                                        </div>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {(idea.post_count_24h ?? 0) > 0
+                                                ? `${idea.post_count_24h} in the last 24h | ${idea.post_count_7d} in 7d`
+                                                : `${idea.post_count_7d} posts in the last 7 days`}
+                                        </p>
+                                    </div>
+
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                            <Layers3 className="h-3.5 w-3.5" />
+                                            Sources
+                                        </div>
+                                        <div className="text-lg font-semibold font-mono text-foreground">{idea.source_count}</div>
+                                        <p className="mt-1 text-xs text-muted-foreground">{getTopSourceLabel(idea.sources)}</p>
+                                    </div>
+                                </div>
+
+                                <div className="mb-4 rounded-xl border border-primary/12 bg-primary/[0.04] p-4">
+                                    <div className="mb-2 text-[11px] uppercase tracking-[0.12em] text-primary font-mono">
+                                        Why this card is here
+                                    </div>
+                                    <p className="text-sm leading-relaxed text-foreground/88">{getTopSignal(idea)}</p>
+                                </div>
+
+                                <div className="mb-4 flex flex-wrap gap-2">
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        {getTrendLabel(idea.trend_direction)}
+                                    </span>
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        {getConfidenceLabel(idea.confidence_level)}
+                                    </span>
+                                </div>
+
+                                <div className="mt-auto flex items-end justify-between gap-4 border-t border-white/[0.07] pt-4">
+                                    <div className="min-w-0">
+                                        <div className={`text-sm font-medium ${verdict.tone}`}>{verdict.summary}</div>
+                                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{getSourceMix(idea.sources)}</div>
+                                    </div>
+
+                                    <Link
+                                        href={`/dashboard/idea/${idea.slug}`}
+                                        className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition hover:bg-primary/15"
+                                    >
+                                        Open Thesis
+                                        <ArrowUpRight className="h-4 w-4" />
+                                    </Link>
+                                </div>
+                            </motion.article>
                         );
                     })}
                 </div>
             ) : (
-                <div className="bento-cell p-12 text-center rounded-2xl mx-6 flex flex-col items-center justify-center">
-                    <AlertCircle className="w-8 h-8 text-muted-foreground/30 mb-3" />
-                    <p className="text-[14px] font-medium text-muted-foreground/80 mb-1">No ideas found</p>
-                    <p className="text-[12px] text-muted-foreground/60">
-                        {searchQuery ? "Try a different search query." : "The scraper hasn't collected any ideas yet. Run the scraper to populate the feed."}
+                <div className="bento-cell flex flex-col items-center justify-center rounded-2xl p-12 text-center">
+                    <AlertCircle className="mb-3 h-8 w-8 text-muted-foreground/30" />
+                    <p className="mb-1 text-sm font-medium text-muted-foreground/80">No ideas found</p>
+                    <p className="text-sm text-muted-foreground/60">
+                        {searchQuery
+                            ? "Try a different search query."
+                            : "The scraper has not collected any ideas yet. Run the scraper to populate the board."}
                     </p>
                 </div>
             )}

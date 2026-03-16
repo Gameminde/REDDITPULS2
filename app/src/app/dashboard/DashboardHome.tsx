@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-    AnimatedCounter, StaggerContainer, StaggerItem, GlassCard, GlowBadge, AnimatedSparkline,
+    AnimatedCounter, StaggerContainer, StaggerItem, GlassCard, GlowBadge,
 } from "@/app/components/motion";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -58,7 +58,11 @@ export default function DashboardHome() {
         num_comments: number; permalink: string; full_text: string;
     }>>([]);
     const [trendingData, setTrendingData] = useState<Array<{
-        keyword: string; velocity: number; status: "accelerating" | "growing" | "fading"; sparkline: number[];
+        topic: string;
+        change24h: number;
+        status: "accelerating" | "growing" | "fading";
+        postCount7d: number;
+        sourceCount: number;
     }>>([]);
 
     useEffect(() => {
@@ -78,29 +82,27 @@ export default function DashboardHome() {
             if (posts) setRecentPosts(posts as typeof recentPosts);
 
             const { data: validations } = await supabase
-                .from("trend_signals")
-                .select("keyword, velocity, tier, change_24h, post_count_24h")
-                .order("updated_at", { ascending: false })
+                .from("ideas")
+                .select("topic, change_24h, confidence_level, post_count_7d, source_count")
+                .neq("confidence_level", "INSUFFICIENT")
+                .order("last_updated", { ascending: false })
                 .limit(4);
 
             if (validations && validations.length > 0) {
                 const trending = validations.map((v: Record<string, unknown>) => {
                     const conf = Number(v.change_24h || 0);
-                    const verdict = String(v.tier || "").toUpperCase();
+                    const verdict = String(v.confidence_level || "").toUpperCase();
                     const status: "accelerating" | "growing" | "fading" =
-                        verdict.includes("EXPLODING") || verdict.includes("GROWING") ? "accelerating" :
-                        verdict.includes("STABLE") ? "growing" : "fading";
-                    const base = Math.max(10, Number(v.post_count_24h || 0));
-                    const sparkline = Array.from({ length: 7 }, (_, i) =>
-                        Math.round(base + ((Number(v.velocity || 0) - base) / 6) * i + (Math.random() * 6 - 3))
-                    );
+                        conf >= 8 ? "accelerating" :
+                        conf >= 0 ? "growing" : "fading";
                     return {
-                        keyword: ((v.keyword as string) || "").substring(0, 30),
-                        velocity: conf,
+                        topic: ((v.topic as string) || "").substring(0, 30),
+                        change24h: conf,
                         status,
-                        sparkline,
+                        postCount7d: Number(v.post_count_7d || 0),
+                        sourceCount: Number(v.source_count || 0),
                     };
-                });
+                }).sort((a, b) => b.change24h - a.change24h);
                 setTrendingData(trending);
             }
         };
@@ -225,25 +227,23 @@ export default function DashboardHome() {
                             </h3>
                             <StaggerContainer style={{ display: "flex", flexDirection: "column", gap: 12 }} delay={0.4}>
                                 {trendingData.map((t) => (
-                                    <StaggerItem key={t.keyword}>
+                                    <StaggerItem key={t.topic}>
                                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                             {t.status === "accelerating" ? <Flame style={{ width: 12, height: 12, color: "#ef4444", flexShrink: 0 }} /> :
                                                 t.status === "growing" ? <TrendingUp style={{ width: 12, height: 12, color: "#10b981", flexShrink: 0 }} /> :
                                                     <TrendingDown style={{ width: 12, height: 12, color: "#f87171", flexShrink: 0 }} />}
                                             <span style={{ fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e2e8f0" }}>
-                                                {t.keyword}
+                                                {t.topic}
                                             </span>
-                                            <AnimatedSparkline
-                                                data={t.sparkline}
-                                                color={t.velocity > 200 ? "#ef4444" : t.velocity > 0 ? "#10b981" : "#f87171"}
-                                                width={48} height={18}
-                                            />
+                                            <span style={{ fontSize: 10, color: "#64748b", whiteSpace: "nowrap" }}>
+                                                {t.postCount7d} posts | {t.sourceCount} src
+                                            </span>
                                             <span style={{
                                                 fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 700,
                                                 fontVariantNumeric: "tabular-nums",
-                                                color: t.velocity > 200 ? "#ef4444" : t.velocity > 0 ? "#10b981" : "#f87171",
+                                                color: t.change24h > 8 ? "#ef4444" : t.change24h >= 0 ? "#10b981" : "#f87171",
                                             }}>
-                                                {t.velocity > 0 ? "+" : ""}{t.velocity}%
+                                                {t.change24h > 0 ? "+" : ""}{t.change24h}%
                                             </span>
                                         </div>
                                     </StaggerItem>

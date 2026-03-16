@@ -21,6 +21,13 @@ STOP_WORDS = {
     "will", "would", "does", "dont", "cant", "should", "could", "their", "there",
 }
 
+NOISE_KEYWORDS = {
+    "link", "links", "best", "coming", "planning", "overview", "overviews",
+    "discussion", "discussions", "schedule", "scheduling", "update", "updates",
+    "list", "lists", "today", "tomorrow", "yesterday", "latest", "thread", "threads",
+    "question", "questions", "story", "stories", "general",
+}
+
 
 def _headers():
     return {
@@ -46,9 +53,39 @@ def _parse_post_time(post):
     return None
 
 
+def _is_meaningful_token(word: str):
+    if not word:
+        return False
+    if word in STOP_WORDS or word in NOISE_KEYWORDS:
+        return False
+    if word.startswith("http") or word.startswith("www"):
+        return False
+    if len(word) < 4:
+        return False
+    if re.fullmatch(r"\d+", word):
+        return False
+    return True
+
+
 def _extract_keywords(text: str):
-    words = re.findall(r"\b[a-z][a-z0-9\-]{3,}\b", text.lower())
-    return [word for word in words if word not in STOP_WORDS]
+    words = [
+        word
+        for word in re.findall(r"\b[a-z][a-z0-9\-]{3,}\b", text.lower())
+        if _is_meaningful_token(word)
+    ]
+    if not words:
+        return []
+
+    phrases = []
+    for idx in range(len(words) - 1):
+        left = words[idx]
+        right = words[idx + 1]
+        if left == right:
+            continue
+        phrases.append(f"{left} {right}")
+
+    candidates = phrases or words
+    return list(dict.fromkeys(candidates))[:8]
 
 
 def _classify_tier(change_24h: float, change_7d: float, velocity: float):
@@ -117,7 +154,7 @@ def aggregate_trends(supabase_client=None, posts=None, select_fn=None, patch_fn=
         if not post_time or post_time < windows["30d"]:
             continue
 
-        text = f"{post.get('title', '')} {post.get('full_text', '')}".strip()
+        text = f"{post.get('title', '')}".strip()
         keywords = set(_extract_keywords(text))
         if not keywords:
             continue
@@ -153,6 +190,14 @@ def aggregate_trends(supabase_client=None, posts=None, select_fn=None, patch_fn=
         post_count_7d = metrics["7d"]
         prev24h = metrics["prev24h"]
         prev7d = metrics["prev7d"]
+
+        if keyword in NOISE_KEYWORDS:
+            continue
+        if post_count_24h == 0 and post_count_7d <= 1:
+            continue
+        if " " not in keyword and post_count_24h < 2 and post_count_7d < 3:
+            continue
+
         change_24h = ((post_count_24h - prev24h) / max(prev24h, 1)) * 100
         change_7d = ((post_count_7d - prev7d) / max(prev7d, 1)) * 100
         velocity = post_count_24h / max(prev24h, 1)

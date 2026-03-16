@@ -6,6 +6,40 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+function safeParseJson(value: unknown) {
+    if (typeof value === "string") {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    }
+    return value;
+}
+
+function normalizeSources(value: unknown) {
+    const parsed = safeParseJson(value);
+    if (!Array.isArray(parsed)) {
+        return [];
+    }
+
+    return parsed
+        .map((item) => {
+            if (typeof item === "string") {
+                return { platform: item, count: 0 };
+            }
+            if (item && typeof item === "object") {
+                const row = item as { platform?: unknown; count?: unknown };
+                return {
+                    platform: String(row.platform || "unknown"),
+                    count: Number(row.count || 0),
+                };
+            }
+            return null;
+        })
+        .filter(Boolean);
+}
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const sort = searchParams.get("sort") || "score";
@@ -54,11 +88,11 @@ export async function GET(request: Request) {
     // Parse JSONB fields
     const ideas = (data || []).map((idea: Record<string, unknown>) => ({
         ...idea,
-        sources: typeof idea.sources === "string" ? JSON.parse(idea.sources as string) : idea.sources,
-        top_posts: typeof idea.top_posts === "string" ? JSON.parse(idea.top_posts as string) : idea.top_posts,
-        keywords: typeof idea.keywords === "string" ? JSON.parse(idea.keywords as string) : idea.keywords,
-        icp_data: typeof idea.icp_data === "string" ? JSON.parse(idea.icp_data as string) : idea.icp_data,
-        competition_data: typeof idea.competition_data === "string" ? JSON.parse(idea.competition_data as string) : idea.competition_data,
+        sources: normalizeSources(idea.sources),
+        top_posts: safeParseJson(idea.top_posts),
+        keywords: safeParseJson(idea.keywords),
+        icp_data: safeParseJson(idea.icp_data),
+        competition_data: safeParseJson(idea.competition_data),
     }));
 
     return NextResponse.json({ ideas, total: ideas.length });

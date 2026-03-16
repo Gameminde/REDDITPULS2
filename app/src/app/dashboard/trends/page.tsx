@@ -1,22 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Flame, AlertCircle } from "lucide-react";
+import {
+    Activity,
+    AlertCircle,
+    BarChart3,
+    Flame,
+    Layers3,
+    Radar,
+    TrendingDown,
+    TrendingUp,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase-browser";
-
-interface TrendSignal {
-    id: string;
-    keyword: string;
-    tier: "EXPLODING" | "GROWING" | "STABLE" | "DECLINING" | "DEAD";
-    post_count_24h: number;
-    post_count_7d: number;
-    change_24h: number;
-    change_7d: number;
-    sentiment_score: number;
-    velocity: number;
-    top_posts: Array<{ title: string; score?: number }>;
-}
 
 interface PlatformWarning {
     platform: string;
@@ -26,39 +22,176 @@ interface PlatformWarning {
     error_detail?: string | null;
 }
 
-const trendConfig: Record<string, { color: string; badge: string }> = {
-    EXPLODING: { color: "text-primary", badge: "bg-primary/10 text-primary border-primary/25" },
-    GROWING: { color: "text-build", badge: "bg-build/10 text-build border-build/20" },
-    STABLE: { color: "text-risky", badge: "bg-risky/10 text-risky border-risky/20" },
-    DECLINING: { color: "text-orange-400", badge: "bg-orange-400/10 text-orange-400 border-orange-400/20" },
-    DEAD: { color: "text-dont", badge: "bg-dont/10 text-dont border-dont/20" },
+interface ThemeTrend {
+    id: string;
+    slug: string;
+    topic: string;
+    category: string;
+    tier: "EXPLODING" | "GROWING" | "STABLE" | "DECLINING";
+    current_score: number;
+    change_24h: number;
+    change_7d: number;
+    post_count_24h: number;
+    post_count_7d: number;
+    post_count_total: number;
+    source_count: number;
+    sources: Array<{ platform: string; count: number }>;
+    confidence_level: string;
+    pain_count: number;
+    pain_summary: string;
+    top_posts: Array<{ title?: string; score?: number; source?: string; subreddit?: string; url?: string }>;
+    last_updated: string;
+}
+
+const trendConfig: Record<
+    ThemeTrend["tier"],
+    {
+        color: string;
+        badge: string;
+        summary: string;
+        emphasis: string;
+    }
+> = {
+    EXPLODING: {
+        color: "text-primary",
+        badge: "bg-primary/10 text-primary border-primary/25",
+        summary: "This conversation theme is breaking out fast across recent posts.",
+        emphasis: "Fast breakout",
+    },
+    GROWING: {
+        color: "text-build",
+        badge: "bg-build/10 text-build border-build/20",
+        summary: "This theme is steadily gaining attention and deserves monitoring.",
+        emphasis: "Healthy climb",
+    },
+    STABLE: {
+        color: "text-risky",
+        badge: "bg-risky/10 text-risky border-risky/20",
+        summary: "This topic has meaningful volume, but momentum is mostly flat.",
+        emphasis: "Established demand",
+    },
+    DECLINING: {
+        color: "text-dont",
+        badge: "bg-dont/10 text-dont border-dont/20",
+        summary: "Attention is fading even though the theme still has some demand.",
+        emphasis: "Cooling off",
+    },
 };
+
+function formatSigned(value: number, digits = 1) {
+    return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+}
+
+function formatTimeAgo(dateStr: string) {
+    if (!dateStr) return "recently";
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const hours = Math.floor(diff / 3600000);
+    if (hours < 1) return "just now";
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return `${Math.floor(days / 7)}w ago`;
+}
+
+function normalizeTopicName(topic: string) {
+    return topic.replace(/\bAi\b/g, "AI");
+}
+
+function buildCoverageNote(warnings: PlatformWarning[]) {
+    if (warnings.length === 0) return null;
+
+    const platforms = warnings.map((warning) => warning.platform.toLowerCase());
+    const hasProductHunt = platforms.includes("producthunt");
+    const hasIndieHackers = platforms.includes("indiehackers");
+
+    if (hasProductHunt && hasIndieHackers) {
+        return "Theme detection is currently strongest on Reddit and Hacker News while Product Hunt and Indie Hackers continue refreshing in the background.";
+    }
+    if (hasProductHunt) {
+        return "Theme detection is currently strongest on Reddit and Hacker News while Product Hunt coverage refreshes in the background.";
+    }
+    if (hasIndieHackers) {
+        return "Theme detection is currently strongest on Reddit and Hacker News while Indie Hackers coverage refreshes in the background.";
+    }
+
+    return "Theme detection is currently strongest on the sources with the healthiest recent coverage.";
+}
+
+function buildThemeMeaning(trend: ThemeTrend) {
+    if (trend.pain_summary) return trend.pain_summary;
+
+    const topPost = trend.top_posts?.[0]?.title?.trim();
+    if (!topPost) {
+        return `People are repeatedly discussing ${normalizeTopicName(trend.topic)} and the theme has enough evidence to clear the quality threshold.`;
+    }
+
+    const cleaned = topPost
+        .replace(/^Show HN:\s*/i, "")
+        .replace(/^Ask HN:\s*/i, "")
+        .replace(/^Launch HN:\s*/i, "")
+        .replace(/^Tell HN:\s*/i, "")
+        .trim();
+
+    return `People discussing ${normalizeTopicName(trend.topic)} keep returning to ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}.`;
+}
+
+function sourceMixLabel(sources: ThemeTrend["sources"]) {
+    if (!Array.isArray(sources) || sources.length === 0) {
+        return "Source mix still forming";
+    }
+
+    return sources
+        .slice(0, 3)
+        .map((source) => `${source.platform}: ${source.count}`)
+        .join(" | ");
+}
 
 function LoadingSkeleton() {
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-24">
-            {[0, 1, 2].map((index) => (
-                <div
-                    key={index}
-                    className="bento-cell p-5 bg-[linear-gradient(90deg,rgba(255,255,255,0.03),rgba(255,255,255,0.08),rgba(255,255,255,0.03))] bg-[length:200%_100%] animate-shimmer"
-                >
-                    <div className="h-4 w-32 rounded bg-white/10 mb-4" />
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div className="h-12 rounded bg-white/10" />
-                        <div className="h-12 rounded bg-white/10" />
-                        <div className="h-10 rounded bg-white/10" />
-                        <div className="h-10 rounded bg-white/10" />
+        <div className="grid grid-cols-1 gap-4 pb-24 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="bento-cell p-5">
+                    <div className="skeleton mb-4 h-6 w-36" />
+                    <div className="skeleton mb-3 h-4 w-4/5" />
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="skeleton h-20" />
+                        <div className="skeleton h-20" />
+                        <div className="skeleton h-20" />
+                        <div className="skeleton h-20" />
                     </div>
-                    <div className="h-14 rounded bg-white/10" />
+                    <div className="skeleton mt-4 h-24 w-full" />
                 </div>
             ))}
         </div>
     );
 }
 
+function SummaryCard({
+    icon,
+    label,
+    value,
+    hint,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    value: string;
+    hint: string;
+}) {
+    return (
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                {icon}
+                <span>{label}</span>
+            </div>
+            <div className="text-xl font-semibold font-mono text-foreground">{value}</div>
+            <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        </div>
+    );
+}
+
 export default function TrendsPage() {
     const supabase = useMemo(() => createClient(), []);
-    const [trends, setTrends] = useState<TrendSignal[]>([]);
+    const [trends, setTrends] = useState<ThemeTrend[]>([]);
     const [platformWarnings, setPlatformWarnings] = useState<PlatformWarning[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -79,7 +212,7 @@ export default function TrendsPage() {
         } catch {
             setTrends([]);
             setPlatformWarnings([]);
-            setError("Could not load trends — check connection and retry");
+            setError("Could not load trends - check connection and retry");
         } finally {
             setLoading(false);
         }
@@ -89,26 +222,18 @@ export default function TrendsPage() {
         loadTrends();
 
         const channel = supabase
-            .channel("trend-signals")
-            .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "trend_signals",
-            }, (payload: any) => {
-                const nextRow = payload.new as TrendSignal;
-                setTrends((prev) => {
-                    if (!nextRow?.keyword) {
-                        return prev;
-                    }
-                    const index = prev.findIndex((item) => item.keyword === nextRow.keyword);
-                    if (index >= 0) {
-                        const updated = [...prev];
-                        updated[index] = nextRow;
-                        return updated;
-                    }
-                    return [nextRow, ...prev].slice(0, 50);
-                });
-            })
+            .channel("ideas-trends")
+            .on(
+                "postgres_changes" as any,
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "ideas",
+                } as any,
+                () => {
+                    loadTrends();
+                },
+            )
             .subscribe();
 
         return () => {
@@ -116,95 +241,182 @@ export default function TrendsPage() {
         };
     }, [loadTrends, supabase]);
 
+    const summary = useMemo(() => {
+        const exploding = trends.filter((trend) => trend.tier === "EXPLODING").length;
+        const growing = trends.filter((trend) => trend.tier === "GROWING").length;
+        const mentions24h = trends.reduce((sum, trend) => sum + trend.post_count_24h, 0);
+        const avgSources = trends.length
+            ? (trends.reduce((sum, trend) => sum + trend.source_count, 0) / trends.length).toFixed(1)
+            : "0.0";
+
+        return { exploding, growing, mentions24h, avgSources };
+    }, [trends]);
+
+    const coverageNote = useMemo(() => buildCoverageNote(platformWarnings), [platformWarnings]);
+
     return (
-        <div className="max-w-6xl mx-auto pt-8 px-6">
+        <div className="max-w-7xl mx-auto px-4 pt-8 sm:px-6">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
                 <h1 className="text-[32px] font-bold font-display tracking-tight-custom text-white">Market Trends</h1>
-                <p className="text-muted-foreground mt-1 text-sm font-mono">Live keyword momentum from trend_signals</p>
+                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                    This board shows recurring market themes with enough recent evidence to matter. A trend appears here only
+                    when repeated conversation builds into a real signal, not because of one lucky post.
+                </p>
             </motion.div>
 
-            {platformWarnings.length > 0 && (
-                <div className="mb-4 rounded-2xl border border-risky/20 bg-risky/8 p-4">
-                    <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-risky mb-2">Source Coverage Warning</div>
-                    <div className="space-y-2">
-                        {platformWarnings.map((warning, index) => (
-                            <p key={`${warning.platform}-${index}`} className="text-sm text-foreground/85">
-                                {warning.issue}
-                            </p>
-                        ))}
-                    </div>
+            <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <SummaryCard
+                    icon={<Flame className="h-3.5 w-3.5" />}
+                    label="Exploding"
+                    value={summary.exploding.toString()}
+                    hint="Themes breaking out fastest"
+                />
+                <SummaryCard
+                    icon={<TrendingUp className="h-3.5 w-3.5" />}
+                    label="Growing"
+                    value={summary.growing.toString()}
+                    hint="Themes steadily gathering momentum"
+                />
+                <SummaryCard
+                    icon={<Activity className="h-3.5 w-3.5" />}
+                    label="Mentions 24h"
+                    value={summary.mentions24h.toString()}
+                    hint="Recent evidence across qualified themes"
+                />
+                <SummaryCard
+                    icon={<Layers3 className="h-3.5 w-3.5" />}
+                    label="Avg Sources"
+                    value={summary.avgSources}
+                    hint="Average number of sources per theme"
+                />
+            </div>
+
+            {coverageNote && (
+                <div className="mb-5 rounded-2xl border border-risky/20 bg-risky/8 p-4">
+                    <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.12em] text-risky">Coverage Note</div>
+                    <p className="text-sm leading-relaxed text-foreground/85">{coverageNote}</p>
                 </div>
             )}
 
             {loading ? (
                 <LoadingSkeleton />
             ) : error ? (
-                <div className="bento-cell p-12 text-center rounded-2xl mt-6 flex flex-col items-center justify-center">
-                    <AlertCircle className="w-8 h-8 text-dont mb-3" />
-                    <p className="text-[14px] font-medium text-foreground mb-2">{error}</p>
+                <div className="bento-cell mt-6 flex flex-col items-center justify-center rounded-2xl p-12 text-center">
+                    <AlertCircle className="mb-3 h-8 w-8 text-dont" />
+                    <p className="mb-2 text-sm font-medium text-foreground">{error}</p>
                     <button
                         onClick={() => {
                             setLoading(true);
                             setError(null);
                             loadTrends();
                         }}
-                        className="mt-3 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-[11px] font-mono text-foreground hover:bg-white/10"
+                        className="mt-3 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-mono text-foreground transition hover:bg-white/10"
                     >
                         Retry
                     </button>
                 </div>
             ) : trends.length === 0 ? (
-                <div className="bento-cell p-12 text-center rounded-2xl mt-6 flex flex-col items-center justify-center">
-                    <AlertCircle className="w-8 h-8 text-muted-foreground/30 mb-3" />
-                    <p className="text-[14px] font-medium text-muted-foreground/80 mb-1">No trends yet</p>
-                    <p className="text-[12px] text-muted-foreground/60">No trends yet — scraper runs every 4 hours.</p>
+                <div className="bento-cell mt-6 flex flex-col items-center justify-center rounded-2xl p-12 text-center">
+                    <AlertCircle className="mb-3 h-8 w-8 text-muted-foreground/30" />
+                    <p className="mb-1 text-sm font-medium text-muted-foreground/80">No strong market trends yet</p>
+                    <p className="text-sm text-muted-foreground/60">
+                        A theme needs repeated recent discussion before it appears here. As new scraper runs land, this board
+                        will fill with stronger signals.
+                    </p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-24">
+                <div className="grid grid-cols-1 gap-4 pb-24 md:grid-cols-2 xl:grid-cols-3">
                     {trends.map((trend, index) => {
-                        const cfg = trendConfig[trend.tier] || trendConfig.STABLE;
+                        const config = trendConfig[trend.tier] || trendConfig.STABLE;
                         return (
-                            <motion.div
-                                key={trend.id || trend.keyword}
+                            <motion.article
+                                key={trend.id}
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.03 }}
-                                className="bento-cell p-5"
+                                className="bento-cell flex min-h-[360px] flex-col p-5"
                             >
-                                <div className="flex items-center justify-between gap-3 mb-3">
-                                    <h3 className="text-sm font-medium text-white">{trend.keyword}</h3>
-                                    <span className={`inline-flex items-center gap-1 text-[11px] font-bold tracking-wider px-2.5 py-1 rounded-md border ${cfg.badge}`}>
-                                        {trend.tier === "EXPLODING" && <Flame className="w-3 h-3" />}
+                                <div className="mb-4 flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            Market theme
+                                        </div>
+                                        <h2 className="text-2xl font-semibold text-white">{normalizeTopicName(trend.topic)}</h2>
+                                        <p className="mt-2 text-sm text-muted-foreground">{config.summary}</p>
+                                    </div>
+
+                                    <span
+                                        className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${config.badge}`}
+                                    >
+                                        {trend.tier === "EXPLODING" && <Flame className="h-3.5 w-3.5" />}
                                         {trend.tier}
                                     </span>
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 mb-3">
-                                    <div>
-                                        <div className="text-[11px] font-mono text-muted-foreground uppercase">24h Change</div>
-                                        <div className={`text-lg font-mono font-bold ${cfg.color}`}>{trend.change_24h >= 0 ? "+" : ""}{trend.change_24h}%</div>
+
+                                <div className="mb-4 grid grid-cols-2 gap-3">
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            <TrendingUp className="h-3.5 w-3.5" />
+                                            24h momentum
+                                        </div>
+                                        <div className={`text-xl font-semibold font-mono ${config.color}`}>
+                                            {formatSigned(trend.change_24h)}%
+                                        </div>
+                                        <p className="mt-1 text-xs text-muted-foreground">{config.emphasis}</p>
                                     </div>
-                                    <div>
-                                        <div className="text-[11px] font-mono text-muted-foreground uppercase">Velocity</div>
-                                        <div className="text-lg font-mono font-bold text-white">{trend.velocity}x</div>
+
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            <Radar className="h-3.5 w-3.5" />
+                                            Theme score
+                                        </div>
+                                        <div className="text-xl font-semibold font-mono text-foreground">{Math.round(trend.current_score)}</div>
+                                        <p className="mt-1 text-xs text-muted-foreground">{trend.confidence_level.toLowerCase()} confidence</p>
                                     </div>
-                                    <div>
-                                        <div className="text-[11px] font-mono text-muted-foreground uppercase">Posts 24h</div>
-                                        <div className="text-sm font-mono text-white">{trend.post_count_24h}</div>
+
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            <BarChart3 className="h-3.5 w-3.5" />
+                                            Mentions 24h
+                                        </div>
+                                        <div className="text-xl font-semibold font-mono text-foreground">{trend.post_count_24h}</div>
+                                        <p className="mt-1 text-xs text-muted-foreground">{trend.post_count_7d} mentions across the last 7 days</p>
                                     </div>
-                                    <div>
-                                        <div className="text-[11px] font-mono text-muted-foreground uppercase">Posts 7d</div>
-                                        <div className="text-sm font-mono text-white">{trend.post_count_7d}</div>
+
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                        <div className="mb-2 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            <Layers3 className="h-3.5 w-3.5" />
+                                            Sources
+                                        </div>
+                                        <div className="text-xl font-semibold font-mono text-foreground">{trend.source_count}</div>
+                                        <p className="mt-1 text-xs text-muted-foreground">{sourceMixLabel(trend.sources)}</p>
                                     </div>
                                 </div>
-                                {Array.isArray(trend.top_posts) && trend.top_posts.length > 0 && (
-                                    <div className="border-t border-white/10 pt-3">
-                                        <div className="text-[11px] font-mono text-muted-foreground uppercase mb-2">Top Signal</div>
-                                        <p className="text-xs text-white/80 leading-relaxed">
-                                            {trend.top_posts[0]?.title || "No top post available"}
-                                        </p>
+
+                                <div className="mb-4 rounded-xl border border-primary/12 bg-primary/[0.04] p-4">
+                                    <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.12em] text-primary">
+                                        Why this theme matters
                                     </div>
-                                )}
-                            </motion.div>
+                                    <p className="text-sm leading-relaxed text-foreground/88">{buildThemeMeaning(trend)}</p>
+                                </div>
+
+                                <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-4">
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        {trend.category}
+                                    </span>
+                                    {trend.change_7d < 0 ? (
+                                        <span className="rounded-full border border-dont/20 bg-dont/10 px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-dont">
+                                            <TrendingDown className="mr-1 inline h-3.5 w-3.5" />
+                                            Cooling vs 7d
+                                        </span>
+                                    ) : (
+                                        <span className="rounded-full border border-build/20 bg-build/10 px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-build">
+                                            <TrendingUp className="mr-1 inline h-3.5 w-3.5" />
+                                            Updated {formatTimeAgo(trend.last_updated)}
+                                        </span>
+                                    )}
+                                </div>
+                            </motion.article>
                         );
                     })}
                 </div>
