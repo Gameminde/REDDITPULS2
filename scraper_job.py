@@ -391,7 +391,10 @@ def scrape_hn():
     """Scrape Hacker News via Algolia API."""
     try:
         from hn_scraper import run_hn_scrape
-        raw = run_hn_scrape(["startup", "saas", "tool", "problem", "frustrated", "alternative", "invoice", "automation"], max_posts=300)
+        raw = run_hn_scrape(
+            ["startup", "saas", "tool", "problem", "frustrated", "alternative", "invoice", "automation"],
+            max_pages=3,
+        )
         # Normalize to our format
         posts = []
         for p in raw:
@@ -998,6 +1001,11 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             reddit_posts = asyncio.run(scrape_all_async(subreddits=all_subs))
             added = _merge(reddit_posts)
             print(f"  [OK] Layer 1 (async): {added} fresh posts")
+            if added < 10:
+                print("  [!] Layer 1 async returned too few posts - retrying with sync scraper")
+                reddit_posts = scrape_all_reddit(subreddits=all_subs)
+                added = _merge(reddit_posts)
+                print(f"  [OK] Layer 1 (sync recovery): +{added} posts")
         except Exception as e:
             print(f"  [!] Layer 1 async failed, falling back to sync: {e}")
             reddit_posts = scrape_all_reddit(subreddits=all_subs)
