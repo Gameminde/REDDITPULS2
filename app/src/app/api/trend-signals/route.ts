@@ -63,6 +63,18 @@ function estimatePostCount24h(row: Record<string, unknown>) {
     return Math.max(1, Math.round(sevenDay / 7));
 }
 
+function estimateTrendVelocity(postCount24h: number, postCount7d: number) {
+    const priorSixDays = Math.max(postCount7d - postCount24h, 0);
+    const baseline = priorSixDays > 0 ? priorSixDays / 6 : Math.max(postCount24h / 2, 1);
+    return Number((postCount24h / Math.max(baseline, 1)).toFixed(1));
+}
+
+function estimateTrendChange24h(postCount24h: number, postCount7d: number) {
+    const priorSixDays = Math.max(postCount7d - postCount24h, 0);
+    const baseline = priorSixDays > 0 ? priorSixDays / 6 : Math.max(postCount24h / 2, 1);
+    return Number((((postCount24h - baseline) / Math.max(baseline, 1)) * 100).toFixed(1));
+}
+
 function isFreshIdea(row: Record<string, unknown>, maxAgeHours = 48) {
     const lastUpdated = String(row.last_updated || "");
     if (!lastUpdated) return false;
@@ -73,24 +85,20 @@ function isFreshIdea(row: Record<string, unknown>, maxAgeHours = 48) {
     return Date.now() - updatedAt <= maxAgeHours * 60 * 60 * 1000;
 }
 
-function classifyTrend(row: Record<string, unknown>, sourceCount: number, postCount24h: number): TrendTier | null {
-    const postCount7d = Number(row.post_count_7d || 0);
-    const currentScore = Number(row.current_score || 0);
-    const change24h = Number(row.change_24h || 0);
+function classifyTrend(sourceCount: number, postCount24h: number, postCount7d: number, velocity: number, change24h: number): TrendTier | null {
+    if (postCount7d < 8 && postCount24h < 3) return null;
+    if (sourceCount < 2 && postCount7d < 12 && postCount24h < 4) return null;
 
-    if (postCount7d < 20) return null;
-    if (sourceCount < 2 && postCount7d < 40) return null;
-
-    if (postCount24h >= 15 && change24h >= 8 && currentScore >= 55) {
+    if (postCount24h >= 12 && velocity >= 1.5) {
         return "EXPLODING";
     }
-    if (postCount24h >= 8 && change24h >= 2 && currentScore >= 45) {
+    if (postCount24h >= 5 && velocity >= 1.15) {
         return "GROWING";
     }
-    if (change24h <= -6 && postCount7d >= 25) {
+    if (change24h <= -20 && postCount7d >= 12) {
         return "DECLINING";
     }
-    if (postCount7d >= 25 && currentScore >= 40) {
+    if (postCount7d >= 12 && postCount24h >= 2) {
         return "STABLE";
     }
 
@@ -153,7 +161,10 @@ export async function GET() {
             const sources = normalizeSources(row.sources);
             const sourceCount = Number(row.source_count || sources.length || 0);
             const postCount24h = estimatePostCount24h(row);
-            const tier = classifyTrend(row, sourceCount, postCount24h);
+            const postCount7d = Number(row.post_count_7d || 0);
+            const derivedChange24h = estimateTrendChange24h(postCount24h, postCount7d);
+            const velocity = estimateTrendVelocity(postCount24h, postCount7d);
+            const tier = classifyTrend(sourceCount, postCount24h, postCount7d, velocity, derivedChange24h);
 
             if (!tier) {
                 return null;
@@ -166,10 +177,10 @@ export async function GET() {
                 category: String(row.category || "general"),
                 tier,
                 current_score: Number(row.current_score || 0),
-                change_24h: Number(row.change_24h || 0),
+                change_24h: derivedChange24h,
                 change_7d: Number(row.change_7d || 0),
                 post_count_24h: postCount24h,
-                post_count_7d: Number(row.post_count_7d || 0),
+                post_count_7d: postCount7d,
                 post_count_total: Number(row.post_count_total || 0),
                 source_count: sourceCount,
                 sources,
