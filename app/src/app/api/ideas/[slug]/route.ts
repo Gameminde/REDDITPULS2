@@ -1,10 +1,24 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
+import { buildEvidenceSummary, buildOpportunityEvidence } from "@/lib/evidence";
+import { buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
+
+function safeParseJson(value: unknown) {
+    if (typeof value === "string") {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    }
+    return value;
+}
 
 export async function GET(
     request: Request,
@@ -32,13 +46,50 @@ export async function GET(
         .limit(180);
 
     // Parse JSONB fields
+    const parsedTopPosts = safeParseJson(idea.top_posts);
+    const parsedKeywords = safeParseJson(idea.keywords);
+    const parsedIcpData = safeParseJson(idea.icp_data);
+    const parsedCompetitionData = safeParseJson(idea.competition_data);
+    const normalizedSources = normalizeSources(idea.sources);
+    const trust = buildOpportunityTrust({
+        ...idea,
+        sources: normalizedSources,
+        top_posts: parsedTopPosts,
+    });
+    const evidence = buildOpportunityEvidence({
+        ...idea,
+        top_posts: parsedTopPosts,
+    }, 8);
+    const evidenceSummary = buildEvidenceSummary(evidence);
+    const strategy = buildOpportunityStrategySnapshot({
+        ...(idea as Record<string, unknown>),
+        id: String(idea.id || ""),
+        slug: String(idea.slug || ""),
+        topic: String(idea.topic || ""),
+        category: String(idea.category || ""),
+        sources: normalizedSources,
+        top_posts: parsedTopPosts,
+        keywords: parsedKeywords,
+        icp_data: parsedIcpData as Record<string, unknown> | null,
+        competition_data: parsedCompetitionData as Record<string, unknown> | null,
+        trust,
+        evidence,
+        evidence_summary: evidenceSummary,
+    });
+
     const parsed = {
         ...idea,
-        sources: typeof idea.sources === "string" ? JSON.parse(idea.sources) : idea.sources,
-        top_posts: typeof idea.top_posts === "string" ? JSON.parse(idea.top_posts) : idea.top_posts,
-        keywords: typeof idea.keywords === "string" ? JSON.parse(idea.keywords) : idea.keywords,
-        icp_data: typeof idea.icp_data === "string" ? JSON.parse(idea.icp_data) : idea.icp_data,
-        competition_data: typeof idea.competition_data === "string" ? JSON.parse(idea.competition_data) : idea.competition_data,
+        sources: normalizedSources,
+        top_posts: parsedTopPosts,
+        keywords: parsedKeywords,
+        icp_data: parsedIcpData,
+        competition_data: parsedCompetitionData,
+        trust,
+        evidence,
+        evidence_summary: evidenceSummary,
+        source_breakdown: evidenceSummary.source_breakdown,
+        direct_vs_inferred: evidenceSummary.direct_vs_inferred,
+        strategy,
     };
 
     return NextResponse.json({ idea: parsed, history: history || [] });

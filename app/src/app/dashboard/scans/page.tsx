@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Search, Clock, Radio, Target, Loader2 } from "lucide-react";
+import { Search, Clock, Radio, Target, Loader2, AlertCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 
 interface Scan {
@@ -23,18 +23,28 @@ export default function ScansPage() {
     const [launching, setLaunching] = useState(false);
     const [scans, setScans] = useState<Scan[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const loadScans = useCallback(async () => {
+        setLoading(true);
+        const supabase = createClient();
+        const { data, error: queryError } = await supabase.from("scans").select("*").order("created_at", { ascending: false });
+        if (queryError) {
+            console.error(queryError);
+            setError("Could not load data");
+            setScans([]);
+        } else {
+            setScans((data || []) as Scan[]);
+            setError(null);
+        }
+        setLoading(false);
+    }, []);
 
     useEffect(() => {
         loadScans();
         const interval = setInterval(loadScans, 5000);
         return () => clearInterval(interval);
-    }, []);
-
-    const loadScans = async () => {
-        const supabase = createClient();
-        const { data } = await supabase.from("scans").select("*").order("created_at", { ascending: false });
-        if (data) { setScans(data as Scan[]); setLoading(false); }
-    };
+    }, [loadScans]);
 
     const launchScan = async () => {
         const kw = keywordInput.trim();
@@ -124,6 +134,17 @@ export default function ScansPage() {
                 {loading ? (
                     <div className="flex justify-center p-8">
                         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/50" />
+                    </div>
+                ) : error ? (
+                    <div className="bento-cell p-12 text-center rounded-[14px] flex flex-col items-center justify-center">
+                        <AlertCircle className="w-8 h-8 text-dont/70 mb-3" />
+                        <p className="text-[14px] font-medium text-foreground mb-1">Could not load data</p>
+                        <button
+                            onClick={loadScans}
+                            className="mt-4 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-[11px] font-mono uppercase tracking-widest text-foreground hover:bg-white/10"
+                        >
+                            Retry
+                        </button>
                     </div>
                 ) : scans.length > 0 ? (
                     scans.map((scan, i) => {

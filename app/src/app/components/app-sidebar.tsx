@@ -6,34 +6,38 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import {
-    LayoutDashboard, Search, History, DollarSign, Radar,
+    Search, DollarSign, Radar,
     Bookmark, LogOut, Activity, Lock, ArrowRight, FileText,
-    TrendingUp, Globe, Mail, Sparkles, Lightbulb, Settings,
-    BarChart3, Eye, Flame,
+    TrendingUp, Globe, Mail, Lightbulb, Settings,
+    BarChart3, BellRing, Compass,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
 
-const coreItems = [
+/* ─── Nav Groups ──────────────────────────────────────────── */
+
+const marketItems = [
     { title: "Market", url: "/dashboard", icon: BarChart3 },
-    { title: "Validate", url: "/dashboard/validate", icon: Lightbulb },
-    { title: "Reports", url: "/dashboard/reports", icon: FileText },
-    { title: "Explore", url: "/dashboard/explore", icon: Search },
-    { title: "Scans", url: "/dashboard/scans", icon: History },
-    { title: "Settings", url: "/dashboard/settings", icon: Settings },
+    { title: "Explore", url: "/dashboard/explore", icon: Compass },
+    { title: "Trends", url: "/dashboard/trends", icon: TrendingUp, premium: true },
 ];
 
-const intelligenceItems = [
-    { title: "Trends", url: "/dashboard/trends", icon: TrendingUp, premium: true },
-    { title: "Sources", url: "/dashboard/sources", icon: Globe, premium: true },
-    { title: "WTP Detection", url: "/dashboard/wtp", icon: DollarSign, premium: true },
+const validateItems = [
+    { title: "Validate", url: "/dashboard/validate", icon: Lightbulb },
+    { title: "Reports", url: "/dashboard/reports", icon: FileText, premium: true },
+];
+
+const monitorItems = [
+    { title: "Saved Ideas", url: "/dashboard/saved", icon: Bookmark, premium: true },
+    { title: "Alerts", url: "/dashboard/alerts", icon: BellRing },
+    { title: "Digest", url: "/dashboard/digest", icon: Mail, premium: true },
     { title: "Competitors", url: "/dashboard/competitors", icon: Radar, premium: true },
 ];
 
-const personalItems = [
-    { title: "Watchlist", url: "/dashboard/saved", icon: Eye, premium: true },
-    { title: "Saved", url: "/dashboard/saved", icon: Bookmark, premium: true },
-    { title: "Digest", url: "/dashboard/digest", icon: Mail, premium: true },
+const intelligenceItems = [
+    { title: "Scans", url: "/dashboard/scans", icon: Search },
+    { title: "Sources", url: "/dashboard/sources", icon: Globe, premium: true },
+    { title: "WTP Detection", url: "/dashboard/wtp", icon: DollarSign, premium: true },
 ];
 
 const labelVariants = {
@@ -61,6 +65,35 @@ function NavItem({ item, isActive, isPremium }: {
                 <Lock className="w-3 h-3 ml-auto opacity-40 relative z-[1]" />
             )}
         </Link>
+    );
+}
+
+function NavGroup({ label, items, index, pathname, isPremium }: {
+    label: string;
+    items: { title: string; url: string; icon: LucideIcon; premium?: boolean }[];
+    index: number;
+    pathname: string;
+    isPremium: boolean;
+}) {
+    return (
+        <>
+            <motion.div custom={index} variants={labelVariants} initial="hidden" animate="visible">
+                <div style={{
+                    fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
+                    color: "#475569", padding: index === 0 ? "12px 14px 6px" : "20px 14px 6px", fontWeight: 600,
+                }}>
+                    {label}
+                </div>
+            </motion.div>
+            {items.map((item) => (
+                <NavItem
+                    key={item.title}
+                    item={item}
+                    isActive={item.url === "/dashboard" ? pathname === item.url : pathname.startsWith(item.url)}
+                    isPremium={isPremium}
+                />
+            ))}
+        </>
     );
 }
 
@@ -104,44 +137,10 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
 
             {/* Nav Groups */}
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-                {/* Core */}
-                <motion.div custom={0} variants={labelVariants} initial="hidden" animate="visible">
-                    <div style={{
-                        fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
-                        color: "#475569", padding: "12px 14px 6px", fontWeight: 600,
-                    }}>
-                        Core
-                    </div>
-                </motion.div>
-                {coreItems.map((item) => (
-                    <NavItem key={item.title} item={item} isActive={item.url === "/dashboard" ? pathname === item.url : pathname.startsWith(item.url)} isPremium={isPremium} />
-                ))}
-
-                {/* Intelligence */}
-                <motion.div custom={1} variants={labelVariants} initial="hidden" animate="visible">
-                    <div style={{
-                        fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
-                        color: "#475569", padding: "20px 14px 6px", fontWeight: 600,
-                    }}>
-                        Intelligence
-                    </div>
-                </motion.div>
-                {intelligenceItems.map((item) => (
-                    <NavItem key={item.title} item={item} isActive={pathname === item.url} isPremium={isPremium} />
-                ))}
-
-                {/* Personal */}
-                <motion.div custom={2} variants={labelVariants} initial="hidden" animate="visible">
-                    <div style={{
-                        fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
-                        color: "#475569", padding: "20px 14px 6px", fontWeight: 600,
-                    }}>
-                        Personal
-                    </div>
-                </motion.div>
-                {personalItems.map((item) => (
-                    <NavItem key={item.title} item={item} isActive={pathname === item.url} isPremium={isPremium} />
-                ))}
+                <NavGroup label="Market"       items={marketItems}       index={0} pathname={pathname} isPremium={isPremium} />
+                <NavGroup label="Validate"     items={validateItems}     index={1} pathname={pathname} isPremium={isPremium} />
+                <NavGroup label="Monitor"      items={monitorItems}      index={2} pathname={pathname} isPremium={isPremium} />
+                <NavGroup label="Intelligence" items={intelligenceItems} index={3} pathname={pathname} isPremium={isPremium} />
 
                 {/* Upgrade CTA */}
                 {!isPremium && (
@@ -175,42 +174,59 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                 )}
             </div>
 
-            {/* Footer */}
+            {/* Footer — Settings + User + Logout */}
             <div style={{
-                padding: "16px 18px",
+                padding: "12px 18px 16px",
                 borderTop: "1px solid rgba(255,255,255,0.06)",
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                display: "flex", flexDirection: "column", gap: 8,
             }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <div style={{
-                        width: 28, height: 28, borderRadius: "50%",
-                        background: "rgba(249,115,22,0.1)",
-                        border: "1px solid rgba(249,115,22,0.2)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        flexShrink: 0,
-                    }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "#f97316" }}>
-                            {userEmail?.[0]?.toUpperCase() || "U"}
+                {/* Settings link */}
+                <Link
+                    href="/dashboard/settings"
+                    className={`sidebar-link ${pathname.startsWith("/dashboard/settings") ? "active" : ""}`}
+                    style={{ margin: 0 }}
+                >
+                    <Settings className="w-4 h-4 relative z-[1]" />
+                    <span className="relative z-[1] text-[13px]">Settings</span>
+                </Link>
+
+                {/* User row */}
+                <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                    paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.04)",
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <div style={{
+                            width: 28, height: 28, borderRadius: "50%",
+                            background: "rgba(249,115,22,0.1)",
+                            border: "1px solid rgba(249,115,22,0.2)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                        }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: "#f97316" }}>
+                                {userEmail?.[0]?.toUpperCase() || "U"}
+                            </span>
+                        </div>
+                        <span style={{
+                            fontSize: 12, color: "#94a3b8", overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                            {userEmail || "user"}
                         </span>
                     </div>
-                    <span style={{
-                        fontSize: 12, color: "#94a3b8", overflow: "hidden",
-                        textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>
-                        {userEmail || "user"}
-                    </span>
+                    <button
+                        onClick={handleLogout}
+                        style={{
+                            background: "none", border: "none", cursor: "pointer",
+                            padding: 6, borderRadius: 6, color: "#64748b",
+                        }}
+                        title="Log out"
+                    >
+                        <LogOut style={{ width: 14, height: 14 }} />
+                    </button>
                 </div>
-                <button
-                    onClick={handleLogout}
-                    style={{
-                        background: "none", border: "none", cursor: "pointer",
-                        padding: 6, borderRadius: 6, color: "#64748b",
-                    }}
-                    title="Log out"
-                >
-                    <LogOut style={{ width: 14, height: 14 }} />
-                </button>
             </div>
         </div>
     );
 }
+

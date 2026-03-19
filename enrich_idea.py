@@ -89,19 +89,34 @@ def save_enrichment(topic_slug, topic_name, so_data, gh_data, confirmed_gaps, g2
     }
 
     try:
-        # Upsert by topic_slug
-        resp = requests.post(
+        # PATCH existing row (created by API route with status="enriching")
+        resp = requests.patch(
             f"{SUPABASE_URL}/rest/v1/enrichment_cache",
+            params={"topic_slug": f"eq.{topic_slug}"},
             json=row,
             headers={
                 **_supabase_headers(),
-                "Prefer": "resolution=merge-duplicates,return=representation",
+                "Prefer": "return=representation",
             },
             timeout=15,
         )
         if resp.status_code in (200, 201):
-            print(f"    [Enrich] Cached enrichment for '{topic_slug}'")
-            return resp.json()
+            result = resp.json()
+            if result:
+                print(f"    [Enrich] Cached enrichment for '{topic_slug}'")
+                return result
+            # Row didn't exist yet — fall back to INSERT
+            resp = requests.post(
+                f"{SUPABASE_URL}/rest/v1/enrichment_cache",
+                json=row,
+                headers=_supabase_headers(),
+                timeout=15,
+            )
+            if resp.status_code in (200, 201):
+                print(f"    [Enrich] Cached enrichment for '{topic_slug}' (inserted)")
+                return resp.json()
+            else:
+                print(f"    [Enrich] Cache insert error: {resp.status_code} — {resp.text[:200]}")
         else:
             print(f"    [Enrich] Cache save error: {resp.status_code} — {resp.text[:200]}")
     except Exception as e:
@@ -291,8 +306,31 @@ def _format_cached(row):
 
 if __name__ == "__main__":
     import sys
-    topic = sys.argv[1] if len(sys.argv) > 1 else "invoice-automation"
-    result = enrich_idea(topic, keywords=["invoice", "billing"])
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Enrich an idea with SO + GitHub + G2 + App Store signals")
+    parser.add_argument("topic", nargs="?", default=None, help="Topic slug (e.g. invoice-automation)")
+    parser.add_argument("--config-file", default="", help="Path to JSON config file (safe API mode)")
+    parser.add_argument("--keywords", default="", help="Comma-separated keywords")
+    parser.add_argument("--force", action="store_true", help="Force refresh (ignore cache)")
+    args = parser.parse_args()
+
+    # Config-file mode (from API route — safe, no shell interpolation)
+    if args.config_file:
+        with open(args.config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        topic = config.get("slug", "")
+        topic_name = config.get("topic_name", "")
+        kw_list = config.get("keywords", [])
+        force = config.get("force", False)
+    else:
+        # Legacy CLI mode
+        topic = args.topic or "invoice-automation"
+        topic_name = ""
+        kw_list = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else ["invoice", "billing"]
+        force = args.force
+
+    result = enrich_idea(topic, topic_name=topic_name, keywords=kw_list, force_refresh=force)
     print(f"\n{'='*50}")
     print(f"Results for: {result['topic_name']}")
     print(f"SO: {result['stackoverflow']['total']} questions")
@@ -300,3 +338,4 @@ if __name__ == "__main__":
     print(f"G2: {result['g2']['total']} reviews")
     print(f"App Store: {result['appstore']['total']} reviews")
     print(f"Confirmed Gaps: {len(result['confirmed_gaps'])}")
+

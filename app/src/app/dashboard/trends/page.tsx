@@ -41,6 +41,46 @@ interface ThemeTrend {
     pain_summary: string;
     top_posts: Array<{ title?: string; score?: number; source?: string; subreddit?: string; url?: string }>;
     last_updated: string;
+    trust: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        label: string;
+        score: number;
+        evidence_count: number;
+        direct_evidence_count: number;
+        direct_quote_count: number;
+        source_count: number;
+        freshness_hours: number | null;
+        freshness_label: string;
+        weak_signal: boolean;
+        weak_signal_reasons: string[];
+        inference_flags: string[];
+    };
+}
+
+interface WhyNowSignal {
+    id: string;
+    scope: "opportunity" | "competitor";
+    title: string;
+    href: string;
+    timing_category: string;
+    summary: string;
+    direct_timing_evidence: Array<{ label: string; value: string; kind: "metric" | "observation" }>;
+    inferred_why_now_note: string;
+    freshness: {
+        latest_observed_at: string | null;
+        freshness_label: string;
+    };
+    confidence: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        label: string;
+        score: number;
+    };
+    momentum_direction: "accelerating" | "steady" | "cooling" | "new" | "unknown";
+    monitorable_change_note: string;
+    direct_vs_inferred: {
+        direct_evidence_count: number;
+        inferred_markers: string[];
+    };
 }
 
 const trendConfig: Record<
@@ -146,6 +186,12 @@ function sourceMixLabel(sources: ThemeTrend["sources"]) {
         .join(" | ");
 }
 
+function getTrustTone(level: ThemeTrend["trust"]["level"]) {
+    if (level === "HIGH") return "text-build border-build/20 bg-build/10";
+    if (level === "MEDIUM") return "text-risky border-risky/20 bg-risky/10";
+    return "text-dont border-dont/20 bg-dont/10";
+}
+
 function LoadingSkeleton() {
     return (
         <div className="grid grid-cols-1 gap-4 pb-24 md:grid-cols-2 xl:grid-cols-3">
@@ -192,25 +238,37 @@ function SummaryCard({
 export default function TrendsPage() {
     const supabase = useMemo(() => createClient(), []);
     const [trends, setTrends] = useState<ThemeTrend[]>([]);
+    const [whyNowSignals, setWhyNowSignals] = useState<WhyNowSignal[]>([]);
     const [platformWarnings, setPlatformWarnings] = useState<PlatformWarning[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     const loadTrends = useCallback(async () => {
         try {
-            const response = await fetch("/api/trend-signals", { cache: "no-store" });
-            if (!response.ok) {
-                throw new Error(`trend fetch failed with ${response.status}`);
+            const [trendsResponse, whyNowResponse] = await Promise.all([
+                fetch("/api/trend-signals", { cache: "no-store" }),
+                fetch("/api/why-now?scope=opportunity&limit=4", { cache: "no-store" }),
+            ]);
+
+            if (!trendsResponse.ok) {
+                throw new Error(`trend fetch failed with ${trendsResponse.status}`);
             }
-            const payload = await response.json();
+            if (!whyNowResponse.ok) {
+                throw new Error(`why-now fetch failed with ${whyNowResponse.status}`);
+            }
+
+            const payload = await trendsResponse.json();
+            const whyNowPayload = await whyNowResponse.json();
             if (payload.error) {
                 throw new Error(payload.error);
             }
             setTrends(payload.trends || []);
             setPlatformWarnings(payload.platform_warnings || []);
+            setWhyNowSignals(whyNowPayload.signals || []);
             setError(null);
         } catch {
             setTrends([]);
+            setWhyNowSignals([]);
             setPlatformWarnings([]);
             setError("Could not load trends - check connection and retry");
         } finally {
@@ -295,6 +353,59 @@ export default function TrendsPage() {
                 <div className="mb-5 rounded-2xl border border-risky/20 bg-risky/8 p-4">
                     <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.12em] text-risky">Coverage Note</div>
                     <p className="text-sm leading-relaxed text-foreground/85">{coverageNote}</p>
+                </div>
+            )}
+
+            {!loading && whyNowSignals.length > 0 && (
+                <div className="mb-6 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-5">
+                    <div className="mb-4 flex items-start justify-between gap-4">
+                        <div>
+                            <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary">Why Now</div>
+                            <h2 className="mt-2 text-lg font-semibold text-white">Timing intelligence</h2>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                This layer explains why a theme is surfacing now, not just that it exists.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                        {whyNowSignals.map((signal) => (
+                            <div key={signal.id} className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-primary">
+                                        {signal.timing_category}
+                                    </span>
+                                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getTrustTone(signal.confidence.level)}`}>
+                                        {signal.confidence.label}
+                                    </span>
+                                </div>
+
+                                <div className="mt-3 text-base font-semibold text-white">{signal.title}</div>
+                                <p className="mt-2 text-sm text-white/80">{signal.inferred_why_now_note}</p>
+
+                                <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-mono text-muted-foreground">
+                                    <span>{signal.momentum_direction}</span>
+                                    <span>{signal.freshness.freshness_label}</span>
+                                    <span>{signal.direct_vs_inferred.direct_evidence_count} direct timing signals</span>
+                                </div>
+
+                                <div className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                                    <div className="mb-2 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        Direct timing evidence
+                                    </div>
+                                    <div className="space-y-2">
+                                        {signal.direct_timing_evidence.slice(0, 3).map((point) => (
+                                            <div key={`${signal.id}-${point.label}`} className="text-sm text-white/85">
+                                                <span className="text-muted-foreground">{point.label}:</span> {point.value}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="mt-3 text-xs text-muted-foreground">{signal.monitorable_change_note}</div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -398,6 +509,25 @@ export default function TrendsPage() {
                                         Why this theme matters
                                     </div>
                                     <p className="text-sm leading-relaxed text-foreground/88">{buildThemeMeaning(trend)}</p>
+                                </div>
+
+                                <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                                        <span
+                                            className={`rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getTrustTone(trend.trust.level)}`}
+                                        >
+                                            {trend.trust.label}
+                                        </span>
+                                        <span className="text-sm font-mono text-foreground">{trend.trust.score}/100 trust</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        {trend.trust.evidence_count} recent mentions | {trend.trust.direct_quote_count} direct pain quotes | {trend.trust.freshness_label}
+                                    </p>
+                                    {trend.trust.weak_signal && trend.trust.weak_signal_reasons.length > 0 && (
+                                        <p className="mt-2 text-xs text-risky">
+                                            Weak signal: {trend.trust.weak_signal_reasons.join(" • ")}
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-4">

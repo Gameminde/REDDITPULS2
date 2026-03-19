@@ -95,6 +95,7 @@
 | **Keyword Scan** | Timed scans (10min → 48h) with continuous polling for fresh posts | Discovery |
 | **Pain Stream Monitor** | Real-time Reddit pain point alerts with configurable keywords | Discovery |
 | **Competitor Deathwatch** | Tracks competitor complaint velocity on G2/Reddit for vulnerability windows | Competitive |
+| **Validation Depth Modes** | 3 tiers (Quick / Deep / Investigation) with mode-specific evidence collection strategy — Reddit lookback, keyword budgets, evidence sampling, batch signal caps, and competitor depth all scale per mode | Validation |
 
 ---
 
@@ -166,12 +167,14 @@ RedditPulse/
 │   │   │       ├── settings/ai/        # GET/POST: AI model config
 │   │   │       └── settings/ai/verify/ # POST: verify API key works
 │   │   └── lib/                        # Shared utilities
+│   │       └── validation-depth.ts    # Depth mode types, options, queue timeouts
 │   ├── package.json
 │   ├── .env.local                      # Supabase + AI keys
 │   └── tailwind.config.ts
 │
 ├── engine/                             # Python analysis engine (20 modules)
 │   ├── config.py                       # 42 subreddits, 50+ pain phrases, scoring weights
+│   ├── validation_depth.py             # 3-mode depth configs: Quick / Deep / Investigation
 │   ├── multi_brain.py                  # 9-provider AI debate engine (599 lines)
 │   ├── keyword_scraper.py              # Timed Reddit keyword scanner
 │   ├── hn_scraper.py                   # Hacker News Algolia API scraper
@@ -249,7 +252,7 @@ RedditPulse/
 |---|---|---|
 | `scraper_job.py` | 933 | Full scraper pipeline: Reddit (42 subs + search) → HN → PH → IH → analyze → score → cluster → upsert to Supabase `ideas` table |
 | `run_scan.py` | 532 | Keyword-based scan: keyword search → multi-platform collection → AI analysis → multi-brain debate synthesis → update Supabase `scans` |
-| `validate_idea.py` | 1629 | 3-phase AI validation with enriched prompts: Phase 1 (evidence gathering + batch analysis) → Phase 2 (ICP + competition with deep schemas) → Phase 3 (roadmap with validation gates + financial reality + risk matrix) → Multi-brain debate verdict |
+| `validate_idea.py` | 1629 | 3-phase AI validation with enriched prompts: Phase 1 (evidence gathering + batch analysis) → Phase 2 (ICP + competition with deep schemas) → Phase 3 (roadmap with validation gates + financial reality + risk matrix) → Multi-brain debate verdict. Supports 3 depth modes (Quick / Deep / Investigation) with configurable evidence budgets across all phases |
 | `enrich_idea.py` | 266 | Deep signal enrichment: Stack Overflow + GitHub Issues → cache to Supabase `enrichment_cache` with 7-day TTL |
 
 ---
@@ -281,8 +284,8 @@ Scans · Validate · Explore · Trends · Competitors · Reports · Saved · WTP
 | `/api/scan` | GET | ✅ | List user's scans |
 | `/api/scan/[id]` | GET | ✅ | Get scan status + results |
 | `/api/scan/[id]/report` | GET | ✅ | Full AI synthesis report |
-| `/api/validate` | POST | ✅ | Validate idea (3-phase AI) |
-| `/api/validate/[id]` | GET | ✅ | Get validation status |
+| `/api/validate` | POST | ✅ | Validate idea (3-phase AI). Accepts optional `depth` field: `quick` (default), `deep`, or `investigation` |
+| `/api/validate/[jobId]/status` | GET | ✅ | Get queued validation status + diagnostics |
 | `/api/ideas` | GET | ❌ | List all ideas (stock market data, sortable/filterable) |
 | `/api/ideas/[slug]` | GET | ❌ | Single idea with full intelligence |
 | `/api/enrich` | GET | ❌ | Get cached enrichment (SO + GH signals) |
@@ -321,6 +324,17 @@ Per-user idea tracking with alert thresholds. Full RLS — users see only their 
 
 ### `enrichment_cache` (Deep Signals)
 Stack Overflow + GitHub data cached with 7-day TTL auto-expiry trigger.
+
+### `idea_validations` (Validation Runs)
+
+| Column | Type | Description |
+|---|---|---|
+| `idea_text` | TEXT | Raw idea description |
+| `depth` | TEXT | Validation depth mode: `quick`, `deep`, or `investigation` (default: `quick`) |
+| `status` | TEXT | Pipeline status: starting → decomposing → scraping → synthesizing → done |
+| `verdict` | TEXT | BUILD IT / RISKY / DON'T BUILD |
+| `confidence` | INT | 0–100 confidence score |
+| `report` | JSONB | Full 13-section report JSON including `depth_metadata` |
 
 ### Row Level Security
 - **ideas, idea_history, scraper_runs, enrichment_cache**: Publicly readable
@@ -424,6 +438,8 @@ Run these SQL files in the **Supabase SQL Editor** (Dashboard → SQL Editor →
 
 1. `sql/schema_stock_market.sql` — Creates `ideas`, `idea_history`, `watchlists`, `scraper_runs`
 2. `sql/schema_enrichment.sql` — Creates `enrichment_cache` with TTL triggers
+3. `sql/schema_validations.sql` — Creates `idea_validations` with `depth` column
+4. `migrations/014_validation_depth.sql` — Adds `depth` column (run this if upgrading an existing install)
 
 ---
 
@@ -473,6 +489,19 @@ python scraper_job.py
 
 This scrapes all 42 subreddits + HN + PH + IH, analyzes posts, and upserts scored ideas to Supabase.
 
+You can also run it from the frontend workspace:
+
+```bash
+cd app
+npm run scrape
+```
+
+For Windows development, run this once per day or create a Windows Task Scheduler task that points to:
+
+```text
+python C:\Users\PC\Desktop\youcef\A\RedditPulse\scraper_job.py
+```
+
 ### Run a keyword scan
 
 ```bash
@@ -497,7 +526,7 @@ python enrich_idea.py invoice-automation --keywords "invoice,billing"
 
 - The Python engine runs as **child processes** spawned by Next.js API routes via `exec()`
 - The repo includes a GitHub Actions workflow at [`.github/workflows/scraper.yml`](./.github/workflows/scraper.yml)
-- The scraper is currently scheduled to run **every 2 hours** via cron: `0 */2 * * *`
+- The scraper is currently scheduled to run **every 24 hours** via GitHub Actions cron: `0 5 * * *`
 - On GitHub, add these Actions secrets before enabling the workflow: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PROXY_LIST`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `GH_TOKEN`
 - The workflow runs `python scraper_job.py --mode=full --source=github_actions`
 - Each scheduled run also stores posts, checks Pain Stream alerts, runs Competitor Deathwatch, updates `trend_signals`, updates Market Pulse scores, and calls `cleanup_old_posts()`

@@ -18,8 +18,15 @@ import requests
 # Add engine to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "engine"))
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from keyword_scraper import run_keyword_scan, discover_subreddits
 from multi_brain import AIBrain, get_user_ai_configs, extract_json
+from validation_depth import get_depth_config, log_depth_config
 
 # ── Scraper imports (graceful fallback if any missing) ──
 try:
@@ -39,6 +46,18 @@ try:
     IH_AVAILABLE = True
 except ImportError:
     IH_AVAILABLE = False
+
+try:
+    from stackoverflow_scraper import scrape_stackoverflow
+    SO_AVAILABLE = True
+except ImportError:
+    SO_AVAILABLE = False
+
+try:
+    from github_issues_scraper import scrape_github_issues
+    GH_ISSUES_AVAILABLE = True
+except ImportError:
+    GH_ISSUES_AVAILABLE = False
 
 # ── Intelligence imports ──
 try:
@@ -77,6 +96,10 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
 
 
+class ValidationPersistenceError(RuntimeError):
+    """Raised when validation state cannot be persisted to Supabase."""
+
+
 def _supabase_headers():
     return {
         "apikey": SUPABASE_KEY,
@@ -92,21 +115,29 @@ def update_validation(validation_id, updates, retries=3):
     ECONNRESET mid-run was leaving status stuck at 'queued' in Supabase,
     causing the frontend poller to always see phase=0 and show 'Starting'.
     """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValidationPersistenceError("Supabase is not configured for validation state updates")
+
     url = f"{SUPABASE_URL}/rest/v1/idea_validations?id=eq.{validation_id}"
     last_err = None
     for attempt in range(retries):
         try:
             r = requests.patch(url, json=updates, headers=_supabase_headers(), timeout=15)
-            if r.status_code >= 400:
-                print(f"  [!] Supabase update error: {r.status_code} {r.text[:200]}")
-            return  # success
+            if r.status_code < 400:
+                return True
+            last_err = ValidationPersistenceError(
+                f"Supabase update error {r.status_code}: {r.text[:200]}"
+            )
+            print(f"  [!] {last_err}")
         except Exception as e:
             last_err = e
-            if attempt < retries - 1:
-                wait = 2 ** attempt  # 1s, 2s backoff
-                print(f"  [!] Supabase update failed (attempt {attempt+1}/{retries}), retrying in {wait}s: {e}")
-                time.sleep(wait)
+        if attempt < retries - 1:
+            wait = 2 ** attempt  # 1s, 2s backoff
+            print(f"  [!] Supabase update failed (attempt {attempt+1}/{retries}), retrying in {wait}s: {last_err}")
+            time.sleep(wait)
+
     print(f"  [!] Supabase update gave up after {retries} attempts: {last_err}")
+    raise ValidationPersistenceError(str(last_err))
 
 
 # ═══════════════════════════════════════════════════════
@@ -118,6 +149,8 @@ DECOMPOSE_SYSTEM = """You are a startup market research expert. Given a startup 
 Return ONLY valid JSON with this exact structure:
 {
   "keywords": ["keyword1", "keyword2", ...],
+  "colloquial_keywords": ["buyer complaint phrase 1", "buyer complaint phrase 2", ...],
+  "subreddits": ["primary niche sub", "secondary sub", ...],
   "competitors": ["Competitor1", "Competitor2", ...],
   "audience": "Description of target audience",
   "pain_hypothesis": "The core pain point this solves",
@@ -125,19 +158,37 @@ Return ONLY valid JSON with this exact structure:
 }
 
 RULES:
+KEYWORD RULES:
+Generate two keyword categories:
+
+1. "keywords" — formal/SEO terms used on ProductHunt, HN, IndieHackers, job boards
+   Example: "email management automation", "accounting workflow tools"
+
+2. "colloquial_keywords" — the exact phrases a buyer would use when complaining
+   on Reddit, Slack, or in a forum. Think frustration language, not product language.
+   Example: "drowning in client emails", "inbox completely out of control",
+            "too many emails from clients", "can't keep up with accounting emails"
+
 - keywords MUST be SHORT (1-3 words max). Reddit search works best with short phrases.
   GOOD keywords: "code review", "PR review", "pull request", "code quality", "code linting"
   BAD keywords: "AI-powered code review tool for small teams", "automated pull request review system"
 - Generate 8-12 short keywords covering: the pain, the solution category, and adjacent tool names
 - Include both specific tool names and SHORT pain phrases ("slow reviews", "code bugs", "manual testing")
+- Generate 4-8 colloquial complaint phrases. Make them buyer-native and emotionally real.
 - Competitors should be existing tools that partially solve this problem (include 5-8)
 - search_queries can be slightly longer (3-6 words) for targeted Reddit searches
+- colloquial_keywords are Reddit-only complaint-language inputs
+- subreddits must include the PRIMARY niche subreddit for the ICP even if keyword match is low
+- For any non-developer B2B idea, include at minimum the 2 subreddits where the ICP actually posts and complains
+- Example: for "AI inbox copilot for accounting firms" -> MUST include "accounting" and "bookkeeping"
 - Keep all strings concise and search-engine friendly
 """
 
 
-def phase1_decompose(idea_text, brain, validation_id):
+def phase1_decompose(idea_text, brain, validation_id, depth_config=None):
     """Phase 1: Extract keywords, competitors, audience from idea text."""
+    if depth_config is None:
+        depth_config = get_depth_config("quick")
     print("\n  ══ PHASE 1: AI Decomposition ══")
     update_validation(validation_id, {"status": "decomposing"})
 
@@ -151,17 +202,30 @@ Extract keywords people would search for when experiencing this pain, list exist
     raw = brain.single_call(prompt, DECOMPOSE_SYSTEM)
     data = extract_json(raw)
 
-    keywords = data.get("keywords", []) + data.get("search_queries", [])
-    seen = set()
-    unique_keywords = []
-    for k in keywords:
-        kl = k.lower().strip()
-        if kl not in seen:
-            seen.add(kl)
-            unique_keywords.append(k)
+    def _dedupe(items):
+        seen = set()
+        deduped = []
+        for item in items:
+            normalized = str(item).strip()
+            key = normalized.lower()
+            if normalized and key not in seen:
+                seen.add(key)
+                deduped.append(normalized)
+        return deduped
+
+    formal_cap = depth_config.get("formal_keyword_cap", 15)
+    colloquial_cap = depth_config.get("colloquial_keyword_cap", 10)
+    sub_cap = depth_config.get("subreddit_cap", 8)
+    formal_keywords = _dedupe(data.get("keywords", []) + data.get("search_queries", []))[:formal_cap]
+    colloquial_keywords = _dedupe(data.get("colloquial_keywords", []))[:colloquial_cap]
+    if not colloquial_keywords:
+        colloquial_keywords = formal_keywords[:5]
+    subreddits = _dedupe(data.get("subreddits", []))[:sub_cap]
 
     result = {
-        "keywords": unique_keywords[:15],
+        "keywords": formal_keywords,
+        "colloquial_keywords": colloquial_keywords,
+        "subreddits": subreddits,
         "competitors": data.get("competitors", []),
         "audience": data.get("audience", ""),
         "pain_hypothesis": data.get("pain_hypothesis", ""),
@@ -176,6 +240,8 @@ Extract keywords people would search for when experiencing this pain, list exist
     })
 
     print(f"  [✓] Keywords: {result['keywords']}")
+    print(f"  [✓] Colloquial Keywords: {result['colloquial_keywords']}")
+    print(f"  [✓] Target Subreddits: {result['subreddits']}")
     print(f"  [✓] Competitors: {result['competitors']}")
     print(f"  [✓] Audience: {result['audience']}")
     return result
@@ -190,7 +256,15 @@ PLATFORM_WEIGHTS = {
     "hackernews": 1.5,     # Higher-quality technical audience
     "producthunt": 1.3,    # Launch signals, maker audience
     "indiehackers": 1.2,   # Revenue-focused founders
+    "stackoverflow": 1.2,  # Technical pain with implementation context
+    "githubissues": 1.15,  # Open-source issue demand / friction signals
 }
+
+NON_DEV_ICP_KEYWORDS = [
+    "accounting", "bookkeeping", "legal", "law firm", "medical", "healthcare",
+    "restaurant", "retail", "small business", "firm", "agency", "clinic",
+    "dentist", "real estate", "hr", "human resources", "finance",
+]
 
 
 def _compute_weighted_score(post):
@@ -200,15 +274,22 @@ def _compute_weighted_score(post):
     platform_w = PLATFORM_WEIGHTS.get(platform, 1.0)
 
     # Recency decay: last 7 days = 1.0x, 30 days = 0.7x, older = 0.4x
-    from datetime import datetime, timedelta
+    from datetime import datetime, timezone
     post_date = post.get("created_utc", 0)
-    if post_date and isinstance(post_date, (int, float)) and post_date > 0:
+    age_days = 30  # default
+
+    if post_date:
         try:
-            age_days = (datetime.utcnow() - datetime.utcfromtimestamp(post_date)).days
-        except (OSError, ValueError):
+            if isinstance(post_date, str):
+                # Handle ISO string from keyword_scraper ("2024-03-15T12:00:00Z")
+                dt = datetime.fromisoformat(post_date.replace("Z", "+00:00"))
+                age_days = (datetime.now(timezone.utc) - dt).days
+            elif isinstance(post_date, (int, float)) and post_date > 0:
+                # Handle Unix timestamp (from HN/PH/IH scrapers)
+                dt = datetime.fromtimestamp(post_date, tz=timezone.utc)
+                age_days = (datetime.now(timezone.utc) - dt).days
+        except (OSError, ValueError, TypeError):
             age_days = 30
-    else:
-        age_days = 30  # assume 30 days if no date
 
     recency = 1.0 if age_days <= 7 else (0.7 if age_days <= 30 else 0.4)
 
@@ -228,18 +309,29 @@ def _platform_warning(platform: str, health: dict, posts_count: int) -> dict | N
         "indiehackers": "IndieHackers",
         "hackernews": "Hacker News",
         "reddit": "Reddit",
+        "stackoverflow": "Stack Overflow",
+        "githubissues": "GitHub Issues",
     }.get(platform, platform.title())
 
-    if platform == "producthunt" and error_code == "graphql_auth_failed":
-        issue = f"{platform_label}: {error_detail} - data from Reddit + HN only"
+    if platform == "producthunt" and error_code == "graphql_auth_failed" and posts_count == 0:
+        issue = "ProductHunt: currently unavailable - known auth limitation."
+    elif platform == "producthunt" and error_code == "graphql_auth_failed":
+        issue = "ProductHunt: API auth unavailable - limited to fallback results. Coverage may be reduced."
     elif platform == "producthunt" and status == "degraded":
-        issue = f"{platform_label}: {error_detail or 'RSS fallback only'} - coverage is limited"
+        issue = error_detail or "ProductHunt: limited to fallback results. Coverage may be reduced."
     elif platform == "indiehackers" and error_code == "algolia_auth_failed":
-        issue = f"{platform_label}: {error_detail} - data from Reddit + HN only"
+        issue = "IndieHackers: search auth unavailable - fallback coverage may be reduced."
     elif platform == "indiehackers" and status == "degraded":
-        issue = f"{platform_label}: {error_detail or 'Web fallback only'} - coverage is limited"
+        issue = error_detail or "IndieHackers: fallback coverage may be reduced."
+    elif platform == "indiehackers" and posts_count == 0:
+        issue = "IndieHackers: 0 results found. This niche may have low IH community presence, or search may be temporarily unavailable."
+    elif platform == "hackernews" and (health or {}).get("dominant_pct"):
+        issue = (
+            f"Signal is {health['dominant_pct']:.0f}% from Hacker News - audience may skew developer. "
+            "Buyer-native sources returned limited results."
+        )
     elif posts_count == 0:
-        issue = f"{platform_label}: 0 posts returned"
+        issue = f"{platform_label}: 0 results found. Coverage may be reduced for this run."
     else:
         issue = f"{platform_label}: limited coverage"
 
@@ -253,25 +345,101 @@ def _platform_warning(platform: str, health: dict, posts_count: int) -> dict | N
     }
 
 
+def _normalize_platform_warnings(platform_warnings: list[dict]) -> list[dict]:
+    normalized = []
+    for warning in platform_warnings or []:
+        item = dict(warning)
+        platform = str(item.get("platform", "")).lower()
+        issue = str(item.get("issue", ""))
+        error_code = item.get("error_code")
+        posts = int(item.get("posts", 0) or 0)
+
+        if platform == "producthunt" and error_code == "graphql_auth_failed" and posts == 0:
+            item["issue"] = "ProductHunt: currently unavailable - known auth limitation."
+        elif platform == "producthunt" and error_code == "graphql_auth_failed":
+            item["issue"] = "ProductHunt: API auth unavailable - limited to fallback results. Coverage may be reduced."
+        elif platform == "producthunt" and posts == 0:
+            item["issue"] = issue or "ProductHunt: currently unavailable - known auth limitation."
+        elif platform == "indiehackers" and posts == 0 and "0 posts" in issue:
+            item["issue"] = (
+                "IndieHackers: 0 results found. This niche may have low IH community presence, "
+                "or search may be temporarily unavailable."
+            )
+        elif platform == "hackernews" and "0 posts" in issue:
+            item["issue"] = "Hacker News: 0 results found. Formal keywords may not match HN discourse for this niche."
+        elif platform == "reddit" and "0 posts" in issue:
+            item["issue"] = (
+                "Reddit: 0 results found. Buyer-language coverage may be too niche or Reddit may have rate-limited this run."
+            )
+
+        normalized.append(item)
+    return normalized
+
+
+def _is_audience_platform_mismatch(idea_text: str, dominant_platform: str, dominant_pct: float) -> bool:
+    if dominant_pct < 0.70:
+        return False
+    idea_text_l = (idea_text or "").lower()
+    is_non_dev = any(kw in idea_text_l for kw in NON_DEV_ICP_KEYWORDS)
+    return is_non_dev and dominant_platform == "hackernews"
+
+
 # ═══════════════════════════════════════════════════════
 # PHASE 2: MARKET SCRAPING
 # ═══════════════════════════════════════════════════════
 
-def phase2_scrape(keywords, validation_id):
+def phase2_scrape(formal_keywords, colloquial_keywords, required_subreddits, validation_id, depth_config=None):
     """Phase 2: Scrape ALL platforms for market signals."""
+    if depth_config is None:
+        depth_config = get_depth_config("quick")
     print("\n  ══ PHASE 2: Market Scraping (All Platforms) ══")
     update_validation(validation_id, {"status": "scraping", "posts_found": 0})
 
     def on_progress(count, msg):
         update_validation(validation_id, {"posts_found": count, "status": "scraping"})
 
-    scrape_keywords = keywords[:8]
+    hn_kw_budget = depth_config.get("hn_keyword_budget", 8)
+    ph_kw_budget = depth_config.get("ph_keyword_budget", 8)
+    ih_kw_budget = depth_config.get("ih_keyword_budget", 8)
+    so_kw_budget = depth_config.get("so_keyword_budget", 3)
+    gh_kw_budget = depth_config.get("gh_keyword_budget", 3)
+    reddit_coll = depth_config.get("reddit_colloquial_budget", 4)
+    reddit_form = depth_config.get("reddit_formal_budget", 4)
+    reddit_duration = depth_config.get("reddit_duration", "10min")
+    reddit_min_matches = depth_config.get("reddit_min_keyword_matches", 1)
+
+    scrape_keywords = formal_keywords[:max(hn_kw_budget, ph_kw_budget, ih_kw_budget)]
+    reddit_keywords = []
+    for kw in list(colloquial_keywords[:reddit_coll]) + list(formal_keywords[:reddit_form]):
+        clean = str(kw).strip()
+        if clean and clean.lower() not in {item.lower() for item in reddit_keywords}:
+            reddit_keywords.append(clean)
+    if not reddit_keywords:
+        reddit_keywords = scrape_keywords[:8]
+    required_subreddits = [
+        str(sub).strip().replace("r/", "").replace("/r/", "")
+        for sub in (required_subreddits or [])
+        if str(sub).strip()
+    ]
     source_counts = {}
     platform_warnings = []  # Track platforms that returned 0 results or were unavailable
 
+    print(f"  [REDDIT]  colloquial_keywords: {reddit_keywords}")
+    print(f"  [HN]      formal keywords: {scrape_keywords}")
+    print(f"  [PH]      formal keywords: {scrape_keywords}")
+    print(f"  [IH]      formal keywords: {scrape_keywords}")
+    print(f"  [SO]      formal keywords: {scrape_keywords[:3]}")
+    print(f"  [GH]      formal keywords: {scrape_keywords[:3]}")
+
     # ── Reddit ──
-    print(f"  [>] Scraping Reddit for: {scrape_keywords}")
-    reddit_posts = run_keyword_scan(scrape_keywords, duration="10min", on_progress=on_progress)
+    print(f"  [>] Scraping Reddit for: {reddit_keywords} (lookback={reddit_duration})")
+    reddit_posts = run_keyword_scan(
+        reddit_keywords,
+        duration=reddit_duration,
+        on_progress=on_progress,
+        forced_subreddits=required_subreddits,
+        min_keyword_matches=reddit_min_matches,
+    )
     source_counts["reddit"] = len(reddit_posts)
     print(f"  [✓] Reddit: {len(reddit_posts)} posts")
     if len(reddit_posts) == 0:
@@ -282,7 +450,7 @@ def phase2_scrape(keywords, validation_id):
     if HN_AVAILABLE:
         print("  [>] Scraping Hacker News...")
         try:
-            hn_posts = run_hn_scrape(scrape_keywords, max_pages=2)
+            hn_posts = run_hn_scrape(scrape_keywords[:hn_kw_budget], max_pages=depth_config.get("hn_max_pages", 2))
             source_counts["hackernews"] = len(hn_posts)
             print(f"  [✓] HN: {len(hn_posts)} posts")
             if len(hn_posts) == 0:
@@ -298,7 +466,7 @@ def phase2_scrape(keywords, validation_id):
     if PH_AVAILABLE:
         print("  [>] Scraping ProductHunt...")
         try:
-            ph_result = run_ph_scrape(scrape_keywords, max_pages=2, return_health=True)
+            ph_result = run_ph_scrape(scrape_keywords[:ph_kw_budget], max_pages=depth_config.get("ph_max_pages", 2), return_health=True)
             ph_posts = ph_result.get("posts", [])
             source_counts["producthunt"] = len(ph_posts)
             print(f"  [✓] ProductHunt: {len(ph_posts)} posts")
@@ -330,7 +498,7 @@ def phase2_scrape(keywords, validation_id):
     if IH_AVAILABLE:
         print("  [>] Scraping IndieHackers...")
         try:
-            ih_result = run_ih_scrape(scrape_keywords, max_pages=2, return_health=True)
+            ih_result = run_ih_scrape(scrape_keywords[:ih_kw_budget], max_pages=depth_config.get("ih_max_pages", 2), return_health=True)
             ih_posts = ih_result.get("posts", [])
             source_counts["indiehackers"] = len(ih_posts)
             print(f"  [✓] IndieHackers: {len(ih_posts)} posts")
@@ -358,7 +526,65 @@ def phase2_scrape(keywords, validation_id):
         })
 
     # ── Merge + deduplicate + WEIGHT ──
-    all_posts = reddit_posts + hn_posts + ph_posts + ih_posts
+    so_posts = []
+    if SO_AVAILABLE:
+        print("  [>] Scraping Stack Overflow...")
+        try:
+            so_posts = scrape_stackoverflow(
+                scrape_keywords[:so_kw_budget],
+                max_keywords=so_kw_budget,
+                time_budget=depth_config.get("so_time_budget", 30),
+                pages=depth_config.get("so_pages", 1),
+            )
+            source_counts["stackoverflow"] = len(so_posts)
+            print(f"  [OK] Stack Overflow: {len(so_posts)} posts")
+            if len(so_posts) == 0:
+                platform_warnings.append({
+                    "platform": "stackoverflow",
+                    "issue": "Stack Overflow: 0 results found. This problem may not surface as implementation pain there.",
+                })
+        except Exception as e:
+            print(f"  [!] Stack Overflow scrape failed: {e}")
+            platform_warnings.append({
+                "platform": "stackoverflow",
+                "issue": f"Stack Overflow: scrape failed ({str(e)[:100]}). Coverage may be reduced.",
+            })
+    else:
+        platform_warnings.append({
+            "platform": "stackoverflow",
+            "issue": "Stack Overflow: scraper not available. Coverage may be reduced.",
+        })
+
+    gh_posts = []
+    if GH_ISSUES_AVAILABLE:
+        print("  [>] Scraping GitHub Issues...")
+        try:
+            gh_posts = scrape_github_issues(
+                scrape_keywords[:gh_kw_budget],
+                max_keywords=gh_kw_budget,
+                time_budget=depth_config.get("gh_time_budget", 30),
+                pages=depth_config.get("gh_pages", 1),
+            )
+            source_counts["githubissues"] = len(gh_posts)
+            print(f"  [OK] GitHub Issues: {len(gh_posts)} posts")
+            if len(gh_posts) == 0:
+                platform_warnings.append({
+                    "platform": "githubissues",
+                    "issue": "GitHub Issues: 0 results found. This niche may not map cleanly to open-source issue traffic.",
+                })
+        except Exception as e:
+            print(f"  [!] GitHub Issues scrape failed: {e}")
+            platform_warnings.append({
+                "platform": "githubissues",
+                "issue": f"GitHub Issues: scrape failed ({str(e)[:100]}). Coverage may be reduced.",
+            })
+    else:
+        platform_warnings.append({
+            "platform": "githubissues",
+            "issue": "GitHub Issues: scraper not available. Coverage may be reduced.",
+        })
+
+    all_posts = reddit_posts + hn_posts + ph_posts + ih_posts + so_posts + gh_posts
 
     # Apply signal weighting before dedup
     for p in all_posts:
@@ -394,6 +620,7 @@ def phase2_scrape(keywords, validation_id):
     unique_posts.sort(key=lambda p: p.get("weighted_score", 0), reverse=True)
 
     platforms_used = len([k for k, v in source_counts.items() if v > 0])
+    platform_warnings = _normalize_platform_warnings(platform_warnings)
     update_validation(validation_id, {
         "status": "scraped",
         "posts_found": len(unique_posts),
@@ -410,7 +637,14 @@ def phase2_scrape(keywords, validation_id):
     return unique_posts, source_counts, platform_warnings
 
 
-def phase2b_intelligence(keywords, validation_id, idea_text=""):
+def phase2b_intelligence(
+    keywords,
+    validation_id,
+    idea_text="",
+    known_competitors=None,
+    complaint_count=0,
+    complaint_competitors=None,
+):
     """Phase 2b: Google Trends + Competition Analysis."""
     intel = {"trends": None, "competition": None, "trend_prompt": "", "comp_prompt": ""}
 
@@ -456,7 +690,14 @@ def phase2b_intelligence(keywords, validation_id, idea_text=""):
             # NOTE: Do NOT use 'with' context manager — its __exit__ calls shutdown(wait=True)
             # which blocks until the hung thread finishes, defeating the timeout.
             pool = ThreadPoolExecutor(max_workers=1)
-            future = pool.submit(analyze_competition, comp_keywords, idea_text=idea_text)
+            future = pool.submit(
+                analyze_competition,
+                comp_keywords,
+                idea_text=idea_text,
+                known_competitors=known_competitors,
+                complaint_count=complaint_count,
+                complaint_competitors=complaint_competitors,
+            )
             try:
                 comp_results = future.result(timeout=90)
             except FuturesTimeout:
@@ -470,6 +711,8 @@ def phase2b_intelligence(keywords, validation_id, idea_text=""):
             print(f"  [✓] Competition: {len(comp_results)} keywords analyzed")
             for kw, r in comp_results.items():
                 print(f"      {kw}: {r.tier} ({r.details})")
+            if comp_report.get("corrections"):
+                print(f"      Competition corrections: {comp_report['corrections']}")
         except Exception as e:
             print(f"  [!] Competition analysis failed: {e}")
 
@@ -725,7 +968,7 @@ RULES:
 # ═══════════════════════════════════════════════════════
 
 def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
-                         platform_warnings=None):
+                         platform_warnings=None, idea_text=""):
     """
     Cross-check data quality and detect contradictions between passes.
     Returns a dict with confidence_cap, contradictions list, and warnings list.
@@ -778,6 +1021,25 @@ def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
             f"PLATFORM SKEW: {dominance*100:.0f}% of posts from {dominant_platform} — "
             f"results may be biased toward {dominant_platform} audience"
         )
+
+    extra_platform_warnings = []
+    if _is_audience_platform_mismatch(idea_text, dominant_platform, dominance):
+        confidence_cap = max(0, confidence_cap - 10)
+        mismatch_issue = (
+            f"Audience mismatch: {dominance*100:.0f}% from HN but ICP is non-developer - "
+            "signals may not reflect buyer pain"
+        )
+        warnings.append(mismatch_issue)
+        extra_platform_warnings.append({
+            "platform": "hackernews",
+            "status": "skewed",
+            "dominant_pct": round(dominance * 100, 1),
+            "posts": source_counts.get("hackernews", 0),
+            "issue": (
+                f"Signal is {dominance*100:.0f}% from Hacker News - audience may skew developer. "
+                "Buyer-native sources returned limited results."
+            ),
+        })
 
     # Log which platforms failed
     for pw in platform_warnings:
@@ -887,11 +1149,12 @@ def _check_data_quality(posts, source_counts, pass1, pass2, pass3,
         "cap_reason": cap_reason,
         "contradictions": contradictions,
         "warnings": warnings,
+        "platform_warnings": extra_platform_warnings,
     }
 
 
 def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
-                      source_counts=None, intel=None, **kwargs):
+                      source_counts=None, intel=None, depth_config=None, **kwargs):
     """Phase 3: Multi-pass synthesis — 3 focused AI passes + debate verdict."""
     print("\n  ══ PHASE 3: Multi-Pass AI Synthesis ══")
     update_validation(validation_id, {"status": "synthesizing"})
@@ -900,7 +1163,9 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
     intel = intel or {}
 
     # ── Smart Sampling: top quality + random spread + outliers + recent ──
-    def _smart_sample(all_posts: list, budget: int = 100) -> list:
+    evidence_budget = depth_config.get("evidence_sample_budget", 100) if depth_config else 100
+
+    def _smart_sample(all_posts: list, budget: int = evidence_budget) -> list:
         """
         Budget raised to 100 (was 50) — better coverage with same AI cost.
         Strategy (100 total):
@@ -910,6 +1175,7 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
           - 15 outliers           → low-score but high-comment (hidden pain)
         """
         import random as _random
+        import hashlib as _hashlib
         if len(all_posts) <= budget:
             return all_posts
 
@@ -946,44 +1212,275 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
         outlier_picks = outlier_candidates[:15]
         outlier_ids = {p.get("id", "") for p in outlier_picks}
 
-        # Bucket 4: random from what's left
+        # Bucket 4: random from what's left (deterministic seed from idea_text)
         random_pool = [p for p in remaining2 if p.get("id", "") not in outlier_ids]
         random_budget = budget - top_n - len(recent_picks) - len(outlier_picks)
+        _sample_seed = int(_hashlib.md5(str(idea_text or "").encode()).hexdigest(), 16) % (2**32)
+        _random.seed(_sample_seed)
         random_picks = _random.sample(random_pool, min(random_budget, len(random_pool)))
+        _random.seed()  # reset to system entropy after deterministic sample
 
         sampled = top_picks + recent_picks + random_picks + outlier_picks
-        print(f"  [Smart Sample] {len(sampled)} posts: {top_n} top + {len(recent_picks)} recent + {len(random_picks)} random + {len(outlier_picks)} outliers (from {len(all_posts)} total)")
+        print(f"  [Smart Sample] {len(sampled)} posts: {top_n} top + {len(recent_picks)} recent + {len(random_picks)} random + {len(outlier_picks)} outliers (from {len(all_posts)} total) [seed={_sample_seed}]")
         return sampled
 
     # ── Pre-filter: remove noise posts before sampling ──
-    # Fix 3: Require at least 1 CORE keyword in the post TITLE specifically.
-    # This eliminates posts that match on body text only (burnout, loneliness posts
-    # that happen to mention 'developer' or 'code' but have zero idea relevance).
+    # Trust-quality pass: keep a quality bar, but let buyer-language body evidence
+    # count earlier for Reddit / IndieHackers instead of relying almost entirely on fallback.
     MIN_SCORE = 3
     MIN_KW_HITS = 1
     core_keywords = [kw.lower() for kw in decomposition.get("keywords", [])]
+    RELAXED_SCORE = 2
+    colloquial_keywords = [kw.lower() for kw in decomposition.get("colloquial_keywords", [])]
+    buyer_language_sources = {"reddit", "reddit_comment", "indiehackers"}
+    forced_subreddits = {
+        str(sub).strip().lower().replace("r/", "").replace("/r/", "")
+        for sub in decomposition.get("subreddits", []) or []
+        if str(sub).strip()
+    }
+    niche_text = " ".join(
+        [
+            str(idea_text or ""),
+            str(decomposition.get("audience", "") or ""),
+            str(decomposition.get("pain_hypothesis", "") or ""),
+            " ".join(str(kw or "") for kw in decomposition.get("keywords", []) or []),
+            " ".join(str(kw or "") for kw in decomposition.get("colloquial_keywords", []) or []),
+        ]
+    ).lower()
+    niche_subreddit_map = {
+        "finance": {
+            "triggers": ["accounting", "bookkeeping", "tax", "cpa", "payroll", "finance", "invoice"],
+            "subs": ["accounting", "bookkeeping", "tax", "smallbusiness", "financialplanning", "finance"],
+        },
+        "legal": {
+            "triggers": ["legal", "law firm", "lawyer", "attorney", "paralegal", "contract"],
+            "subs": ["lawfirm", "lawyers", "paralegal", "legaladviceofftopic", "smallbusiness"],
+        },
+        "healthcare": {
+            "triggers": ["medical", "healthcare", "clinic", "dentist", "dental", "patient", "doctor"],
+            "subs": ["medicine", "healthit", "dentistry", "privatepractice", "nursing"],
+        },
+        "agency": {
+            "triggers": ["agency", "client work", "marketing agency", "creative agency", "consultancy"],
+            "subs": ["agency", "advertising", "marketing", "freelance", "entrepreneur"],
+        },
+        "real_estate": {
+            "triggers": ["real estate", "realtor", "broker", "property management", "leasing"],
+            "subs": ["realtors", "realestate", "propertymanagement", "realestateinvesting"],
+        },
+        "hr": {
+            "triggers": ["hr", "human resources", "recruiting", "recruiter", "talent acquisition"],
+            "subs": ["humanresources", "recruiting", "recruiters", "askhr"],
+        },
+        "restaurant": {
+            "triggers": ["restaurant", "hospitality", "cafe", "bar", "food service"],
+            "subs": ["restaurantowners", "kitchenconfidential", "barowners", "smallbusiness"],
+        },
+        "retail": {
+            "triggers": ["retail", "shop owner", "store owner", "merchandising", "ecommerce"],
+            "subs": ["retail", "shopify", "smallbusiness", "ecommerce"],
+        },
+    }
+    topic_native_subreddits = set(forced_subreddits)
+    for config in niche_subreddit_map.values():
+        if any(trigger in niche_text for trigger in config["triggers"]):
+            topic_native_subreddits.update(config["subs"])
+
+    def _source_key(p):
+        raw_source = str(p.get("source") or "").strip().lower()
+        subreddit = str(p.get("subreddit") or "").strip().lower().replace("r/", "").replace("/r/", "")
+        known_reddit_sources = {
+            "reddit",
+            "reddit_comment",
+            "pushshift",
+            "pullpush",
+            "reddit_search",
+        }
+        raw = raw_source or "unknown"
+        if raw.startswith("hackernews"):
+            return "hackernews"
+        if raw.startswith("producthunt"):
+            return "producthunt"
+        if raw.startswith("indiehackers"):
+            return "indiehackers"
+        if raw.startswith("stack"):
+            return "stackoverflow"
+        if raw.startswith("github"):
+            return "githubissues"
+        if raw_source in known_reddit_sources or raw.startswith("reddit") or raw_source.startswith("r/"):
+            return "reddit"
+        if subreddit:
+            return "reddit"
+        return raw or "unknown"
+
+    def _match_count(text, phrases):
+        return sum(1 for phrase in phrases if phrase and phrase in text)
+
+    def _matched_terms(p):
+        raw = p.get("matched_keywords", p.get("matched_phrases", [])) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return [str(item).strip().lower() for item in raw if str(item).strip()]
 
     def _title_has_core_kw(p):
-        """Returns True if the post title contains at least one core keyword."""
+        """Returns True if the post title contains at least one core keyword (word-boundary match)."""
         title = (p.get("title", "") or "").lower()
-        return any(kw in title for kw in core_keywords)
+        return any(re.search(r'\b' + re.escape(kw) + r'\b', title) for kw in core_keywords)
 
-    def _relevance_score(p):
-        kw_hits = len(p.get("matched_keywords", p.get("matched_phrases", [])))
-        score = p.get("score", 0)
-        source = p.get("source", p.get("subreddit", "")).lower()
+    def _subreddit_key(p):
+        raw = str(p.get("subreddit") or "").strip().lower()
+        return raw.replace("r/", "").replace("/r/", "")
+
+    def _relevance_assessment(p):
+        title = (p.get("title", "") or "").lower()
+        body = " ".join(
+            str(p.get(key) or "").lower()
+            for key in ("selftext", "body", "text", "full_text")
+        )
+        kw_hits = len(_matched_terms(p))
+        score = int(p.get("score", 0) or 0)
+        source = _source_key(p)
         title_relevant = _title_has_core_kw(p)
-        # All platforms: must pass score threshold AND have a core keyword in title
-        # (HN posts previously bypassed this — they don't anymore)
-        return score >= MIN_SCORE and (title_relevant or kw_hits >= 2)
+        body_formal_hits = _match_count(body, core_keywords)
+        colloquial_hits = _match_count(f"{title} {body}", colloquial_keywords) if source == "reddit" else 0
+        if source == "reddit":
+            subreddit = _subreddit_key(p)
+            if subreddit in forced_subreddits:
+                if score >= RELAXED_SCORE:
+                    return True, "forced_subreddit_pass"
+                return False, "rejected_low_score"
+            if subreddit in topic_native_subreddits:
+                if score < RELAXED_SCORE:
+                    return False, "rejected_low_score"
+                if colloquial_hits >= 1 or body_formal_hits >= 1 or kw_hits >= 1:
+                    return True, "body_match_pass"
+                return False, "rejected_no_match"
+            if score >= MIN_SCORE and (title_relevant or kw_hits >= 2):
+                return True, "standard"
+            if score >= RELAXED_SCORE and (colloquial_hits >= 1 or body_formal_hits >= 1 or kw_hits >= 1):
+                return True, "body_match_pass"
+            if score < RELAXED_SCORE:
+                return False, "rejected_low_score"
+            return False, "rejected_no_match"
+        # All non-Reddit platforms: keep the current threshold unchanged.
+        if score >= MIN_SCORE and (title_relevant or kw_hits >= 2):
+            return True, "standard"
+        if source == "indiehackers":
+            if score >= RELAXED_SCORE and (body_formal_hits >= 1 or kw_hits >= 1):
+                return True, "standard"
+            if score < RELAXED_SCORE:
+                return False, "rejected_low_score"
+            return False, "rejected_no_match"
+        return False, "rejected_no_match" if score >= MIN_SCORE else "rejected_low_score"
 
-    pre_filtered = [p for p in posts if _relevance_score(p)]
-    print(f"  [Filter] {len(pre_filtered)}/{len(posts)} posts passed score≥{MIN_SCORE} + title-keyword filter", flush=True)
-    if len(pre_filtered) < 10:
+    primary_assessments = [_relevance_assessment(p) for p in posts]
+    pre_filtered = [p for p, assessment in zip(posts, primary_assessments) if assessment[0]]
+    primary_pre_filtered = list(pre_filtered)
+    print(f"  [Filter] {len(pre_filtered)}/{len(posts)} posts passed the primary relevance gate", flush=True)
+    fallback_threshold = depth_config.get("fallback_rescue_threshold", 10) if depth_config else 10
+    if len(pre_filtered) < fallback_threshold:
         # Don't discard everything if filter is too aggressive — fall back to score+body-keyword only
-        pre_filtered = [p for p in posts if p.get("score", 0) >= MIN_SCORE and
-                        len(p.get("matched_keywords", p.get("matched_phrases", []))) >= MIN_KW_HITS] or posts
+        fallback_candidates = []
+        for p in posts:
+            source = _source_key(p)
+            score = int(p.get("score", 0) or 0)
+            matched_terms = len(_matched_terms(p))
+            body = " ".join(
+                str(p.get(key) or "").lower()
+                for key in ("selftext", "body", "text", "full_text")
+            )
+            colloquial_hits = _match_count(body, colloquial_keywords) if source == "reddit" else 0
+            body_formal_hits = _match_count(body, core_keywords)
+            min_score = RELAXED_SCORE if source in buyer_language_sources else MIN_SCORE
+            if score >= min_score and (
+                matched_terms >= MIN_KW_HITS or body_formal_hits >= 1 or colloquial_hits >= 1
+            ):
+                fallback_candidates.append(p)
+        pre_filtered = (
+            primary_pre_filtered + [p for p in fallback_candidates if p not in primary_pre_filtered]
+        ) or posts
         print(f"  [Filter] Fallback: {len(pre_filtered)} posts after score+body-keyword filter", flush=True)
+
+    from collections import Counter
+
+    filter_explanation = (
+        "Primary filter now counts buyer-language body evidence earlier for Reddit/IndieHackers, "
+        "so niche B2B complaint posts do not depend entirely on fallback rescue."
+    )
+    primary_source_counts = Counter(_source_key(p) for p in primary_pre_filtered)
+    rescued_posts = [p for p in pre_filtered if p not in primary_pre_filtered]
+    rescue_source_counts = Counter(_source_key(p) for p in rescued_posts)
+    rescued_count = len(rescued_posts)
+    fallback_mode = "not_needed" if not rescued_count else (
+        "all_posts_emergency" if len(pre_filtered) == len(posts) and not primary_pre_filtered else "score+body-keyword"
+    )
+    print(f"  [Filter] {filter_explanation}", flush=True)
+    if primary_source_counts:
+        primary_breakdown = ", ".join(
+            f"{source}={count}" for source, count in sorted(primary_source_counts.items())
+        )
+        print(f"  [Filter] Primary by source: {primary_breakdown}", flush=True)
+    reddit_scraped_count = sum(1 for p in posts if _source_key(p) == "reddit")
+    reddit_primary_count = sum(
+        1
+        for p, assessment in zip(posts, primary_assessments)
+        if _source_key(p) == "reddit" and assessment[0]
+    )
+    reddit_detail_counts = Counter(
+        assessment[1]
+        for p, assessment in zip(posts, primary_assessments)
+        if _source_key(p) == "reddit"
+    )
+    if reddit_scraped_count:
+        print("  [Filter] Reddit pass detail:", flush=True)
+        print(
+            f"    forced_subreddit_pass = {reddit_detail_counts.get('forced_subreddit_pass', 0)}",
+            flush=True,
+        )
+        print(
+            f"    body_match_pass = {reddit_detail_counts.get('body_match_pass', 0)}",
+            flush=True,
+        )
+        print(
+            f"    rejected_low_score = {reddit_detail_counts.get('rejected_low_score', 0)}",
+            flush=True,
+        )
+        print(
+            f"    rejected_no_match = {reddit_detail_counts.get('rejected_no_match', 0)}",
+            flush=True,
+        )
+        print(
+            f"  [Filter] Reddit pass rate: {reddit_primary_count}/{reddit_scraped_count} scraped "
+            f"({(reddit_primary_count / max(reddit_scraped_count, 1)) * 100:.0f}% - target 35-50%)",
+            flush=True,
+        )
+    rescue_breakdown = ", ".join(
+        f"{source}={count}" for source, count in sorted(rescue_source_counts.items())
+    ) or "none"
+    print(
+        f"  [Filter] Observable summary: primary_pass={len(primary_pre_filtered)}, "
+        f"fallback_rescued={rescued_count}, final_filtered={len(pre_filtered)} "
+        f"({fallback_mode}; {rescue_breakdown})",
+        flush=True,
+    )
+
+    filter_diagnostics = {
+        "primary_pass_count": len(primary_pre_filtered),
+        "fallback_rescued_count": rescued_count,
+        "final_filtered_count": len(pre_filtered),
+        "fallback_mode": fallback_mode,
+        "primary_by_source": dict(primary_source_counts),
+        "fallback_by_source": dict(rescue_source_counts),
+        "reddit_pass_detail": {
+            "scraped_count": reddit_scraped_count,
+            "primary_pass_count": reddit_primary_count,
+            "forced_subreddit_pass": reddit_detail_counts.get("forced_subreddit_pass", 0),
+            "body_match_pass": reddit_detail_counts.get("body_match_pass", 0),
+            "rejected_low_score": reddit_detail_counts.get("rejected_low_score", 0),
+            "rejected_no_match": reddit_detail_counts.get("rejected_no_match", 0),
+        },
+        "rules": filter_explanation,
+    }
 
     posts_filtered_count = len(pre_filtered)  # for pipeline UI display
     sampled_posts = _smart_sample(pre_filtered, budget=100)
@@ -1075,6 +1572,11 @@ Posts:
             if signal_block.get("key_insight"):
                 all_insights.append(signal_block["key_insight"])
 
+        _pain_cap = depth_config.get("batch_pain_cap", 25) if depth_config else 25
+        _wtp_cap = depth_config.get("batch_wtp_cap", 15) if depth_config else 15
+        _comp_cap = depth_config.get("batch_comp_cap", 10) if depth_config else 10
+        _insight_cap = depth_config.get("batch_insight_cap", 20) if depth_config else 20
+
         merged = {
             "posts_analyzed": successful_posts,
             "batches_succeeded": len(batch_results),
@@ -1082,10 +1584,10 @@ Posts:
             "partial_coverage": partial_coverage,
             "failed_batches": max(0, len(batches) - len(batch_results)),
             "coverage": f"{successful_posts}/{len(all_posts)} posts ({len(batch_results)}/{len(batches)} batches)",
-            "pain_quotes": list(dict.fromkeys(all_pain_quotes))[:25],  # dedupe, keep order
-            "wtp_signals": list(dict.fromkeys(all_wtp))[:15],
-            "competitor_mentions": list(dict.fromkeys(all_competitors))[:10],
-            "key_insights": [i for i in all_insights if i][:20],
+            "pain_quotes": list(dict.fromkeys(all_pain_quotes))[:_pain_cap],
+            "wtp_signals": list(dict.fromkeys(all_wtp))[:_wtp_cap],
+            "competitor_mentions": list(dict.fromkeys(all_competitors))[:_comp_cap],
+            "key_insights": [i for i in all_insights if i][:_insight_cap],
         }
         print(f"  [BatchSummarize] Merged: {len(merged['pain_quotes'])} pain quotes, {len(merged['wtp_signals'])} WTP signals, {len(merged['competitor_mentions'])} competitors", flush=True)
         return merged
@@ -1192,7 +1694,8 @@ Design the full strategy: ICP, competition landscape, pricing, and monetization.
         competitors_block = ""
         if direct_competitors:
             comp_lines = []
-            for c in direct_competitors[:5]:
+            _comp_depth = depth_config.get("pass3_competitor_depth", 5) if depth_config else 5
+            for c in direct_competitors[:_comp_depth]:
                 name = c.get("name", c.get("company", "Unknown"))
                 price = c.get("price", c.get("pricing", c.get("price_point", "unknown price")))
                 weakness = c.get("weakness", c.get("gap", ""))
@@ -1241,8 +1744,15 @@ Create the launch roadmap, revenue projections, risk matrix, and first 10 custom
     # ═══════════════════════════════════════
     # DATA QUALITY CHECK + CONTRADICTION DETECTION
     # ═══════════════════════════════════════
-    data_quality = _check_data_quality(posts, source_counts, pass1, pass2, pass3,
-                                        platform_warnings=kwargs.get("platform_warnings", []))
+    data_quality = _check_data_quality(
+        posts,
+        source_counts,
+        pass1,
+        pass2,
+        pass3,
+        platform_warnings=kwargs.get("platform_warnings", []),
+        idea_text=idea_text,
+    )
     print(f"\n  ── Data Quality Check ──")
     print(f"  [Q] Post count: {len(posts)} (threshold: 20 for full confidence)")
     print(f"  [Q] Confidence cap: {data_quality['confidence_cap']}%")
@@ -1349,10 +1859,12 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
 
     total_boost = min(15, boost)
     if total_boost > 0:
-        boosted = min(capped_confidence + total_boost, 85)
+        boost_ceiling = min(85, data_quality["confidence_cap"] + 10)
+        boosted = min(capped_confidence + total_boost, boost_ceiling)
         print(
             f"  [Confidence] Cap={capped_confidence}% + Boost={total_boost}% "
-            f"→ {boosted}% | trends={_overall_trend or 'UNKNOWN'} "
+            f"→ {boosted}% (boost clamped to cap+10={boost_ceiling}) | "
+            f"trends={_overall_trend or 'UNKNOWN'} "
             f"comp={_comp_tier or 'UNKNOWN'} pain={_pain_ok} "
             f"ev={_ev_count} wtp={_wtp_ok}"
         )
@@ -1361,19 +1873,25 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     else:
         print(f"  [Confidence] No boost applied. Final={capped_confidence}%")
 
+    # Normalize verdict string — AI models return "DON'T BUILD" with apostrophe,
+    # CALIBRATION_BLOCK says "DONT_BUILD" without. Handle both.
+    raw_verdict = report["verdict"].upper().strip()
+    if raw_verdict in ("DON'T BUILD", "DONT_BUILD", "DON'T_BUILD", "DONT BUILD"):
+        report["verdict"] = "DON'T BUILD"  # canonical form
+
     # Override verdict if confidence was capped below thresholds
     if capped_confidence < 40 and report["verdict"] == "BUILD IT":
         report["verdict"] = "RISKY"
         print(f"  [Q] Verdict overridden: BUILD IT → RISKY (confidence too low after cap)")
 
-    # Fix E: symmetric override — DONT_BUILD at high confidence + validated pain is contradictory
+    # Fix E: symmetric override — DON'T BUILD at high confidence + validated pain is contradictory
     # NOTE: Uses pass1 directly since report["market_analysis"] isn't built yet at this point
-    if capped_confidence > 80 and report["verdict"] == "DONT_BUILD":
+    if capped_confidence > 80 and report["verdict"] == "DON'T BUILD":
         if pass1.get("pain_validated"):
             report["verdict"] = "RISKY"
-            print(f"  [Q] Verdict overridden: DONT_BUILD → RISKY (high confidence + validated pain contradicts negative verdict)")
+            print(f"  [Q] Verdict overridden: DON'T BUILD → RISKY (high confidence + validated pain contradicts negative verdict)")
             data_quality["warnings"].append(
-                "DONT_BUILD overridden to RISKY — confidence >80% with validated pain contradicts a hard negative. Review evidence."
+                "DON'T BUILD overridden to RISKY — confidence >80% with validated pain contradicts a hard negative. Review evidence."
             )
 
     report["executive_summary"] = verdict_report.get("executive_summary") or verdict_report.get("summary", "")
@@ -1393,6 +1911,24 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     # Pass 2: Strategy
     report["ideal_customer_profile"] = pass2.get("ideal_customer_profile", {})
     report["competition_landscape"] = pass2.get("competition_landscape", {})
+    competition_data = dict(intel.get("competition") or {})
+    report_competitors = []
+    for comp in report["competition_landscape"].get("direct_competitors", []):
+        name = comp.get("name", "") if isinstance(comp, dict) else str(comp)
+        if str(name).strip():
+            report_competitors.append(str(name).strip())
+    if competition_data.get("overall_tier") == "BLUE_OCEAN" and (report_competitors or intel.get("competitor_complaints")):
+        corrected_tier = "COMPETITIVE" if len(report_competitors) >= 2 or intel.get("competitor_complaints") else "EMERGING"
+        correction_note = (
+            f"Post-synthesis correction: BLUE_OCEAN -> {corrected_tier} because "
+            f"the report named competitors ({', '.join(report_competitors[:5]) or 'n/a'}) "
+            f"and complaint evidence was {'present' if intel.get('competitor_complaints') else 'not present'}."
+        )
+        competition_data["overall_tier"] = corrected_tier
+        competition_data["corrections"] = list(competition_data.get("corrections", [])) + [correction_note]
+        competition_data["reasoning"] = list(competition_data.get("reasoning", [])) + [correction_note]
+        intel["competition"] = competition_data
+        print(f"  [COMP] {correction_note}")
     report["pricing_strategy"] = pass2.get("pricing_strategy", {})
     report["monetization_channels"] = pass2.get("monetization_channels", [])
 
@@ -1405,6 +1941,8 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["signal_summary"] = {
         "posts_scraped": len(posts),
         "posts_filtered": posts_filtered_count if 'posts_filtered_count' in dir() else len(posts),
+        "primary_filter_passed": (filter_diagnostics or {}).get("primary_pass_count", 0) if 'filter_diagnostics' in dir() else 0,
+        "fallback_rescued": (filter_diagnostics or {}).get("fallback_rescued_count", 0) if 'filter_diagnostics' in dir() else 0,
         "posts_analyzed": posts_analyzed_count if 'posts_analyzed_count' in dir() else 0,
         "pain_quotes_found": len((batch_signals or {}).get("pain_quotes", [])) if 'batch_signals' in dir() else 0,
         "wtp_signals_found": len((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else 0,
@@ -1477,6 +2015,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["consensus_type"] = verdict_report.get("consensus_type", "")
     report["consensus_strength"] = verdict_report.get("consensus_strength", "")
     report["debate_log"] = verdict_report.get("debate_log", [])
+    report["debate_transcript"] = verdict_report.get("debate_transcript")
     report["final_verdict"] = verdict_report.get("verdict", report.get("verdict", ""))
     report["verdict_source"] = verdict_report.get("_source", "unknown")
 
@@ -1484,14 +2023,18 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["data_sources"] = source_counts
     report["platform_breakdown"] = source_counts
     report["platforms_used"] = platforms_used
+    report["platform_warnings"] = kwargs.get("platform_warnings", []) + data_quality.get("platform_warnings", [])
     report["trends_data"] = intel.get("trends")
     report["competition_data"] = intel.get("competition")
+    if intel.get("competitor_complaints"):
+        report["competitor_complaints"] = intel.get("competitor_complaints", [])[:10]
     report["synthesis_method"] = "multi-pass-3"
     report["keywords"] = decomposition.get("keywords", [])
     # Pipeline counts for UI
     report["posts_scraped"] = len(posts)
     report["posts_filtered"] = posts_filtered_count
     report["posts_analyzed"] = posts_analyzed_count
+    report["filter_diagnostics"] = filter_diagnostics if 'filter_diagnostics' in dir() else None
     if batch_signals and batch_signals.get("partial_coverage"):
         data_quality["warnings"].append(
             f"Batch summarization partially succeeded — {batch_signals.get('batches_succeeded', 0)}/{batch_signals.get('batches_total', 0)} batches completed."
@@ -1508,7 +2051,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "minimum_recommended": 20,
         "data_sufficient": len(posts) >= 20,
         "platforms_with_data": platforms_used,
-        "platforms_total": 4,
+        "platforms_total": 6,
         "partial_coverage": bool((batch_signals or {}).get("partial_coverage", False)) if 'batch_signals' in dir() else False,
         "batches_succeeded": (batch_signals or {}).get("batches_succeeded", 0) if 'batch_signals' in dir() else 0,
         "batches_total": (batch_signals or {}).get("batches_total", 0) if 'batch_signals' in dir() else 0,
@@ -1517,7 +2060,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "cap_reason": data_quality["cap_reason"] if capped_confidence < raw_confidence else None,
         "contradictions": data_quality["contradictions"],
         "warnings": data_quality["warnings"],
-        "platform_warnings": kwargs.get("platform_warnings", []),
+        "platform_warnings": kwargs.get("platform_warnings", []) + data_quality.get("platform_warnings", []),
     }
 
     verdict = report["verdict"]
@@ -1591,13 +2134,16 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
 # MAIN PIPELINE
 # ═══════════════════════════════════════════════════════
 
-def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
+def validate_idea(validation_id: str, idea_text: str, user_id: str = "", depth: str = "quick"):
     """Full 3-phase validation pipeline with multi-model debate."""
+    depth_config = get_depth_config(depth)
     print(f"\n{'='*50}")
     print(f"  IDEA VALIDATION {validation_id}")
     print(f"  User: {user_id or 'CLI mode'}")
     print(f"  Idea: {idea_text[:100]}...")
-    print(f"{'='*50}\n")
+    print(f"{'='*50}")
+    log_depth_config(depth_config)
+    print()
 
     try:
         # Load user's AI configs from Supabase
@@ -1645,13 +2191,25 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
             configs = fallback_configs
 
         if not configs:
-            raise Exception("No AI models configured. Go to Settings → AI to add your API keys.")
+            diagnostics = []
+            if not os.environ.get("SUPABASE_URL"):
+                diagnostics.append("SUPABASE_URL missing")
+            if not (os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")):
+                diagnostics.append("SUPABASE service key missing")
+            if not os.environ.get("AI_ENCRYPTION_KEY"):
+                diagnostics.append("AI_ENCRYPTION_KEY missing")
+
+            detail = f" Diagnostics: {', '.join(diagnostics)}." if diagnostics else ""
+            raise Exception(
+                "No AI models configured or the worker is using stale settings. "
+                "Restart `npm run worker` after saving AI models." + detail
+            )
 
         # Initialize the multi-model brain
         brain = AIBrain(configs)
 
         # Phase 1: Decompose idea
-        decomposition = phase1_decompose(idea_text, brain, validation_id)
+        decomposition = phase1_decompose(idea_text, brain, validation_id, depth_config=depth_config)
 
         # Dynamic subreddit expansion for future scraper coverage
         if user_id:
@@ -1672,10 +2230,48 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
                 print(f"  [Subs] Discovery failed: {e}")
 
         # Phase 2: Scrape ALL platforms
-        posts, source_counts, platform_warnings = phase2_scrape(decomposition["keywords"], validation_id)
+        posts, source_counts, platform_warnings = phase2_scrape(
+            decomposition["keywords"],
+            decomposition.get("colloquial_keywords", []),
+            decomposition.get("subreddits", []),
+            validation_id,
+            depth_config=depth_config,
+        )
+
+        early_competitor_names = []
+        early_competitor_complaints = []
+        if DEATHWATCH_AVAILABLE:
+            try:
+                early_competitor_names = sorted({
+                    str(name).strip()
+                    for name in decomposition.get("competitors", [])
+                    if str(name).strip()
+                })
+                if early_competitor_names:
+                    print(
+                        f"  [Deathwatch] Early competition scan using "
+                        f"{len(early_competitor_names)} competitor hint(s): {early_competitor_names[:5]}"
+                    )
+                    early_competitor_complaints = scan_for_complaints(posts, early_competitor_names)
+            except Exception as e:
+                print(f"  [Deathwatch] Early scan skipped: {e}")
 
         # Phase 2b: Intelligence analysis (Trends + Competition)
-        intel = phase2b_intelligence(decomposition["keywords"], validation_id, idea_text=idea_text)
+        complaint_competitors = sorted({
+            comp
+            for complaint in early_competitor_complaints
+            for comp in complaint.get("competitors_mentioned", [])
+        })
+        intel = phase2b_intelligence(
+            decomposition["keywords"],
+            validation_id,
+            idea_text=idea_text,
+            known_competitors=early_competitor_names,
+            complaint_count=len(early_competitor_complaints),
+            complaint_competitors=complaint_competitors,
+        )
+        if early_competitor_complaints:
+            intel["competitor_complaints"] = early_competitor_complaints[:10]
 
         if len(posts) == 0:
             update_validation(validation_id, {
@@ -1705,7 +2301,19 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
         # Phase 3: Synthesize via multi-model debate (with ALL intelligence)
         report = phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
                                    source_counts=source_counts, intel=intel,
-                                   platform_warnings=platform_warnings)
+                                   platform_warnings=platform_warnings,
+                                   depth_config=depth_config)
+
+        # ── Inject depth metadata into report ──
+        report["depth_metadata"] = {
+            "mode": depth_config["mode"],
+            "label": depth_config["label"],
+            "reddit_lookback": depth_config["reddit_duration"],
+            "evidence_sample_budget": depth_config["evidence_sample_budget"],
+            "sources_queried": list(source_counts.keys()),
+            "posts_scraped": sum(source_counts.values()),
+            "posts_analyzed": len(posts),
+        }
 
         # ── Post-Phase: Pain Stream alert (auto-create for return visits) ──
         if PAIN_STREAM_AVAILABLE and user_id:
@@ -1724,17 +2332,20 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
         # ── Post-Phase: Competitor Deathwatch scan ──
         if DEATHWATCH_AVAILABLE:
             try:
-                comp_names = []
+                comp_names = list(early_competitor_names)
                 comp_landscape = report.get("competition_landscape", {})
                 for comp in comp_landscape.get("direct_competitors", []):
                     name = comp.get("name", "") if isinstance(comp, dict) else str(comp)
                     if name:
                         comp_names.append(name)
+                comp_names = sorted({str(name).strip() for name in comp_names if str(name).strip()})
                 if comp_names:
                     complaints = scan_for_complaints(posts, comp_names)
                     if complaints:
                         save_complaints(complaints)
                         report["competitor_complaints"] = complaints[:10]
+                elif early_competitor_complaints:
+                    report["competitor_complaints"] = early_competitor_complaints[:10]
             except Exception as e:
                 print(f"  [Deathwatch] Scan skipped: {e}")
 
@@ -1743,12 +2354,16 @@ def validate_idea(validation_id: str, idea_text: str, user_id: str = ""):
     except Exception as e:
         print(f"\n  [✗] PIPELINE ERROR: {e}")
         traceback.print_exc()
-        update_validation(validation_id, {
-            "status": "failed",
-            "error": str(e),
-            "report": json.dumps({"error": str(e)}),
-            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
+        try:
+            update_validation(validation_id, {
+                "status": "failed",
+                "error": str(e),
+                "report": json.dumps({"error": str(e), "failure_stage": "validation"}),
+                "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
+        except Exception as persist_error:
+            print(f"  [!] Failed to persist terminal validation error: {persist_error}")
+            raise
 
 
 # ═══════════════════════════════════════════════════════
@@ -1770,6 +2385,7 @@ if __name__ == "__main__":
             config["validation_id"],
             config["idea"],
             config.get("user_id", ""),
+            depth=config.get("depth", "quick"),
         )
     else:
         validate_idea(args.validation_id, args.idea, args.user_id)

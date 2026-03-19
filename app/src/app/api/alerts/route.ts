@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase-server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { buildAlertEvidence, buildEvidenceBackedTrust, buildEvidenceSummary } from "@/lib/evidence";
 
 const supabaseAdmin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,10 +44,24 @@ export async function GET() {
         groupedMatches.set(match.alert_id, existing);
     }
 
-    const hydratedAlerts = (alerts || []).map((alert) => ({
-        ...alert,
-        matches: groupedMatches.get(alert.id) || [],
-    }));
+    const hydratedAlerts = (alerts || []).map((alert) => {
+        const alertMatches = groupedMatches.get(alert.id) || [];
+        const evidence = buildAlertEvidence(alert, alertMatches);
+        const evidenceSummary = buildEvidenceSummary(evidence);
+
+        return {
+            ...alert,
+            matches: alertMatches,
+            evidence,
+            evidence_summary: evidenceSummary,
+            source_breakdown: evidenceSummary.source_breakdown,
+            direct_vs_inferred: evidenceSummary.direct_vs_inferred,
+            trust: buildEvidenceBackedTrust({
+                items: evidence,
+                extraWeakSignalReasons: alertMatches.length === 0 ? ["No live matches yet"] : [],
+            }),
+        };
+    });
 
     return NextResponse.json({
         alerts: hydratedAlerts,

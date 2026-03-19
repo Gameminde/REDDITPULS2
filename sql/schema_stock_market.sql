@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS ideas (
     
     -- Timestamps
     first_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_24h_update TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_7d_update TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

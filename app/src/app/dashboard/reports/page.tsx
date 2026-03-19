@@ -8,7 +8,7 @@ import { PremiumGate } from "@/app/components/premium-gate";
 import { useRouter } from "next/navigation";
 import {
     CheckCircle2, AlertTriangle, XCircle, FileText, Loader2,
-    Calendar, Search
+    Calendar, Search, Scale
 } from "lucide-react";
 import Link from "next/link";
 
@@ -40,6 +40,7 @@ export default function ReportsDirectoryPage() {
     const [reports, setReports] = useState<ValidationReport[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
     useEffect(() => {
         if (!isPremium) return;
@@ -67,6 +68,23 @@ export default function ReportsDirectoryPage() {
         r.idea_text?.toLowerCase().includes(search.toLowerCase()) || 
         r.verdict?.toLowerCase().includes(search.toLowerCase())
     );
+
+    function toggleSelected(id: string) {
+        setSelectedIds((current) => {
+            if (current.includes(id)) {
+                return current.filter((value) => value !== id);
+            }
+            if (current.length >= 4) {
+                return current;
+            }
+            return [...current, id];
+        });
+    }
+
+    function compareSelected() {
+        if (selectedIds.length < 2) return;
+        router.push(`/dashboard/reports/compare?ids=${selectedIds.join(",")}`);
+    }
 
     return (
         <div className="w-full max-w-7xl mx-auto pt-6 px-4 lg:px-8 pb-32">
@@ -97,6 +115,29 @@ export default function ReportsDirectoryPage() {
                 </div>
             </motion.div>
 
+            <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Compare Ideas</div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                        Select 2 to 4 completed validations to compare their decision packs side by side.
+                    </p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                        {selectedIds.length}/4 selected
+                    </div>
+                    <button
+                        type="button"
+                        onClick={compareSelected}
+                        disabled={selectedIds.length < 2}
+                        className="inline-flex items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-muted-foreground"
+                    >
+                        <Scale className="h-3.5 w-3.5" />
+                        Compare selected
+                    </button>
+                </div>
+            </div>
+
             {/* Grid */}
             {loading ? (
                 <div className="flex flex-col items-center justify-center p-20 gap-4">
@@ -118,14 +159,27 @@ export default function ReportsDirectoryPage() {
                                     exit={{ opacity: 0, scale: 0.95 }}
                                     transition={{ delay: i * 0.05, duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                                 >
-                                    <Link href={`/dashboard/reports/${report.id}`}>
-                                        <div className="bento-cell group h-full flex flex-col p-6 cursor-pointer hover:border-primary/30 transition-all duration-300">
-                                            {/* Top Row: Date & Status */}
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
-                                                    <Calendar className="w-3 h-3" />
-                                                    {new Date(report.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                                                </div>
+                                    <div className="bento-cell group h-full flex flex-col p-6 hover:border-primary/30 transition-all duration-300">
+                                        {/* Top Row: Date & Status */}
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+                                                <Calendar className="w-3 h-3" />
+                                                {new Date(report.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleSelected(report.id)}
+                                                    disabled={isFailed}
+                                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest transition-colors ${
+                                                        selectedIds.includes(report.id)
+                                                            ? "border-primary/30 bg-primary/10 text-primary"
+                                                            : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                                                    } ${isFailed ? "cursor-not-allowed opacity-50" : ""}`}
+                                                >
+                                                    <Scale className="h-3 w-3" />
+                                                    {selectedIds.includes(report.id) ? "Selected" : "Compare"}
+                                                </button>
                                                 {isFailed ? (
                                                     <div className="px-2 py-0.5 rounded border border-dont/30 bg-dont/10 text-dont font-mono text-[9px] uppercase tracking-widest font-bold">
                                                         FAILED
@@ -136,7 +190,9 @@ export default function ReportsDirectoryPage() {
                                                     </div>
                                                 )}
                                             </div>
+                                        </div>
 
+                                        <Link href={`/dashboard/reports/${report.id}`} className="flex h-full flex-col">
                                             {/* Idea Text */}
                                             <h3 className="font-display text-lg font-bold text-foreground mb-4 line-clamp-3 leading-snug group-hover:text-primary transition-colors">
                                                 {report.idea_text}
@@ -155,8 +211,8 @@ export default function ReportsDirectoryPage() {
                                                     </div>
                                                 )}
                                             </div>
-                                        </div>
-                                    </Link>
+                                        </Link>
+                                    </div>
                                 </motion.div>
                             );
                         })}
@@ -167,8 +223,13 @@ export default function ReportsDirectoryPage() {
                     <FileText className="w-12 h-12 text-muted-foreground opacity-20 mb-4" />
                     <h3 className="font-display text-xl text-foreground mb-2">No records found</h3>
                     <p className="font-mono text-xs text-muted-foreground uppercase tracking-widest max-w-sm">
-                        {search ? "No reports match your search query." : "Your validation directory is empty. Run a new scan to populate it."}
+                        {search ? "No reports match your search query." : "Your validation directory is empty. Run your first validation to populate it."}
                     </p>
+                    {!search && (
+                        <p className="mt-3 max-w-md text-sm text-muted-foreground">
+                            Each validation produces a full market intelligence report with verdict, evidence, and action plan.
+                        </p>
+                    )}
                     {!search && (
                         <Link href="/dashboard/validate" className="mt-6 px-6 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary font-mono text-[10px] uppercase font-bold tracking-widest hover:bg-primary/20 transition-colors">
                             Initialize New Validation

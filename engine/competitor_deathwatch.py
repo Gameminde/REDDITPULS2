@@ -147,7 +147,12 @@ def _cleanup_old_complaints() -> None:
 
 def save_complaints(complaints: list) -> int:
     """Save complaints to Supabase with idempotent upsert. Returns count saved."""
-    if not SUPABASE_URL or not SUPABASE_KEY or not complaints:
+    if not complaints:
+        print("  [Deathwatch] No competitor complaints to save")
+        return 0
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("  [Deathwatch] Supabase not configured - complaints were detected but not persisted")
         return 0
 
     try:
@@ -162,7 +167,7 @@ def save_complaints(complaints: list) -> int:
             _cleanup_old_complaints()
             print(f"  [Deathwatch] OK {len(complaints)} complaints upserted to DB")
             return len(complaints)
-        print(f"  [Deathwatch] X Save failed: {resp.status_code}")
+        print(f"  [Deathwatch] X Save failed: {resp.status_code} {resp.text[:200]}")
         return 0
     except Exception as exc:
         print(f"  [Deathwatch] X Save error: {exc}")

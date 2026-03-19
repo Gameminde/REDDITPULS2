@@ -312,6 +312,67 @@ def run_github_scrape(topic_slug, keywords=None):
     }
 
 
+def _normalize_github_issue(issue: dict, keyword: str) -> dict:
+    created_raw = issue.get("created_at", "") or ""
+    created_utc = created_raw
+    if created_raw and not created_raw.endswith("Z"):
+        try:
+            created_utc = datetime.fromisoformat(created_raw).isoformat() + "Z"
+        except ValueError:
+            created_utc = created_raw
+
+    return {
+        "id": str(issue.get("id", "")),
+        "external_id": str(issue.get("id", "")),
+        "title": issue.get("title", ""),
+        "url": issue.get("url", ""),
+        "score": issue.get("thumbs_up", 0) + issue.get("total_reactions", 0),
+        "num_comments": issue.get("comments", 0),
+        "source": "githubissues",
+        "created_utc": created_utc,
+        "selftext": issue.get("body_excerpt", ""),
+        "full_text": f"{issue.get('title', '')} {issue.get('body_excerpt', '')}".strip(),
+        "matched_keywords": [keyword],
+        "repo": issue.get("repo", ""),
+        "labels": issue.get("labels", []),
+    }
+
+
+def scrape_github_issues(keywords: list[str], max_keywords: int = 3, time_budget: int = 30, pages: int = 1) -> list[dict]:
+    """
+    Validation-path GitHub Issues wrapper.
+    Args:
+        keywords: formal keywords from decomposition
+        max_keywords: how many keywords to use (default 3)
+        time_budget: seconds before stopping (default 30)
+        pages: pages per keyword search (default 1)
+    """
+    search_terms = [str(kw).strip() for kw in (keywords or []) if str(kw).strip()][:max_keywords]
+    print(f"[GH] Scraping GitHub Issues for {len(search_terms)} keywords (budget={time_budget}s, pages={pages})...")
+
+    start_time = time.time()
+    seen_ids = set()
+    normalized_posts = []
+
+    for keyword in search_terms:
+        if time.time() - start_time > time_budget:
+            print("[GH] Time budget reached — stopping early")
+            break
+
+        before_count = len(normalized_posts)
+        issues = search_github_issues(keyword, per_page=15, pages=pages)
+        for issue in issues:
+            issue_id = str(issue.get("id", "")).strip()
+            if not issue_id or issue_id in seen_ids:
+                continue
+            seen_ids.add(issue_id)
+            normalized_posts.append(_normalize_github_issue(issue, keyword))
+
+        print(f"[GH] '{keyword}': +{len(normalized_posts) - before_count} posts (total {len(normalized_posts)})")
+
+    return normalized_posts
+
+
 if __name__ == "__main__":
     result = run_github_scrape("project-management")
     print(f"\n{result['total']} issues found")

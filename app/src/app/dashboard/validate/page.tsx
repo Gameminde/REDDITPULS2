@@ -1,12 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Zap, Loader2, Terminal, CheckCircle2, Clock, Settings, Maximize2, Minimize2 } from "lucide-react";
+import { Zap, Loader2, Terminal, CheckCircle2, Clock, Settings, Maximize2, Minimize2, Search, FlaskConical, Telescope } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useUserPlan } from "@/lib/use-user-plan";
 import { PremiumGate } from "@/app/components/premium-gate";
+import { VALIDATION_DEPTHS, type ValidationDepth, DEFAULT_DEPTH } from "@/lib/validation-depth";
 
 /* ── Status pipeline constants ───────────────────────── */
 
@@ -83,6 +84,27 @@ type Validation = {
     report: any;
 };
 
+type ValidationStatusResponse = {
+    validation?: Validation;
+    diagnostics?: {
+        queue_retrying?: boolean;
+        stale_queued?: boolean;
+        queue_failed?: boolean;
+        queue_lookup_failed?: boolean;
+        worker_failed?: boolean;
+        validation_failed?: boolean;
+        persistence_failed?: boolean;
+        failure_reason?: string | null;
+    };
+};
+
+type LiveProgressLine = {
+    id: number;
+    at?: string;
+    stream?: "stdout" | "stderr";
+    message?: string;
+};
+
 type LogEntry = { time: string; msg: string; type: string };
 
 type HistoryItem = {
@@ -93,6 +115,13 @@ type HistoryItem = {
     status: string;
     created_at: string;
 };
+
+function formatElapsedTime(totalSeconds: number) {
+    const safe = Math.max(0, totalSeconds);
+    const mm = String(Math.floor(safe / 60)).padStart(2, "0");
+    const ss = String(safe % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+}
 
 /* ── Helpers ─────────────────────────────────────────── */
 
@@ -110,6 +139,29 @@ function getVerdictBg(v: string): string {
     return "bg-risky/10 border-risky/20";
 }
 
+function getValidationFailureMessage(payload?: ValidationStatusResponse): string | null {
+    const reportError = typeof payload?.validation?.report?.error === "string"
+        ? payload.validation.report.error.trim()
+        : "";
+    if (reportError) return reportError;
+
+    const failureReason = typeof payload?.diagnostics?.failure_reason === "string"
+        ? payload.diagnostics.failure_reason.trim()
+        : "";
+    if (failureReason) return failureReason;
+
+    if (payload?.diagnostics?.persistence_failed) {
+        return "Validation failed and the worker could not persist one or more state updates.";
+    }
+    if (payload?.diagnostics?.worker_failed) {
+        return "Validation worker failed before the report completed.";
+    }
+    if (payload?.diagnostics?.queue_retrying) {
+        return "Validation hit an error and is retrying in the queue.";
+    }
+    return null;
+}
+
 /* ── Component ──────────────────────────────────────── */
 
 const ValidatePage = () => {
@@ -122,6 +174,7 @@ const ValidatePage = () => {
     const [target, setTarget] = useState("");
     const [pain, setPain] = useState("");
     const [competitors, setCompetitors] = useState("");
+    const [depth, setDepth] = useState<ValidationDepth>(DEFAULT_DEPTH);
 
     /* validation state */
     const [activeValidation, setActiveValidation] = useState<Validation | null>(null);
@@ -130,6 +183,7 @@ const ValidatePage = () => {
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [termExpanded, setTermExpanded] = useState(false);
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [terminalTick, setTerminalTick] = useState(0);
     const [logEntries, setLogEntries] = useState<LogEntry[]>([
         { time: "00:00", msg: "[SYS] AI Engine stand-by — enter an idea to begin.", type: "muted" },
     ]);
@@ -138,6 +192,8 @@ const ValidatePage = () => {
     const termRef = useRef<HTMLDivElement>(null);
     const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const lastStatusRef = useRef<string>("");
+    const lastProgressIdRef = useRef(0);
+    const scrapingStartedAtRef = useRef<number | null>(null);
     const startTimeRef = useRef<number>(0);
     const pollingFailureRef = useRef(0);
 
@@ -153,6 +209,45 @@ const ValidatePage = () => {
         typeof activeValidation?.report === "string"
             ? JSON.parse(activeValidation.report)
             : activeValidation?.report || {};
+
+    const appendLiveProgress = useCallback((report: any) => {
+        const liveLines: LiveProgressLine[] = Array.isArray(report?.live_progress?.lines)
+            ? report.live_progress.lines
+            : [];
+        if (liveLines.length === 0) return;
+
+        const unseen = liveLines.filter((line) => typeof line?.id === "number" && line.id > lastProgressIdRef.current);
+        if (unseen.length === 0) return;
+
+        const mappedEntries: LogEntry[] = unseen
+            .map((line) => {
+                const message = typeof line?.message === "string" ? line.message.trim() : "";
+                if (!message) return null;
+
+                const elapsedSeconds =
+                    typeof line?.at === "string" && startTimeRef.current > 0
+                        ? Math.max(0, Math.floor((Date.parse(line.at) - startTimeRef.current) / 1000))
+                        : Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000));
+
+                return {
+                    time: formatElapsedTime(elapsedSeconds),
+                    msg: message,
+                    type:
+                        line?.stream === "stderr" || /traceback|error|failed|exception/i.test(message)
+                            ? "error"
+                            : "info",
+                };
+            })
+            .filter((entry): entry is LogEntry => Boolean(entry));
+
+        if (mappedEntries.length === 0) return;
+
+        lastProgressIdRef.current = Math.max(...unseen.map((line) => line.id));
+        setLogEntries((prev) => {
+            const deduped = mappedEntries.filter((entry) => prev[prev.length - 1]?.msg !== entry.msg);
+            return deduped.length > 0 ? [...prev, ...deduped] : prev;
+        });
+    }, []);
 
     /* ── Fetch AI config ────────────────────────────────── */
     useEffect(() => {
@@ -201,12 +296,15 @@ const ValidatePage = () => {
         if (status === "scraped" && validation.posts_found) {
             msg = `[✓ PHASE 2] Found ${validation.posts_found} posts — filtering for relevance`;
         }
+        if ((status === "failed" || status === "error") && typeof validation.report?.error === "string" && validation.report.error.trim()) {
+            msg = `[✗] ${validation.report.error.trim()}`;
+        }
         setLogEntries((prev) => [...prev, { time: `${mm}:${ss}`, msg, type: label.type }]);
     }, []);
 
     /* ── SACRED POLLING CONTRACT ─────────────────────────── */
     const startPolling = useCallback(
-        (validationId: string) => {
+        (jobId: string) => {
             stopPolling();
             pollingFailureRef.current = 0;
             const pollStartedAt = Date.now();
@@ -215,17 +313,30 @@ const ValidatePage = () => {
 
             pollingRef.current = setInterval(async () => {
                 try {
-                    const r = await fetch(`/api/validate/${validationId}`);
+                    const r = await fetch(`/api/validate/${jobId}/status`);
                     if (!r.ok) {
-                        throw new Error(`Polling failed with ${r.status}`);
+                        let detail = "";
+                        try {
+                            const body = await r.json();
+                            detail = typeof body?.error === "string" ? `: ${body.error}` : "";
+                        } catch {
+                            detail = "";
+                        }
+                        throw new Error(`Polling failed with ${r.status}${detail}`);
                     }
-                    const d = await r.json();
+                    const d: ValidationStatusResponse = await r.json();
                     if (d.validation) {
                         pollingFailureRef.current = 0;
                         setActiveValidation(d.validation);
+                        appendLiveProgress(d.validation.report);
 
                         /* track status changes → push log entries */
                         const newStatus = d.validation.status;
+                        if (newStatus === "scraping" && !scrapingStartedAtRef.current) {
+                            scrapingStartedAtRef.current = Date.now();
+                        } else if (newStatus !== "scraping") {
+                            scrapingStartedAtRef.current = null;
+                        }
                         if (newStatus !== lastStatusRef.current) {
                             lastStatusRef.current = newStatus;
                             pushLog(newStatus, d.validation);
@@ -234,9 +345,14 @@ const ValidatePage = () => {
                         if (newStatus === "done" || newStatus === "error" || newStatus === "failed") {
                             stopPolling();
                             setIsValidating(false);
-                            setValidationError(null);
                             if (newStatus === "done") {
-                                router.push(`/dashboard/reports/${validationId}`);
+                                setValidationError(null);
+                                router.push(`/dashboard/reports/${d.validation.id || jobId}`);
+                            } else {
+                                setValidationError(
+                                    getValidationFailureMessage(d) ||
+                                    "Validation failed before the report completed.",
+                                );
                             }
                         }
                     }
@@ -246,9 +362,12 @@ const ValidatePage = () => {
                     if (pollingFailureRef.current >= maxFailures || elapsed >= maxPollMs) {
                         stopPolling();
                         setIsValidating(false);
+                        const reason = error instanceof Error ? error.message : "";
                         const message = elapsed >= maxPollMs
                             ? "Validation stalled — polling timed out. Retry to resume or check Reports."
-                            : "Validation status could not be fetched. Retry polling or check Reports.";
+                            : reason.includes("500")
+                                ? "Validation service error — retry polling or check Reports for the latest state."
+                                : "Validation status could not be fetched. Retry polling or check Reports.";
                         setValidationError(message);
                         setLogEntries((prev) => [
                             ...prev,
@@ -257,10 +376,10 @@ const ValidatePage = () => {
                         console.error("Validation polling stopped:", error);
                     }
                 }
-                // ✓ POLLING INTACT: polls /api/validate/[id] every 3000ms, stops when status === 'done' or 'error' (or 'failed')
-            }, 3000);
+                // ✓ POLLING INTACT: polls /api/validate/[jobId]/status every 2000ms, stops when status === 'done' or 'error' (or 'failed')
+            }, 2000);
         },
-        [router, pushLog, stopPolling],
+        [appendLiveProgress, router, pushLog, stopPolling],
     );
 
     useEffect(() => {
@@ -276,6 +395,14 @@ const ValidatePage = () => {
         }
     }, [logEntries]);
 
+    useEffect(() => {
+        if (!isValidating) return;
+        const timer = setInterval(() => {
+            setTerminalTick((tick) => tick + 1);
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [isValidating]);
+
     /* ── Launch validation ──────────────────────────────── */
     const handleValidate = async () => {
         if (!idea.trim()) return;
@@ -283,20 +410,33 @@ const ValidatePage = () => {
         setValidationError(null);
         setActiveValidation(null);
         lastStatusRef.current = "";
+        lastProgressIdRef.current = 0;
+        scrapingStartedAtRef.current = null;
         startTimeRef.current = Date.now();
+        setTerminalTick(0);
         setLogEntries([{ time: "00:00", msg: "[INIT] Validation pipeline activated", type: "info" }]);
 
         try {
             const r = await fetch("/api/validate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ idea: idea.trim() }),
+                body: JSON.stringify({
+                    idea: idea.trim(),
+                    depth,
+                    target: target.trim(),
+                    pain_hypothesis: pain.trim(),
+                    known_competitors: competitors.trim(),
+                }),
             });
             const d = await r.json();
-            if (d.validationId) {
-                startPolling(d.validationId);
+            if (!r.ok) {
+                throw new Error(d.error || "Failed to start validation");
+            }
+            const jobId = d.job_id || d.validationId;
+            if (jobId) {
+                startPolling(jobId);
                 setActiveValidation({
-                    id: d.validationId,
+                    id: d.validationId || jobId,
                     idea_text: idea.trim(),
                     status: "starting",
                     verdict: "",
@@ -305,20 +445,24 @@ const ValidatePage = () => {
                 });
                 setLogEntries((prev) => [
                     ...prev,
-                    { time: "00:00", msg: `[SYS] Validation ${d.validationId.slice(0, 8)}… queued`, type: "muted" },
+                    { time: "00:00", msg: `[SYS] Validation ${String(jobId).slice(0, 8)}… queued`, type: "muted" },
                 ]);
             } else {
                 setIsValidating(false);
-                alert(d.error || "Failed to start validation");
+                setValidationError(d.error || "Failed to start validation");
             }
-        } catch {
+        } catch (error) {
             setIsValidating(false);
-            alert("Network error — check your connection");
+            setValidationError(error instanceof Error ? error.message : "Network error — check your connection");
         }
     };
 
     /* ── Derived state ──────────────────────────────────── */
     const currentStatus = activeValidation?.status || "";
+    const scrapingElapsedSeconds = scrapingStartedAtRef.current
+        ? Math.max(0, Math.floor((Date.now() - scrapingStartedAtRef.current) / 1000))
+        : 0;
+    const scrapingActivityPulse = Math.max(1, Math.floor(scrapingElapsedSeconds / 2) + 1 + terminalTick % 2);
     const statusIdx = STATUS_ORDER.indexOf(currentStatus);
     const dataSources = parsedReport.data_sources || {};
 
@@ -431,6 +575,42 @@ const ValidatePage = () => {
                         {isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation"}
                     </span>
                 </motion.button>
+
+                {/* Depth mode selector — 4 cols, 2 rows */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.12 }}
+                    className="bento-cell col-span-4 row-span-2 p-4 flex flex-col"
+                >
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2 font-sans">
+                        Validation Depth
+                    </label>
+                    <div className="flex flex-col gap-1.5 flex-1 justify-center">
+                        {VALIDATION_DEPTHS.map((opt) => {
+                            const isActive = depth === opt.mode;
+                            const Icon = opt.mode === "quick" ? Search : opt.mode === "deep" ? FlaskConical : Telescope;
+                            return (
+                                <button
+                                    key={opt.mode}
+                                    onClick={() => setDepth(opt.mode)}
+                                    disabled={isValidating}
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-all text-[11px] font-mono disabled:opacity-40 ${
+                                        isActive
+                                            ? "bg-primary/12 border border-primary/30 text-primary"
+                                            : "bg-white/3 border border-white/6 text-muted-foreground hover:bg-white/6 hover:border-white/12"
+                                    }`}
+                                >
+                                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                                    <span className="font-semibold">{opt.label}</span>
+                                    <span className="ml-auto text-[10px] opacity-60">
+                                        ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </motion.div>
 
                 {/* Posts stat — 2 cols, 2 rows */}
                 <motion.div
@@ -680,6 +860,28 @@ const ValidatePage = () => {
                             termExpanded ? "h-[70vh]" : "h-[200px]"
                         }`}
                     >
+                        {currentStatus === "scraping" && (
+                            <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div>
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">
+                                            Searching across Reddit, Hacker News, Product Hunt, and Indie Hackers...
+                                        </div>
+                                        <div className="mt-1 text-[10px] text-muted-foreground">
+                                            Live activity pulse: {scrapingActivityPulse}
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-[12px] font-semibold text-foreground tabular-nums">
+                                            {formatElapsedTime(scrapingElapsedSeconds)}
+                                        </div>
+                                        <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                                            Phase 2 elapsed
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         {logEntries.map((entry, i) => {
                             /* Rich debate card for agent entries */
                             if (entry.type === "debate" && (entry.msg.includes("[AGENT") || entry.msg.includes("[DEBATE]") || entry.msg.includes("[SCAN]"))) {

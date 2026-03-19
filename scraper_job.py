@@ -39,8 +39,12 @@ from trends_aggregator import aggregate_trends
 import random
 
 # ── Supabase config ──
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+SUPABASE_KEY = (
+    os.environ.get("SUPABASE_SERVICE_KEY")
+    or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or os.environ.get("SUPABASE_KEY", "")
+)
 
 # ── Spam/humor compiled patterns ──
 _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
@@ -163,6 +167,91 @@ def _to_epoch_timestamp(value):
         except Exception:
             return 0.0
     return 0.0
+
+
+def _parse_datetime(value):
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _coerce_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _should_advance_baseline(last_update, now_utc, interval):
+    if last_update is None:
+        return True
+    return now_utc - last_update >= interval
+
+
+def _resolve_score_baselines(existing, now_utc):
+    if not existing:
+        return {
+            "prev_24h": 0.0,
+            "prev_7d": 0.0,
+            "prev_30d": 0.0,
+            "next_score_24h_ago": 0.0,
+            "next_score_7d_ago": 0.0,
+            "next_score_30d_ago": 0.0,
+            "next_last_24h_update": now_utc.isoformat(),
+            "next_last_7d_update": now_utc.isoformat(),
+        }
+
+    existing_current = _coerce_float(existing.get("current_score"))
+    stored_24h = _coerce_float(existing.get("score_24h_ago"))
+    stored_7d = _coerce_float(existing.get("score_7d_ago"))
+    stored_30d = _coerce_float(existing.get("score_30d_ago"))
+
+    last_24h_update = _parse_datetime(existing.get("last_24h_update"))
+    last_7d_update = _parse_datetime(existing.get("last_7d_update"))
+
+    prev_24h = stored_24h if stored_24h > 0 else existing_current
+    next_score_24h_ago = stored_24h
+    next_last_24h_update = last_24h_update.isoformat() if last_24h_update else now_utc.isoformat()
+
+    if _should_advance_baseline(last_24h_update, now_utc, timedelta(hours=24)) or stored_24h <= 0:
+        prev_24h = existing_current
+        next_score_24h_ago = existing_current
+        next_last_24h_update = now_utc.isoformat()
+
+    prev_7d = stored_7d if stored_7d > 0 else 0.0
+    next_score_7d_ago = stored_7d
+    next_last_7d_update = last_7d_update.isoformat() if last_7d_update else now_utc.isoformat()
+
+    if _should_advance_baseline(last_7d_update, now_utc, timedelta(days=7)):
+        rolled_7d = stored_24h if stored_24h > 0 else existing_current
+        next_score_7d_ago = rolled_7d
+        next_last_7d_update = now_utc.isoformat()
+        prev_7d = rolled_7d
+
+    prev_30d = stored_30d if stored_30d > 0 else 0.0
+
+    return {
+        "prev_24h": prev_24h,
+        "prev_7d": prev_7d,
+        "prev_30d": prev_30d,
+        "next_score_24h_ago": next_score_24h_ago,
+        "next_score_7d_ago": next_score_7d_ago,
+        "next_score_30d_ago": stored_30d,
+        "next_last_24h_update": next_last_24h_update,
+        "next_last_7d_update": next_last_7d_update,
+    }
 
 
 def _post_activity_timestamp(post):
@@ -930,15 +1019,24 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
 
 def determine_trend(current, previous_24h, previous_7d):
     """Determine trend direction from score history."""
-    if previous_7d == 0:
+    if previous_7d == 0 and previous_24h == 0:
         return "new"
-    change_7d = current - previous_7d
-    if change_7d > 5:
-        return "rising"
-    elif change_7d < -5:
-        return "falling"
-    else:
-        return "stable"
+
+    if previous_7d > 0:
+        change_7d = current - previous_7d
+        if change_7d > 5:
+            return "rising"
+        elif change_7d < -5:
+            return "falling"
+
+    if previous_24h > 0:
+        change_24h = current - previous_24h
+        if change_24h > 2:
+            return "rising"
+        elif change_24h < -2:
+            return "falling"
+
+    return "stable"
 
 
 def determine_confidence(post_count, source_count):
@@ -1119,8 +1217,11 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         return
 
     if SUPABASE_URL:
-        saved_posts = store_posts(all_posts)
-        print(f"  [OK] Stored {saved_posts} raw posts in Supabase")
+        try:
+            saved_posts = store_posts(all_posts)
+            print(f"  [OK] Stored {saved_posts} raw posts in Supabase")
+        except Exception as e:
+            print(f"  [Posts] Raw post storage skipped: {e}")
 
         try:
             alert_matches = check_alerts_against_posts(all_posts)
@@ -1189,6 +1290,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         "post_count_24h": table_has_column("ideas", "post_count_24h"),
         "pain_count": table_has_column("ideas", "pain_count"),
         "pain_summary": table_has_column("ideas", "pain_summary"),
+        "last_24h_update": table_has_column("ideas", "last_24h_update"),
+        "last_7d_update": table_has_column("ideas", "last_7d_update"),
     }
 
     # ── 4. Calculate scores + upsert ──
@@ -1217,11 +1320,13 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             signal_posts=signal_bucket,
         )
         existing = existing_ideas.get(slug)
+        now_utc = datetime.now(timezone.utc)
 
-        # Get previous scores for trend calculation
-        prev_24h = existing["current_score"] if existing else 0
-        prev_7d = existing["score_7d_ago"] if existing else 0
-        prev_30d = existing["score_30d_ago"] if existing else 0
+        # Roll baselines forward only when their time window has elapsed.
+        baselines = _resolve_score_baselines(existing, now_utc)
+        prev_24h = baselines["prev_24h"]
+        prev_7d = baselines["prev_7d"]
+        prev_30d = baselines["prev_30d"]
 
         trend = determine_trend(score, prev_24h, prev_7d)
         confidence = determine_confidence(len(posts), breakdown.get("source_count", 1))
@@ -1246,12 +1351,12 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             "topic": topic_name,
             "slug": slug,
             "current_score": score,
-            "score_24h_ago": prev_24h,
-            "score_7d_ago": existing["score_7d_ago"] if existing else 0,
-            "score_30d_ago": existing["score_30d_ago"] if existing else 0,
-            "change_24h": round(score - prev_24h, 1),
-            "change_7d": round(score - prev_7d, 1),
-            "change_30d": round(score - prev_30d, 1),
+            "score_24h_ago": baselines["next_score_24h_ago"],
+            "score_7d_ago": baselines["next_score_7d_ago"],
+            "score_30d_ago": baselines["next_score_30d_ago"],
+            "change_24h": round(score - prev_24h, 1) if prev_24h > 0 else 0,
+            "change_7d": round(score - prev_7d, 1) if prev_7d > 0 else 0,
+            "change_30d": round(score - prev_30d, 1) if prev_30d > 0 else 0,
             "trend_direction": trend,
             "confidence_level": confidence,
             "post_count_total": len(posts),
@@ -1264,7 +1369,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             "category": topic_info.get("category", "general"),
             "top_posts": json.dumps(top_posts_json),
             "keywords": json.dumps(topic_info.get("keywords", [])),
-            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "last_updated": now_utc.isoformat(),
         }
 
         if idea_optional_columns["post_count_24h"]:
@@ -1273,6 +1378,10 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             idea_row["pain_count"] = pain_count or breakdown.get("pain_count", 0)
         if idea_optional_columns["pain_summary"] and pain_summary:
             idea_row["pain_summary"] = pain_summary
+        if idea_optional_columns["last_24h_update"]:
+            idea_row["last_24h_update"] = baselines["next_last_24h_update"]
+        if idea_optional_columns["last_7d_update"]:
+            idea_row["last_7d_update"] = baselines["next_last_7d_update"]
 
         ideas_to_upsert.append(idea_row)
         ideas_updated += 1
@@ -1294,31 +1403,58 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         print(f"\n  Uploading {len(ideas_to_upsert)} ideas to Supabase...")
 
         # Upsert ideas (use slug as conflict key)
+        idea_upsert_successes = 0
+        idea_upsert_failures = []
         for idea in ideas_to_upsert:
             resp = sb_upsert("ideas", [idea], on_conflict="slug")
+            if resp.status_code < 400:
+                idea_upsert_successes += 1
+            else:
+                idea_upsert_failures.append(idea["slug"])
 
         # Insert history (need idea_ids)
         updated_ideas = sb_select("ideas", "select=id,slug")
         slug_to_id = {r["slug"]: r["id"] for r in updated_ideas}
 
+        history_successes = 0
+        history_failures = []
         for i, hist in enumerate(history_to_insert):
             slug = ideas_to_upsert[i]["slug"]
             idea_id = slug_to_id.get(slug)
             if idea_id:
                 hist["idea_id"] = idea_id
-                sb_upsert("idea_history", [hist])
+                history_resp = sb_upsert("idea_history", [hist])
+                if history_resp.status_code < 400:
+                    history_successes += 1
+                else:
+                    history_failures.append(slug)
+            else:
+                history_failures.append(slug)
 
-        print(f"  [OK] {len(ideas_to_upsert)} ideas upserted + {len(history_to_insert)} history records")
+        if idea_upsert_failures:
+            print(f"  [!] Idea upsert failures: {', '.join(idea_upsert_failures[:8])}")
+        if history_failures:
+            print(f"  [!] Idea history failures: {', '.join(history_failures[:8])}")
+
+        print(
+            f"  [OK] {idea_upsert_successes}/{len(ideas_to_upsert)} ideas upserted + "
+            f"{history_successes}/{len(history_to_insert)} history records"
+        )
 
     # ── 6. Update run log ──
     duration = round(time.time() - start_time, 1)
     if run_id and SUPABASE_URL:
+        run_status = "completed" if not (SUPABASE_URL and ideas_to_upsert and idea_upsert_failures) else "completed_errors"
+        error_text = None
+        if SUPABASE_URL and ideas_to_upsert and idea_upsert_failures:
+            error_text = f"Idea upsert failures: {', '.join(idea_upsert_failures[:8])}"
         sb_patch("scraper_runs", f"id=eq.{run_id}", {
-            "status": "completed",
+            "status": run_status,
             "posts_collected": len(all_posts),
             "ideas_updated": ideas_updated,
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": duration,
+            "error_text": error_text,
         })
 
     if SUPABASE_URL:
@@ -1326,7 +1462,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         sb_rpc("cleanup_old_posts")
 
     print(f"\n{'=' * 60}")
-    print(f"  Done! {len(all_posts)} posts → {ideas_updated} ideas updated")
+    print(f"  Done! {len(all_posts)} posts -> {ideas_updated} ideas updated")
     print(f"  Duration: {duration}s")
     print(f"{'=' * 60}")
 

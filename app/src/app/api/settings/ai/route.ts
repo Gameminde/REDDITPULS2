@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
 import { checkPremium } from "@/lib/check-premium";
 
-// Provider → model catalog (curated fallback list — live fetch happens via /api/settings/models)
 export const MODEL_CATALOG: Record<string, { name: string; models: { id: string; label: string }[]; endpoint: string }> = {
     gemini: {
         name: "Google Gemini",
@@ -140,81 +139,84 @@ export const MODEL_CATALOG: Record<string, { name: string; models: { id: string;
     },
     ollama: {
         name: "Ollama (Local)",
-        models: [
-            { id: "custom", label: "Custom Local Model" },
-        ],
+        models: [{ id: "custom", label: "Custom Local Model" }],
         endpoint: "localhost:11434",
     },
 };
 
+const configTimestamps = new Map<string, number[]>();
 
-const ENCRYPTION_KEY = process.env.AI_ENCRYPTION_KEY || "redditpulse-default-key-change-me";
+function requireEncryptionKey() {
+    const encryptionKey = process.env.AI_ENCRYPTION_KEY?.trim();
+    if (!encryptionKey) {
+        throw new Error(
+            "AI_ENCRYPTION_KEY is missing. Encrypted AI settings are required. " +
+            "Set AI_ENCRYPTION_KEY and apply 012_ai_config_encryption_rpcs.sql.",
+        );
+    }
+    return encryptionKey;
+}
 
-// GET — return user's AI configs (keys masked) + model catalog
+function checkConfigRateLimit(userId: string): boolean {
+    const now = Date.now();
+    const hourAgo = now - 3600_000;
+    const timestamps = (configTimestamps.get(userId) || []).filter((timestamp) => timestamp > hourAgo);
+    if (timestamps.length >= 10) return false;
+    timestamps.push(now);
+    configTimestamps.set(userId, timestamps);
+    return true;
+}
+
+function formatEncryptedConfigError(error: { code?: string; message?: string } | null | undefined) {
+    if (!error) return "Encrypted AI config request failed";
+    if (error.code === "42883") {
+        return "Encrypted AI config RPCs are missing. Apply 012_ai_config_encryption_rpcs.sql in Supabase first.";
+    }
+    return error.message || "Encrypted AI config request failed";
+}
+
 export async function GET() {
     try {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // Server-side premium check
         const { isPremium } = await checkPremium(supabase, user.id);
         if (!isPremium) {
             return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
         }
 
-        // Read configs — decrypt keys server-side, mask for frontend
-        const { data: configs } = await supabase.rpc("get_ai_configs_decrypted", {
+        const encryptionKey = requireEncryptionKey();
+        const { data: configs, error } = await supabase.rpc("get_ai_configs_decrypted", {
             p_user_id: user.id,
-            p_key: ENCRYPTION_KEY,
+            p_key: encryptionKey,
         });
 
-        // If RPC doesn't exist yet, fall back to raw query with plaintext column
-        let finalConfigs = configs;
-        if (!configs) {
-            const { data: rawConfigs } = await supabase
-                .from("user_ai_config")
-                .select("*")
-                .eq("user_id", user.id)
-                .order("priority", { ascending: true });
-            finalConfigs = (rawConfigs || []).map((c: Record<string, unknown>) => ({
-                ...c,
-                api_key: c.api_key || "",
-            }));
+        if (error) {
+            const message = formatEncryptedConfigError(error);
+            console.error("AI config GET error:", error);
+            return NextResponse.json({ error: message, configs: [], catalog: MODEL_CATALOG }, { status: 500 });
         }
 
-        // Mask API keys for frontend — show ONLY last 4 chars (ATK-3 fix)
-        const masked = (finalConfigs || []).map((c: Record<string, string | boolean | number>) => ({
-            ...c,
-            api_key: c.api_key ? `•••••••••${String(c.api_key).slice(-4)}` : "",
+        const maskedConfigs = (configs || []).map((config: Record<string, string | boolean | number>) => ({
+            ...config,
+            api_key: config.api_key ? `•••••••••${String(config.api_key).slice(-4)}` : "",
         }));
 
-        return NextResponse.json({ configs: masked, catalog: MODEL_CATALOG });
-    } catch {
-        return NextResponse.json({ configs: [], catalog: MODEL_CATALOG });
+        return NextResponse.json({ configs: maskedConfigs, catalog: MODEL_CATALOG });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Internal server error";
+        console.error("AI config GET fatal error:", error);
+        return NextResponse.json({ error: message, configs: [], catalog: MODEL_CATALOG }, { status: 500 });
     }
 }
 
-// ── Rate Limiting ──
-const configTimestamps = new Map<string, number[]>();
-function checkConfigRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const hourAgo = now - 3600_000;
-    const ts = (configTimestamps.get(userId) || []).filter(t => t > hourAgo);
-    if (ts.length >= 10) return false;
-    ts.push(now);
-    configTimestamps.set(userId, ts);
-    return true;
-}
-
-// POST — save or update a provider config (with verification)
 export async function POST(req: NextRequest) {
     try {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // Server-side premium check
         const { isPremium } = await checkPremium(supabase, user.id);
         if (!isPremium) {
             return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
@@ -224,8 +226,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Rate limit exceeded — max 10 config changes per hour" }, { status: 429 });
         }
 
+        const encryptionKey = requireEncryptionKey();
         const body = await req.json();
-        const { provider, api_key, selected_model, priority, endpoint_url, is_active, config_id } = body;
+        const { provider, api_key, selected_model, priority, endpoint_url, config_id } = body;
 
         if (!provider || !api_key || !selected_model) {
             return NextResponse.json({ error: "Provider, API key, and model are required" }, { status: 400 });
@@ -234,24 +237,26 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
         }
 
-        // ── Step 1: Verify the API key BEFORE saving ──
         let verification = { status: "skipped", message: "Verification skipped" } as {
-            status: string; message: string; resolved_model?: string;
+            status: string;
+            message: string;
+            resolved_model?: string;
         };
+
         try {
-            // Dynamic import to call verify function directly (no internal fetch needed)
             const { verifyKey } = await import("./verify/route");
             verification = await verifyKey(provider, api_key, selected_model);
-        } catch (verifyErr) {
-            console.error("Key verification failed:", verifyErr);
-            verification = { status: "error", message: "Could not verify key -- saving anyway" };
+        } catch (verifyError) {
+            console.error("Key verification failed:", verifyError);
+            verification = {
+                status: "error",
+                message: "Could not verify key — saving anyway",
+            };
         }
 
-        // ── Step 2: Save to DB regardless (key might be temporarily rate-limited) ──
         const safePriority = Math.max(1, Math.min(6, priority || 1));
-
-        // Check if this is an update (config_id provided) or new insert
         let existing: { id: string } | null = null;
+
         if (config_id) {
             const { data } = await supabase
                 .from("user_ai_config")
@@ -262,35 +267,7 @@ export async function POST(req: NextRequest) {
             existing = data;
         }
 
-        // Try encrypted insert; fall back to plaintext if encrypted column doesn't exist
-        if (existing) {
-            // Try encrypted update first
-            const { error: encError } = await supabase.rpc("upsert_ai_config_encrypted", {
-                p_user_id: user.id,
-                p_provider: provider,
-                p_api_key: api_key,
-                p_model: selected_model,
-                p_priority: safePriority,
-                p_endpoint_url: endpoint_url || null,
-                p_key: ENCRYPTION_KEY,
-            });
-
-            if (encError) {
-                // Fallback: plaintext update
-                const { error } = await supabase
-                    .from("user_ai_config")
-                    .update({
-                        api_key,
-                        selected_model,
-                        priority: safePriority,
-                        is_active: true,
-                        endpoint_url: endpoint_url || null,
-                    })
-                    .eq("id", existing.id);
-                if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-            }
-        } else {
-            // Check max 3 active
+        if (!existing) {
             const { count } = await supabase
                 .from("user_ai_config")
                 .select("id", { count: "exact" })
@@ -300,33 +277,21 @@ export async function POST(req: NextRequest) {
             if ((count || 0) >= 6) {
                 return NextResponse.json({ error: "Maximum 6 active AI agents allowed" }, { status: 400 });
             }
+        }
 
-            // Try encrypted insert
-            const { error: encError } = await supabase.rpc("upsert_ai_config_encrypted", {
-                p_user_id: user.id,
-                p_provider: provider,
-                p_api_key: api_key,
-                p_model: selected_model,
-                p_priority: safePriority,
-                p_endpoint_url: endpoint_url || null,
-                p_key: ENCRYPTION_KEY,
-            });
+        const { error } = await supabase.rpc("upsert_ai_config_encrypted", {
+            p_config_id: existing?.id || null,
+            p_user_id: user.id,
+            p_provider: provider,
+            p_api_key: api_key,
+            p_model: selected_model,
+            p_priority: safePriority,
+            p_endpoint_url: endpoint_url || null,
+            p_key: encryptionKey,
+        });
 
-            if (encError) {
-                // Fallback: plaintext insert
-                const { error } = await supabase
-                    .from("user_ai_config")
-                    .insert({
-                        user_id: user.id,
-                        provider,
-                        api_key,
-                        selected_model,
-                        priority: safePriority,
-                        is_active: true,
-                        endpoint_url: endpoint_url || null,
-                    });
-                if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-            }
+        if (error) {
+            return NextResponse.json({ error: formatEncryptedConfigError(error) }, { status: 500 });
         }
 
         return NextResponse.json({
@@ -337,20 +302,19 @@ export async function POST(req: NextRequest) {
                 resolved_model: verification.resolved_model || selected_model,
             },
         });
-    } catch (err) {
-        console.error("AI config POST error:", err);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    } catch (error) {
+        console.error("AI config POST error:", error);
+        const message = error instanceof Error ? error.message : "Internal server error";
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
 
-// DELETE — remove a specific config by id (supports multiple configs per provider)
 export async function DELETE(req: NextRequest) {
     try {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // Server-side premium check
         const { isPremium } = await checkPremium(supabase, user.id);
         if (!isPremium) {
             return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
@@ -376,7 +340,8 @@ export async function DELETE(req: NextRequest) {
         }
 
         return NextResponse.json({ ok: true });
-    } catch {
+    } catch (error) {
+        console.error("AI config DELETE error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }

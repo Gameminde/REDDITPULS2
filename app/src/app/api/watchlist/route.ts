@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { buildValidationTrust } from "@/lib/trust";
+import { loadWatchlist, safeParseJson, watchlistErrorMessage } from "@/lib/watchlist-data";
 
 async function getUser() {
     const cookieStore = await cookies();
@@ -19,173 +21,207 @@ const supabaseAdmin = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
 );
 
-function errorMessage(error: { message?: string } | null | undefined) {
-    return String(error?.message || "").toLowerCase();
+function isValidationSchemaConflict(error: { message?: string } | null | undefined) {
+    const message = watchlistErrorMessage(error);
+    return message.includes("validation_id") && (
+        message.includes("column")
+        || message.includes("schema cache")
+        || message.includes("does not exist")
+        || message.includes("could not find")
+    );
 }
 
-function buildWatchlistSelect(opts: {
-    includeValidationId: boolean;
-    includeMeta: boolean;
-    includeIdeasJoin: boolean;
-}) {
-    const fields = [
-        "id",
-        "user_id",
-        "idea_id",
-        "added_at",
-    ];
-
-    if (opts.includeValidationId) {
-        fields.splice(3, 0, "validation_id");
-    }
-    if (opts.includeMeta) {
-        fields.push("notes", "alert_threshold");
-    }
-    if (opts.includeIdeasJoin) {
-        fields.push("ideas(*)");
-    }
-
-    return fields.join(",\n            ");
+function isDuplicateWatchlistConflict(error: { message?: string; code?: string } | null | undefined) {
+    const message = watchlistErrorMessage(error);
+    return error?.code === "23505"
+        || message.includes("duplicate key")
+        || message.includes("idx_watchlists_user_validation_unique")
+        || message.includes("idx_watchlists_user_idea_unique");
 }
 
-async function queryWatchlistRows(
-    userId: string,
-    validationId: string | null | undefined,
-    opts: {
-        includeValidationId: boolean;
-        includeMeta: boolean;
-        includeIdeasJoin: boolean;
-    },
-) {
-    if (validationId && !opts.includeValidationId) {
-        return { data: [], error: null };
-    }
+function nativeMonitorUnavailable(error: { message?: string } | null | undefined) {
+    const message = watchlistErrorMessage(error);
+    return message.includes("monitors")
+        || message.includes("relation")
+        || message.includes("does not exist");
+}
 
-    let query = (supabaseAdmin
-        .from("watchlists")
-        .select(buildWatchlistSelect(opts)) as any)
+function truncate(text: string, limit = 120) {
+    const value = String(text || "").trim();
+    if (value.length <= limit) return value;
+    return `${value.slice(0, limit - 1).trim()}...`;
+}
+
+function parseValidationReport(report: unknown) {
+    const parsed = safeParseJson<Record<string, unknown>>(report);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+}
+
+function extractValidationKeywords(report: Record<string, unknown>) {
+    return Array.isArray(report.keywords)
+        ? report.keywords.map(String).filter(Boolean).slice(0, 4)
+        : [];
+}
+
+async function loadNativeValidationMonitor(userId: string, validationId: string) {
+    const result = await supabaseAdmin
+        .from("monitors")
+        .select("*")
         .eq("user_id", userId)
-        .order("added_at", { ascending: false });
+        .eq("legacy_type", "watchlist")
+        .eq("legacy_id", validationId)
+        .eq("monitor_type", "validation")
+        .maybeSingle();
 
-    if (validationId && opts.includeValidationId) {
-        query = query.eq("validation_id", validationId);
+    if (result.error && !nativeMonitorUnavailable(result.error)) {
+        return { data: null, error: result.error };
     }
 
-    return await query;
+    return { data: result.data, error: null };
 }
 
-async function loadWatchlist(userId: string, validationId?: string | null) {
-    let schemaSupportsValidations = true;
-    let includeValidationId = true;
-    let includeMeta = true;
-    let includeIdeasJoin = true;
-    let queryResult: Awaited<ReturnType<typeof queryWatchlistRows>> | null = null;
-
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-        queryResult = await queryWatchlistRows(userId, validationId, {
-            includeValidationId,
-            includeMeta,
-            includeIdeasJoin,
-        });
-
-        if (!queryResult.error) {
-            break;
-        }
-
-        const message = errorMessage(queryResult.error);
-        if (includeValidationId && message.includes("validation_id")) {
-            includeValidationId = false;
-            schemaSupportsValidations = false;
-            continue;
-        }
-        if (includeMeta && (message.includes("notes") || message.includes("alert_threshold"))) {
-            includeMeta = false;
-            continue;
-        }
-        if (includeIdeasJoin && (message.includes("ideas") || message.includes("relationship") || message.includes("embed"))) {
-            includeIdeasJoin = false;
-            continue;
-        }
-        return { data: [], schemaSupportsValidations, error: queryResult.error };
+async function upsertNativeValidationMonitor(
+    userId: string,
+    validationId: string,
+    body: Record<string, unknown>,
+) {
+    const existing = await loadNativeValidationMonitor(userId, validationId);
+    if (existing.error) {
+        return { data: null, error: existing.error, already_saved: false };
+    }
+    if (existing.data) {
+        return { data: existing.data, error: null, already_saved: true };
     }
 
-    if (!queryResult || queryResult.error) {
-        return { data: [], schemaSupportsValidations, error: queryResult?.error || new Error("Failed to load watchlist") };
-    }
-
-    if (validationId && !includeValidationId) {
-        return { data: [], schemaSupportsValidations };
-    }
-
-    let rows = (queryResult.data || []).map((row: any) => ({
-        ...row,
-        validation_id: includeValidationId ? row.validation_id ?? null : null,
-        notes: includeMeta ? row.notes ?? "" : "",
-        alert_threshold: includeMeta ? row.alert_threshold ?? null : null,
-        ideas: includeIdeasJoin ? row.ideas ?? null : null,
-        idea_validations: null,
-    }));
-
-    if (!includeIdeasJoin) {
-        const ideaIds = rows
-            .map((row: any) => row.idea_id)
-            .filter((id: any): id is string => typeof id === "string" && id.length > 0);
-
-        if (ideaIds.length > 0) {
-            const { data: ideas, error: ideasError } = await supabaseAdmin
-                .from("ideas")
-                .select("*")
-                .in("id", ideaIds);
-
-            if (ideasError) {
-                return { data: rows, schemaSupportsValidations, error: ideasError };
-            }
-
-            const ideaMap = new Map((ideas || []).map((row: any) => [row.id, row]));
-            rows = rows.map((row: any) => ({
-                ...row,
-                ideas: row.idea_id ? ideaMap.get(row.idea_id) || null : null,
-            }));
-        }
-    }
-
-    if (!schemaSupportsValidations || !includeValidationId) {
-        return { data: rows, schemaSupportsValidations };
-    }
-
-    const validationIds = rows
-        .map((row: any) => row.validation_id)
-        .filter((id: any): id is string => typeof id === "string" && id.length > 0);
-
-    if (validationIds.length === 0) {
-        return { data: rows, schemaSupportsValidations };
-    }
-
-    const { data: validations, error: validationError } = await supabaseAdmin
+    const validationResult = await supabaseAdmin
         .from("idea_validations")
-        .select(`
-            id,
-            idea_text,
-            verdict,
-            confidence,
-            status,
-            created_at,
-            completed_at,
-            report
-        `)
-        .in("id", validationIds);
+        .select("id, idea_text, confidence, created_at, completed_at, report")
+        .eq("id", validationId)
+        .maybeSingle();
 
-    if (validationError) {
-        return { data: rows, schemaSupportsValidations, error: validationError };
+    if (validationResult.error) {
+        return { data: null, error: validationResult.error, already_saved: false };
+    }
+    if (!validationResult.data) {
+        return { data: null, error: new Error("Validation not found"), already_saved: false };
     }
 
-    const validationMap = new Map((validations || []).map((row: any) => [row.id, row]));
-    const hydratedRows = rows.map((row: any) => ({
-        ...row,
-        idea_validations: row.validation_id ? validationMap.get(row.validation_id) || null : null,
-    }));
+    const parsedReport = parseValidationReport(validationResult.data.report);
+    const trust = buildValidationTrust({
+        confidence: validationResult.data.confidence,
+        created_at: validationResult.data.created_at,
+        completed_at: validationResult.data.completed_at,
+        report: parsedReport,
+    });
+    const keywords = extractValidationKeywords(parsedReport);
+    const summary = String(
+        parsedReport.executive_summary
+        || parsedReport.summary
+        || "Track confidence, evidence quality, and market movement around this validation.",
+    );
+    const lastCheckedAt = validationResult.data.completed_at || validationResult.data.created_at || new Date().toISOString();
 
-    return { data: hydratedRows, schemaSupportsValidations };
+    const { data, error } = await supabaseAdmin
+        .from("monitors")
+        .upsert({
+            user_id: userId,
+            legacy_type: "watchlist",
+            legacy_id: validationId,
+            monitor_type: "validation",
+            target_ref: `/dashboard/reports/${validationId}`,
+            title: truncate(validationResult.data.idea_text, 120),
+            subtitle: "Validation monitor",
+            status: "active",
+            trust_level: trust.level,
+            trust_score: trust.score,
+            last_checked_at: lastCheckedAt,
+            last_changed_at: lastCheckedAt,
+            metadata: {
+                summary,
+                tags: keywords,
+                metrics: [
+                    { label: "Confidence", value: `${Number(validationResult.data.confidence || 0)}%`, tone: "default" },
+                    { label: "Evidence", value: `${trust.evidence_count}`, tone: "default" },
+                    { label: "Sources", value: `${trust.source_count}`, tone: "default" },
+                ],
+                data: {
+                    validation_id: validationId,
+                    notes: String(body.notes || ""),
+                    alert_threshold: body.alert_threshold ?? null,
+                    fallback_origin: "native_validation_monitor",
+                    evidence_count: trust.evidence_count,
+                    direct_evidence_count: trust.direct_evidence_count,
+                    direct_quote_count: trust.direct_quote_count,
+                    source_count: trust.source_count,
+                    memory_hints: {
+                        primary_metric_label: "Confidence",
+                        primary_metric_value: Number(validationResult.data.confidence || 0),
+                        secondary_metric_label: "Evidence",
+                        secondary_metric_value: trust.evidence_count,
+                        evidence_count: trust.evidence_count,
+                        timing_category: null,
+                        timing_momentum: "steady",
+                        weakness_signal_count: 0,
+                    },
+                },
+            },
+        }, { onConflict: "user_id,legacy_type,legacy_id" })
+        .select()
+        .single();
+
+    return { data, error, already_saved: false };
+}
+
+async function deleteNativeValidationMonitor(userId: string, validationId: string) {
+    const result = await supabaseAdmin
+        .from("monitors")
+        .delete()
+        .eq("user_id", userId)
+        .eq("legacy_type", "watchlist")
+        .eq("legacy_id", validationId)
+        .eq("monitor_type", "validation");
+
+    if (result.error && !nativeMonitorUnavailable(result.error)) {
+        return { error: result.error };
+    }
+
+    return { error: null };
+}
+
+async function findExistingWatchlist(userId: string, ideaId: string | null, validationId: string | null) {
+    if (validationId) {
+        const existing = await supabaseAdmin
+            .from("watchlists")
+            .select("id, user_id, idea_id, validation_id, alert_threshold, notes, added_at")
+            .eq("user_id", userId)
+            .eq("validation_id", validationId)
+            .maybeSingle();
+
+        if (existing.data) {
+            return { data: existing.data, error: null };
+        }
+        if (existing.error && !isValidationSchemaConflict(existing.error)) {
+            return { data: null, error: existing.error };
+        }
+    }
+
+    if (ideaId) {
+        const existing = await supabaseAdmin
+            .from("watchlists")
+            .select("id, user_id, idea_id, validation_id, alert_threshold, notes, added_at")
+            .eq("user_id", userId)
+            .eq("idea_id", ideaId)
+            .maybeSingle();
+
+        if (existing.data) {
+            return { data: existing.data, error: null };
+        }
+        if (existing.error) {
+            return { data: null, error: existing.error };
+        }
+    }
+
+    return { data: null, error: null };
 }
 
 export async function GET(req: NextRequest) {
@@ -193,10 +229,26 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const validationId = req.nextUrl.searchParams.get("validation_id");
-    const result = await loadWatchlist(user.id, validationId);
+    const result = await loadWatchlist(supabaseAdmin, user.id, validationId);
 
     if (result.error) {
         return NextResponse.json({ error: result.error.message }, { status: 500 });
+    }
+
+    if (validationId && !result.schemaSupportsValidations) {
+        const nativeResult = await loadNativeValidationMonitor(user.id, validationId);
+        if (nativeResult.error) {
+            return NextResponse.json({ error: nativeResult.error.message }, { status: 500 });
+        }
+
+        if (nativeResult.data) {
+            return NextResponse.json({
+                watchlist: [nativeResult.data],
+                saved: true,
+                schemaSupportsValidations: false,
+                nativeMonitorFallback: true,
+            });
+        }
     }
 
     return NextResponse.json({
@@ -226,8 +278,24 @@ export async function POST(request: Request) {
             .eq("validation_id", validationId)
             .maybeSingle();
 
-        if (existing.error && !String(existing.error.message || "").toLowerCase().includes("validation_id")) {
+        if (existing.error && !isValidationSchemaConflict(existing.error)) {
             return NextResponse.json({ error: existing.error.message }, { status: 500 });
+        }
+        if (existing.error && isValidationSchemaConflict(existing.error)) {
+            const nativeFallback = await upsertNativeValidationMonitor(user.id, validationId, body);
+            if (nativeFallback.error) {
+                return NextResponse.json({
+                    error: nativeFallback.error.message,
+                    schema_hint: nativeMonitorUnavailable(nativeFallback.error)
+                        ? "watchlists.validation_id is missing and native monitors are unavailable. Run the latest watchlist and monitor migrations."
+                        : undefined,
+                }, { status: nativeMonitorUnavailable(nativeFallback.error) ? 409 : 500 });
+            }
+            return NextResponse.json({
+                watchlist: nativeFallback.data,
+                already_saved: nativeFallback.already_saved,
+                nativeMonitorFallback: true,
+            });
         }
         if (existing.data) {
             return NextResponse.json({ watchlist: existing.data, already_saved: true });
@@ -263,7 +331,34 @@ export async function POST(request: Request) {
         .single();
 
     if (error) {
-        const status = String(error.message || "").toLowerCase().includes("validation_id") ? 409 : 500;
+        if (isDuplicateWatchlistConflict(error)) {
+            const existing = await findExistingWatchlist(user.id, ideaId, validationId);
+            if (existing.error) {
+                return NextResponse.json({ error: existing.error.message }, { status: 500 });
+            }
+            if (existing.data) {
+                return NextResponse.json({ watchlist: existing.data, already_saved: true });
+            }
+        }
+
+        if (validationId && isValidationSchemaConflict(error)) {
+            const nativeFallback = await upsertNativeValidationMonitor(user.id, validationId, body);
+            if (nativeFallback.error) {
+                return NextResponse.json({
+                    error: nativeFallback.error.message,
+                    schema_hint: nativeMonitorUnavailable(nativeFallback.error)
+                        ? "watchlists.validation_id is missing and native monitors are unavailable. Run the latest watchlist and monitor migrations."
+                        : undefined,
+                }, { status: nativeMonitorUnavailable(nativeFallback.error) ? 409 : 500 });
+            }
+            return NextResponse.json({
+                watchlist: nativeFallback.data,
+                already_saved: nativeFallback.already_saved,
+                nativeMonitorFallback: true,
+            });
+        }
+
+        const status = isValidationSchemaConflict(error) ? 409 : 500;
         return NextResponse.json({
             error: error.message,
             schema_hint: status === 409
@@ -287,6 +382,8 @@ export async function DELETE(request: Request) {
         return NextResponse.json({ error: "idea_id or validation_id required" }, { status: 400 });
     }
 
+    let watchlistDeleteError: { message?: string } | null = null;
+
     let query = supabaseAdmin
         .from("watchlists")
         .delete()
@@ -295,6 +392,24 @@ export async function DELETE(request: Request) {
     query = validationId ? query.eq("validation_id", validationId) : query.eq("idea_id", ideaId);
 
     const { error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    watchlistDeleteError = error;
+
+    if (validationId && error && isValidationSchemaConflict(error)) {
+        const nativeDelete = await deleteNativeValidationMonitor(user.id, validationId);
+        if (nativeDelete.error) {
+            return NextResponse.json({ error: nativeDelete.error.message }, { status: 500 });
+        }
+        return NextResponse.json({ success: true, nativeMonitorFallback: true });
+    }
+
+    if (watchlistDeleteError) return NextResponse.json({ error: watchlistDeleteError.message }, { status: 500 });
+
+    if (validationId) {
+        const nativeDelete = await deleteNativeValidationMonitor(user.id, validationId);
+        if (nativeDelete.error) {
+            return NextResponse.json({ error: nativeDelete.error.message }, { status: 500 });
+        }
+    }
+
     return NextResponse.json({ success: true });
 }

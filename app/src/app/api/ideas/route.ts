@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
+import { buildEvidenceSummary, buildOpportunityEvidence } from "@/lib/evidence";
+import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,29 +18,6 @@ function safeParseJson(value: unknown) {
         }
     }
     return value;
-}
-
-function normalizeSources(value: unknown) {
-    const parsed = safeParseJson(value);
-    if (!Array.isArray(parsed)) {
-        return [];
-    }
-
-    return parsed
-        .map((item) => {
-            if (typeof item === "string") {
-                return { platform: item, count: 0 };
-            }
-            if (item && typeof item === "object") {
-                const row = item as { platform?: unknown; count?: unknown };
-                return {
-                    platform: String(row.platform || "unknown"),
-                    count: Number(row.count || 0),
-                };
-            }
-            return null;
-        })
-        .filter(Boolean);
 }
 
 export async function GET(request: Request) {
@@ -86,14 +66,53 @@ export async function GET(request: Request) {
     }
 
     // Parse JSONB fields
-    const ideas = (data || []).map((idea: Record<string, unknown>) => ({
-        ...idea,
-        sources: normalizeSources(idea.sources),
-        top_posts: safeParseJson(idea.top_posts),
-        keywords: safeParseJson(idea.keywords),
-        icp_data: safeParseJson(idea.icp_data),
-        competition_data: safeParseJson(idea.competition_data),
-    }));
+    const ideas = (data || []).map((idea: Record<string, unknown>) => {
+        const parsedTopPosts = safeParseJson(idea.top_posts);
+        const parsedKeywords = safeParseJson(idea.keywords);
+        const parsedIcpData = safeParseJson(idea.icp_data);
+        const parsedCompetitionData = safeParseJson(idea.competition_data);
+        const normalizedSources = normalizeSources(idea.sources);
+        const trust = buildOpportunityTrust({
+            ...idea,
+            sources: normalizedSources,
+            top_posts: parsedTopPosts,
+        });
+        const evidence = buildOpportunityEvidence({
+            ...idea,
+            top_posts: parsedTopPosts,
+        }, 4);
+        const evidenceSummary = buildEvidenceSummary(evidence);
+        const strategy = buildOpportunityStrategySnapshot({
+            ...(idea as Record<string, unknown>),
+            id: String(idea.id || ""),
+            slug: String(idea.slug || ""),
+            topic: String(idea.topic || ""),
+            category: String(idea.category || ""),
+            sources: normalizedSources,
+            top_posts: parsedTopPosts,
+            keywords: parsedKeywords,
+            icp_data: parsedIcpData as Record<string, unknown> | null,
+            competition_data: parsedCompetitionData as Record<string, unknown> | null,
+            trust,
+            evidence,
+            evidence_summary: evidenceSummary,
+        });
+
+        return {
+            ...idea,
+            sources: normalizedSources,
+            top_posts: parsedTopPosts,
+            keywords: parsedKeywords,
+            icp_data: parsedIcpData,
+            competition_data: parsedCompetitionData,
+            trust,
+            evidence,
+            evidence_summary: evidenceSummary,
+            source_breakdown: evidenceSummary.source_breakdown,
+            direct_vs_inferred: evidenceSummary.direct_vs_inferred,
+            strategy_preview: buildOpportunityStrategyPreview(strategy),
+        };
+    });
 
     return NextResponse.json({ ideas, total: ideas.length });
 }

@@ -6,7 +6,7 @@ Uses the free Stack Exchange API (10,000 requests/day, no auth needed).
 
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 SE_API = "https://api.stackexchange.com/2.3"
@@ -236,6 +236,68 @@ def _clean_html(html):
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _normalize_so_question(question: dict, keyword: str) -> dict:
+    created_at = question.get("created_at", 0) or 0
+    created_utc = ""
+    if created_at:
+        created_utc = datetime.fromtimestamp(int(created_at), tz=timezone.utc).isoformat()
+
+    return {
+        "id": str(question.get("id", "")),
+        "external_id": str(question.get("id", "")),
+        "title": question.get("title", ""),
+        "url": question.get("url", ""),
+        "score": question.get("score", 0),
+        "num_comments": question.get("answer_count", 0),
+        "source": "stackoverflow",
+        "created_utc": created_utc,
+        "selftext": question.get("body_excerpt", ""),
+        "full_text": f"{question.get('title', '')} {question.get('body_excerpt', '')}".strip(),
+        "matched_keywords": [keyword],
+        "tags": question.get("tags", []),
+    }
+
+
+def scrape_stackoverflow(keywords: list[str], max_keywords: int = 3, time_budget: int = 30, pages: int = 1) -> list[dict]:
+    """
+    Validation-path SO wrapper.
+    Args:
+        keywords: formal keywords from decomposition
+        max_keywords: how many keywords to use (default 3)
+        time_budget: seconds before stopping (default 30)
+        pages: pages per keyword search (default 1)
+    """
+    search_terms = [str(kw).strip() for kw in (keywords or []) if str(kw).strip()][:max_keywords]
+    print(f"[SO] Scraping Stack Overflow for {len(search_terms)} keywords (budget={time_budget}s, pages={pages})...")
+
+    start_time = time.time()
+    seen_ids = set()
+    normalized_posts = []
+
+    for keyword in search_terms:
+        if time.time() - start_time > time_budget:
+            print("[SO] Time budget reached — stopping early")
+            break
+
+        before_count = len(normalized_posts)
+        tag_query = keyword.replace(" ", "-").lower()
+        tag_results = search_stackoverflow(tag_query, tags=[tag_query], page_size=15, pages=pages)
+        text_results = []
+        if time.time() - start_time <= time_budget:
+            text_results = search_so_by_text(keyword, page_size=10)
+
+        for question in tag_results + text_results:
+            question_id = str(question.get("id", "")).strip()
+            if not question_id or question_id in seen_ids:
+                continue
+            seen_ids.add(question_id)
+            normalized_posts.append(_normalize_so_question(question, keyword))
+
+        print(f"[SO] '{keyword}': +{len(normalized_posts) - before_count} posts (total {len(normalized_posts)})")
+
+    return normalized_posts
 
 
 if __name__ == "__main__":

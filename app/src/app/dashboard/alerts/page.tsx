@@ -17,6 +17,15 @@ interface AlertMatch {
     seen: boolean;
 }
 
+interface EvidenceItem {
+    id: string;
+    platform: string;
+    title: string;
+    snippet: string | null;
+    url: string | null;
+    directness: "direct_evidence" | "derived_metric" | "ai_inference";
+}
+
 interface PainAlert {
     id: string;
     validation_id?: string | null;
@@ -26,6 +35,27 @@ interface PainAlert {
     is_active: boolean;
     created_at: string;
     matches: AlertMatch[];
+    evidence: EvidenceItem[];
+    evidence_summary: {
+        evidence_count: number;
+        direct_evidence_count: number;
+        inferred_count: number;
+        source_count: number;
+        freshness_label: string;
+        direct_vs_inferred: {
+            direct: number;
+            derived: number;
+            inferred: number;
+        };
+    };
+    trust: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        label: string;
+        score: number;
+        freshness_label: string;
+        weak_signal: boolean;
+        weak_signal_reasons: string[];
+    };
 }
 
 function timeAgo(value: string) {
@@ -35,6 +65,12 @@ function timeAgo(value: string) {
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     return `${days}d ago`;
+}
+
+function trustTone(level?: "HIGH" | "MEDIUM" | "LOW") {
+    if (level === "HIGH") return "border-build/20 bg-build/10 text-build";
+    if (level === "MEDIUM") return "border-risky/20 bg-risky/10 text-risky";
+    return "border-dont/20 bg-dont/10 text-dont";
 }
 
 export default function AlertsPage() {
@@ -144,6 +180,12 @@ export default function AlertsPage() {
 
             {!error && alerts.length === 0 ? (
                 <div className="bento-cell p-12 text-center">
+                    <Link
+                        href="/dashboard/validate"
+                        className="mt-4 inline-flex items-center rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-[11px] font-mono uppercase tracking-widest text-primary transition-colors hover:bg-primary/20"
+                    >
+                        {"Run Validation ->"}
+                    </Link>
                     <p className="text-white text-sm">No alerts yet — run a validation to auto-create alerts</p>
                 </div>
             ) : !error ? (
@@ -160,9 +202,27 @@ export default function AlertsPage() {
                                                     {keyword}
                                                 </span>
                                             ))}
+                                            <span className={`px-2.5 py-1 rounded-full border text-[10px] font-mono uppercase tracking-[0.12em] ${trustTone(alert.trust?.level)}`}>
+                                                {alert.trust?.label || "Signal quality"}
+                                            </span>
                                         </div>
                                         <div className="text-xs text-muted-foreground font-mono">
                                             Active since {new Date(alert.created_at).toLocaleDateString()} · Watching {alert.subreddits?.length || 0} subreddits
+                                        </div>
+                                        <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                                            <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                                                <span>{alert.evidence_summary?.direct_evidence_count || 0} direct signals</span>
+                                                <span>{alert.evidence_summary?.source_count || 0} sources</span>
+                                                <span>{alert.evidence_summary?.freshness_label || "Freshness unknown"}</span>
+                                            </div>
+                                            <p className="mt-2 text-sm text-white/90">
+                                                {alert.evidence?.[0]?.snippet || "This monitor is watching for repeated pain signals tied to your keywords."}
+                                            </p>
+                                            {alert.trust?.weak_signal && alert.trust.weak_signal_reasons.length > 0 && (
+                                                <p className="mt-2 text-xs text-risky">
+                                                    Weak signal: {alert.trust.weak_signal_reasons.join(" • ")}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -219,6 +279,9 @@ export default function AlertsPage() {
                                                                 </span>
                                                             </div>
                                                             <p className="text-sm text-white leading-relaxed">{match.post_title}</p>
+                                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                                Why this matters: this post matched your alert keywords and cleared the quality bar for a live opportunity signal.
+                                                            </p>
                                                             <div className="flex flex-wrap gap-2 mt-3">
                                                                 {match.matched_keywords.map((keyword) => (
                                                                     <span key={keyword} className="text-[10px] font-mono text-primary">

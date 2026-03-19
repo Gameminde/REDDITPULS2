@@ -67,11 +67,21 @@ def _refresh_algolia_keys():
 
     try:
         # Step 1: Load IH homepage to find JS bundle URLs
-        resp = session.get(IH_BASE, timeout=15, **_proxy_kwargs())
+        resp = session.get(IH_BASE, timeout=15)
         if resp.status_code != 200:
+            print(f"    [IH] Homepage fetch failed for key refresh ({resp.status_code})")
             return False
 
         html = resp.text
+
+        # Step 1a: Parse the URL-encoded homepage config meta payload.
+        app_match = re.search(r'applicationId%22%3A%22([^%]+)%22', html, re.IGNORECASE)
+        api_match = re.search(r'searchOnlyApiKey%22%3A%22([a-f0-9]{32})%22', html, re.IGNORECASE)
+        if app_match and api_match:
+            _ALGOLIA_APP_ID = app_match.group(1)
+            _ALGOLIA_API_KEY = api_match.group(1)
+            print(f"    [IH] Fresh Algolia keys from homepage config: {_ALGOLIA_APP_ID}")
+            return True
 
         # Step 2: Find JS bundle URLs that contain Algolia config
         # IH uses Next.js/Nuxt — keys are in the compiled chunks
@@ -96,7 +106,7 @@ def _refresh_algolia_keys():
                 url = f"{IH_BASE}{url}" if url.startswith("/") else f"{IH_BASE}/{url}"
 
             try:
-                js_resp = session.get(url, timeout=10, **_proxy_kwargs())
+                js_resp = session.get(url, timeout=10)
                 if js_resp.status_code != 200:
                     continue
                 js_text = js_resp.text
@@ -126,7 +136,7 @@ def _refresh_algolia_keys():
     return False
 
 
-def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
+def _search_ih_algolia(keyword, page=0, hits_per_page=10, max_retries=3):
     """
     Search IndieHackers via Algolia with retry + key refresh.
     """
@@ -142,15 +152,24 @@ def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
     payload = {
         "requests": [
             {
-                "indexName": "Post_production",
+                "indexName": "discussions",
                 "params": f"query={keyword}&page={page}&hitsPerPage={hits_per_page}",
             }
         ]
     }
 
+    if not _ALGOLIA_APP_ID or not _ALGOLIA_API_KEY:
+        return {
+            "hits": [],
+            "total_pages": 0,
+            "status": "failed",
+            "error_code": "algolia_key_missing",
+            "error_detail": "No Algolia credentials available",
+        }
+
     for attempt in range(max_retries):
         try:
-            resp = requests.post(algolia_url, json=payload, headers=headers, timeout=15, **_proxy_kwargs())
+            resp = requests.post(algolia_url, json=payload, headers=headers, timeout=15)
 
             if resp.status_code == 200:
                 data = resp.json()
@@ -172,22 +191,24 @@ def _search_ih_algolia(keyword, page=0, hits_per_page=50, max_retries=3):
                 }
 
             elif resp.status_code in (401, 403):
-                # Keys might have rotated — try refreshing
-                if not _keys_refreshed:
-                    print(f"    [IH] Algolia auth failed ({resp.status_code}) - refreshing keys...")
-                    if _refresh_algolia_keys():
-                        # Update headers and retry
-                        algolia_url = f"https://{_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries"
-                        headers["x-algolia-application-id"] = _ALGOLIA_APP_ID
-                        headers["x-algolia-api-key"] = _ALGOLIA_API_KEY
-                        continue
                 detail = f"Algolia auth failed ({resp.status_code})"
-                print(f"    [IH] Algolia auth failed permanently - falling back to web")
+                print(f"    [IH] Algolia auth failed - falling back to web")
                 return {
                     "hits": [],
                     "total_pages": 0,
                     "status": "failed",
                     "error_code": "algolia_auth_failed",
+                    "error_detail": detail,
+                }
+
+            elif resp.status_code == 404:
+                detail = "Algolia index missing or renamed"
+                print("    [IH] Algolia index missing - falling back to web")
+                return {
+                    "hits": [],
+                    "total_pages": 0,
+                    "status": "failed",
+                    "error_code": "algolia_index_missing",
                     "error_detail": detail,
                 }
 
@@ -276,6 +297,8 @@ def _scrape_ih_web(keyword):
                     if title and len(title) > 5:
                         post_id = path.split("/")[-1]
                         posts.append(_normalize_ih_post(post_id, title, "", {}))
+        else:
+            print(f"    [IH] Web search endpoint returned {resp.status_code} for '{keyword}'")
 
     except Exception as e:
         print(f"    [IH] Web scrape error: {e}")
@@ -303,9 +326,12 @@ def _scrape_ih_web(keyword):
 
                 if posts:
                     break
-                time.sleep(0.5)
-        except Exception:
-            pass
+                time.sleep(3)
+        except Exception as e:
+            print(f"    [IH] Feed fallback error: {e}")
+
+    if not posts:
+        print(f"    [IH] Web fallback returned 0 posts for '{keyword}'")
 
     return posts
 
@@ -357,11 +383,20 @@ def run_ih_scrape(keywords, max_pages=2, return_health=False):
     2. Dynamic key refresh if Algolia fails
     3. Web scraping fallback (always works)
     """
+    global _keys_refreshed
+
+    _keys_refreshed = False
     seen_ids = set()
     all_posts = []
     algolia_dead = False
     algolia_error_code = None
     algolia_error_detail = None
+
+    refreshed = _refresh_algolia_keys()
+    if refreshed:
+        print("    [IH] Homepage key refresh succeeded before Algolia search")
+    else:
+        print("    [IH] Homepage key refresh failed - Algolia may fall back to web")
 
     for kw in keywords:
         print(f"    [IH] Searching: '{kw}'...")

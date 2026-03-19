@@ -51,6 +51,8 @@ COMPETITION_TIERS = {
     },
 }
 
+TIER_ORDER = ["BLUE_OCEAN", "EMERGING", "COMPETITIVE", "SATURATED"]
+
 
 # ═══════════════════════════════════════════════════════
 # KNOWN COMPETITORS DATABASE
@@ -190,6 +192,109 @@ def match_known_competitors(idea_text: str) -> Optional[dict]:
                 print(f"    [COMP] Matched known category: {category} (trigger: '{trigger}')")
                 return data
     return None
+
+
+def _normalize_competitor_names(raw_names: Optional[List]) -> List[str]:
+    """Normalize mixed competitor inputs into a deduplicated list of names."""
+    seen = set()
+    normalized = []
+    for item in raw_names or []:
+        if isinstance(item, dict):
+            name = item.get("name", "")
+        else:
+            name = item
+        clean = str(name or "").strip()
+        key = clean.lower()
+        if len(clean) < 2 or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(clean)
+    return normalized
+
+
+def _tier_index(tier: str) -> int:
+    try:
+        return TIER_ORDER.index(str(tier or "").upper())
+    except ValueError:
+        return TIER_ORDER.index("COMPETITIVE")
+
+
+def _at_least_tier(current_tier: str, minimum_tier: str) -> str:
+    return TIER_ORDER[max(_tier_index(current_tier), _tier_index(minimum_tier))]
+
+
+def _apply_evidence_corrections(
+    keyword: str,
+    tier: str,
+    details: dict,
+    known_competitors: Optional[List] = None,
+    complaint_count: int = 0,
+    complaint_competitors: Optional[List] = None,
+) -> Tuple[str, dict]:
+    """
+    Correct naive search-count tiers with explicit competition evidence.
+    If we already know real competitors or complaint evidence exists, BLUE_OCEAN
+    should not survive unchanged unless there is a very strong contrary signal.
+    """
+    known_names = _normalize_competitor_names(known_competitors)
+    complaint_names = _normalize_competitor_names(complaint_competitors)
+    active_names = _normalize_competitor_names(known_names + complaint_names)
+
+    corrected_tier = tier
+    correction_notes = []
+
+    if tier == "BLUE_OCEAN":
+        if complaint_count > 0 and len(active_names) >= 2:
+            corrected_tier = "COMPETITIVE"
+            correction_notes.append(
+                "Known competitors plus live complaint evidence indicate active market competition."
+            )
+        elif complaint_count > 0 or known_names:
+            corrected_tier = "EMERGING"
+            correction_notes.append(
+                "Known competitor evidence moved the market out of BLUE_OCEAN despite low search counts."
+            )
+    elif tier == "EMERGING" and complaint_count >= 2 and len(active_names) >= 2:
+        corrected_tier = "COMPETITIVE"
+        correction_notes.append(
+            "Multiple complaint-bearing competitors suggest a fragmented active market, not just light competition."
+        )
+
+    reason_parts = [
+        f"Search counts found {details.get('total_products', '?')} visible product signals"
+        f" and switch demand '{details.get('switch_demand', 'unknown')}'."
+    ]
+    if known_names:
+        reason_parts.append(
+            f"Known competitors supplied outside search: {', '.join(known_names[:5])}."
+        )
+    if complaint_count > 0:
+        if complaint_names:
+            reason_parts.append(
+                f"Complaint evidence found {complaint_count} post(s) mentioning {', '.join(complaint_names[:5])}."
+            )
+        else:
+            reason_parts.append(f"Complaint evidence found {complaint_count} competitor complaint post(s).")
+    if correction_notes:
+        reason_parts.append(f"Tier corrected from {tier} to {corrected_tier}.")
+
+    corrected_details = {
+        **details,
+        "known_competitor_count": len(known_names),
+        "known_competitors_observed": known_names[:10],
+        "complaint_evidence_count": int(complaint_count or 0),
+        "complaint_competitors_observed": complaint_names[:10],
+        "tier_corrections": correction_notes,
+        "tier_reason": " ".join(reason_parts),
+    }
+
+    if correction_notes:
+        print(
+            f"    [COMP] Tier correction for '{keyword}': {tier} -> {corrected_tier} "
+            f"({'; '.join(correction_notes)})"
+        )
+
+    return corrected_tier, corrected_details
 
 
 def _google_result_count(query: str) -> int:
@@ -339,7 +444,13 @@ class CompetitionReport:
         )
 
 
-def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, CompetitionReport]:
+def analyze_competition(
+    keywords: List[str],
+    idea_text: str = "",
+    known_competitors: Optional[List] = None,
+    complaint_count: int = 0,
+    complaint_competitors: Optional[List] = None,
+) -> Dict[str, CompetitionReport]:
     """
     Analyze competition for a list of keywords.
     Matches KNOWN_COMPETITORS first. If matched, returns immediately — skips
@@ -347,6 +458,19 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
     Only falls through to Google if no known category matched.
     """
     results = {}
+    external_known_competitors = _normalize_competitor_names(known_competitors)
+    external_complaint_competitors = _normalize_competitor_names(complaint_competitors)
+
+    if external_known_competitors:
+        print(
+            f"    [COMP] External competitor evidence: "
+            f"{', '.join(external_known_competitors[:5])}"
+        )
+    if complaint_count:
+        complaint_label = ", ".join(external_complaint_competitors[:5]) or "known competitors"
+        print(
+            f"    [COMP] Complaint evidence: {complaint_count} complaint post(s) mentioning {complaint_label}"
+        )
 
     # Step 1: Check known competitors database
     known_match = match_known_competitors(idea_text) if idea_text else None
@@ -357,7 +481,7 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
         tier_map = {"HIGH": "SATURATED", "MEDIUM": "COMPETITIVE", "LOW": "EMERGING"}
         tier = tier_map.get(saturation, "COMPETITIVE")
 
-        report = CompetitionReport("known_database", tier, {
+        details = {
             "g2_products": len(known_comp) * 5,  # synthetic count
             "ph_launches": len(known_comp) * 3,
             "total_products": len(known_comp) * 8,
@@ -367,9 +491,19 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
             "wtp_floor": known_match.get("wtp_floor", "unknown"),
             "wtp_ceiling": known_match.get("wtp_ceiling", "unknown"),
             "source": "known_database",
-        })
+        }
+        tier, details = _apply_evidence_corrections(
+            "known_database",
+            tier,
+            details,
+            known_competitors=external_known_competitors + [c.get("name") for c in known_comp],
+            complaint_count=complaint_count,
+            complaint_competitors=external_complaint_competitors,
+        )
+        report = CompetitionReport("known_database", tier, details)
         results["known_database"] = report
         print(f"    [COMP] {report}")
+        print(f"    [COMP] Reason: {report.details.get('tier_reason')}")
         # ── Short-circuit: known database is accurate, skip Google ──
         # Google often times out and returns 0 products (BLUE_OCEAN), which directly
         # contradicts our curated known competitor data and confuses the AI models.
@@ -402,10 +536,19 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
         alt = max(alt, 0)
 
         tier, details = _classify_competition(g2, ph, alt)
+        tier, details = _apply_evidence_corrections(
+            kw,
+            tier,
+            details,
+            known_competitors=external_known_competitors,
+            complaint_count=complaint_count,
+            complaint_competitors=external_complaint_competitors,
+        )
         report = CompetitionReport(kw, tier, details)
         results[kw] = report
 
         print(f"    [COMP] {report}")
+        print(f"    [COMP] Reason: {report.details.get('tier_reason')}")
 
     # ── Fallback: if ALL search engines blocked, assume COMPETITIVE ──
     if not results and all_failed:
@@ -418,6 +561,16 @@ def analyze_competition(keywords: List[str], idea_text: str = "") -> Dict[str, C
             "switch_demand": "unknown",
             "source": "heuristic_fallback",
             "note": "Search engines blocked — competition assumed COMPETITIVE (safe default)",
+            "known_competitor_count": len(external_known_competitors),
+            "known_competitors_observed": external_known_competitors[:10],
+            "complaint_evidence_count": int(complaint_count or 0),
+            "complaint_competitors_observed": external_complaint_competitors[:10],
+            "tier_corrections": [],
+            "tier_reason": (
+                "Search engines were blocked, so a conservative COMPETITIVE fallback was used. "
+                f"Known competitors observed: {', '.join(external_known_competitors[:5]) or 'none'}. "
+                f"Complaint evidence count: {int(complaint_count or 0)}."
+            ),
         })
         results["search_fallback"] = fallback
         print(f"    [COMP] Fallback applied: COMPETITIVE")
@@ -451,6 +604,10 @@ def competition_prompt_section(reports: Dict[str, CompetitionReport], idea_text:
         if kw == "known_database":
             continue  # already shown above
         d = report.details
+        if d.get("tier_reason"):
+            lines.append(f"    Why: {d['tier_reason']}")
+        for correction in d.get("tier_corrections", []):
+            lines.append(f"    Correction: {correction}")
         lines.append(
             f"  '{kw}': {report.tier_data['icon']} {report.tier_data['label']} "
             f"— {d.get('total_products', '?')} products found"
@@ -480,14 +637,21 @@ def competition_summary(reports: Dict[str, CompetitionReport]) -> dict:
         summaries.append(report.to_dict())
 
     # Overall tier = worst tier across keywords (most conservative)
-    tier_order = ["BLUE_OCEAN", "EMERGING", "COMPETITIVE", "SATURATED"]
     tiers = [r.tier for r in reports.values()]
-    worst_idx = max(tier_order.index(t) for t in tiers)
+    worst_idx = max(_tier_index(t) for t in tiers)
+    reasons = [r.details.get("tier_reason") for r in reports.values() if r.details.get("tier_reason")]
+    corrections = [
+        correction
+        for r in reports.values()
+        for correction in r.details.get("tier_corrections", [])
+    ]
 
     return {
         "available": True,
-        "overall_tier": tier_order[worst_idx],
+        "overall_tier": TIER_ORDER[worst_idx],
         "keywords": summaries,
+        "reasoning": reasons,
+        "corrections": corrections,
     }
 
 

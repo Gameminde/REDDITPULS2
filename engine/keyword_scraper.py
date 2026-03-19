@@ -1,7 +1,7 @@
 """
 RedditPulse — Keyword-Based Reddit Scraper
 Searches Reddit for user-specified keywords across all relevant subreddits.
-Supports timed scans (10min, 1h, 10h, 48h) with continuous collection.
+Supports timed scans (10min, 1h, 3h, 10h, 48h) with continuous collection.
 
 Priority: Official Reddit API (PRAW) → Async anonymous → Sequential fallback
 """
@@ -10,7 +10,7 @@ import re
 import time
 import random
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ── Try to import PRAW-based authenticated scraper ──
 try:
@@ -34,6 +34,7 @@ USER_AGENTS = [
 DURATIONS = {
     "10min": 10 * 60,
     "1h": 60 * 60,
+    "3h": 3 * 60 * 60,
     "10h": 10 * 60 * 60,
     "48h": 48 * 60 * 60,
 }
@@ -112,7 +113,7 @@ def search_subreddit(subreddit: str, keywords: list, after: str = "", limit: int
         return [], ""
 
 
-def _parse_post(child: dict, keywords: list) -> dict:
+def _parse_post(child: dict, keywords: list, min_keyword_matches: int = 2) -> dict:
     """Parse a Reddit API post child into our format."""
     if child.get("kind") != "t3":
         return None
@@ -132,11 +133,9 @@ def _parse_post(child: dict, keywords: list) -> dict:
 
     # Which keywords matched
     text_lower = full_text.lower()
-    matched_kw = [kw for kw in keywords if kw.lower() in text_lower]
+    matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
 
-    # Relevance gate: require ≥2 keyword matches so generic words ('review', 'code')
-    # don't pull in completely unrelated posts. Single-word match = noise.
-    if len(matched_kw) < 2:
+    if len(matched_kw) < max(1, min_keyword_matches):
         return None
 
     return {
@@ -147,7 +146,7 @@ def _parse_post(child: dict, keywords: list) -> dict:
         "score": d.get("score", 0),
         "upvote_ratio": d.get("upvote_ratio", 0.5),
         "num_comments": d.get("num_comments", 0),
-        "created_utc": datetime.utcfromtimestamp(d.get("created_utc", 0)).isoformat() + "Z",
+        "created_utc": datetime.fromtimestamp(d.get("created_utc", 0), tz=timezone.utc).isoformat(),
         "subreddit": d.get("subreddit", ""),
         "permalink": "https://reddit.com" + d.get("permalink", ""),
         "author": d.get("author", "[deleted]"),
@@ -211,7 +210,7 @@ TOPIC_SUBREDDITS = {
     "finance": {
         "triggers": ["invoice", "billing", "payment", "accounting", "fintech",
                      "bookkeeping", "payroll", "tax", "expense"],
-        "subs": ["Accounting", "personalfinance", "FinancialPlanning", "fintech"],
+        "subs": ["Accounting", "bookkeeping", "personalfinance", "FinancialPlanning", "fintech"],
     },
     "marketing": {
         "triggers": ["marketing", "SEO", "content", "social media", "ads",
@@ -240,7 +239,7 @@ TOPIC_SUBREDDITS = {
 }
 
 
-def _select_subreddits(keywords: list) -> list:
+def _select_subreddits(keywords: list, forced_subreddits: list | None = None) -> list:
     """Pick subreddits based on which topic triggers match the keywords."""
     selected = set(CORE_SUBREDDITS)
     kw_text = " ".join(kw.lower() for kw in keywords)
@@ -254,19 +253,30 @@ def _select_subreddits(keywords: list) -> list:
     # Always add the general subs
     selected.update(["webdev", "freelance", "ecommerce", "marketing"])
 
+    for sub in forced_subreddits or []:
+        clean = str(sub).strip().replace("r/", "").replace("/r/", "")
+        if clean:
+            selected.add(clean)
+
     result = list(selected)
     print(f"    [Subreddits] Selected {len(result)} subs for keywords: {keywords[:5]}")
     return result
 
 
-def discover_subreddits(keywords: list) -> list:
+def discover_subreddits(keywords: list, forced_subreddits: list | None = None) -> list:
     """Discover additional subreddits for a keyword set beyond the core defaults."""
-    selected = _select_subreddits(keywords)
+    selected = _select_subreddits(keywords, forced_subreddits=forced_subreddits)
     extras = [sub for sub in selected if sub not in CORE_SUBREDDITS]
     return extras[:20]
 
 
-def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
+def run_keyword_scan(
+    keywords: list,
+    duration: str = "10min",
+    on_progress=None,
+    forced_subreddits: list | None = None,
+    min_keyword_matches: int = 2,
+):
     """
     Run a keyword scan for the specified duration.
     
@@ -294,6 +304,8 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
             run_keyword_scan._proxy_warned = True
 
     print(f"  [>] Scanning for: {keywords}")
+    if forced_subreddits:
+        print(f"  [>] Forced subreddits: {forced_subreddits}")
     print(f"  [>] Duration: {duration} ({max_seconds}s)")
 
     # ── Phase 1: Global Reddit search ──
@@ -309,7 +321,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 seen_ids.add(eid)
                 text_lower = post_data.get("full_text", "").lower()
                 matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                if matched_kw:
+                if len(matched_kw) >= max(1, min_keyword_matches):
                     post_data["matched_keywords"] = matched_kw
                     post_data["id"] = eid
                     post_data["selftext"] = post_data.get("body", "")
@@ -331,7 +343,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 children, after = result, ""
 
             for child in children:
-                post = _parse_post(child, keywords)
+                post = _parse_post(child, keywords, min_keyword_matches=min_keyword_matches)
                 if post and post["id"] not in seen_ids:
                     seen_ids.add(post["id"])
                     all_posts.append(post)
@@ -344,7 +356,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
             time.sleep(2.5)
 
     # ── Phase 2: Subreddit-specific searches ──
-    selected_subs = _select_subreddits(keywords)
+    selected_subs = _select_subreddits(keywords, forced_subreddits=forced_subreddits)
     if on_progress:
         on_progress(len(all_posts), f"Scanning {len(selected_subs)} subreddits...")
 
@@ -360,7 +372,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
             if eid and eid not in seen_ids:
                 text_lower = post_data.get("full_text", "").lower()
                 matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                if matched_kw:
+                if len(matched_kw) >= max(1, min_keyword_matches):
                     seen_ids.add(eid)
                     post_data["matched_keywords"] = matched_kw
                     post_data["id"] = eid
@@ -387,7 +399,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 for post_data in async_posts:
                     text_lower = post_data.get("full_text", "").lower()
                     matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                    if matched_kw and post_data.get("external_id") not in seen_ids:
+                    if len(matched_kw) >= max(1, min_keyword_matches) and post_data.get("external_id") not in seen_ids:
                         seen_ids.add(post_data["external_id"])
                         post_data["matched_keywords"] = matched_kw
                         post_data["id"] = post_data.get("external_id", "")
@@ -410,7 +422,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 children, _ = search_subreddit(sub, keywords)
                 new_count = 0
                 for child in children:
-                    post = _parse_post(child, keywords)
+                    post = _parse_post(child, keywords, min_keyword_matches=min_keyword_matches)
                     if post and post["id"] not in seen_ids:
                         seen_ids.add(post["id"])
                         all_posts.append(post)
@@ -436,7 +448,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
                 if eid and eid not in seen_ids:
                     text_lower = post_data.get("full_text", "").lower()
                     matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                    if matched_kw:
+                    if len(matched_kw) >= max(1, min_keyword_matches):
                         seen_ids.add(eid)
                         post_data["id"] = eid
                         post_data["matched_keywords"] = matched_kw
@@ -467,7 +479,7 @@ def run_keyword_scan(keywords: list, duration: str = "10min", on_progress=None):
             children, _ = search_reddit(keywords)
             new_this_cycle = 0
             for child in (children if isinstance(children, list) else []):
-                post = _parse_post(child, keywords)
+                post = _parse_post(child, keywords, min_keyword_matches=min_keyword_matches)
                 if post and post["id"] not in seen_ids:
                     seen_ids.add(post["id"])
                     all_posts.append(post)

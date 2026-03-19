@@ -40,6 +40,29 @@ interface IdeaRow {
     pain_summary?: string;
     first_seen: string;
     last_updated: string;
+    trust: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        label: string;
+        score: number;
+        evidence_count: number;
+        direct_evidence_count: number;
+        direct_quote_count: number;
+        source_count: number;
+        freshness_hours: number | null;
+        freshness_label: string;
+        weak_signal: boolean;
+        weak_signal_reasons: string[];
+        inference_flags: string[];
+    };
+    strategy_preview?: {
+        posture: string;
+        posture_rationale: string;
+        strongest_reason: string;
+        strongest_caution: string;
+        readiness_score: number;
+        why_now_category: string;
+        next_move_summary: string;
+    };
 }
 
 type IdeaVerdict = "BUILD IT" | "RISKY" | "DON'T BUILD";
@@ -117,6 +140,20 @@ function getConfidenceLabel(confidenceLevel: string): string {
         default:
             return "Confidence unclear";
     }
+}
+
+function getTrustTone(level: IdeaRow["trust"]["level"]) {
+    if (level === "HIGH") return "text-build border-build/20 bg-build/10";
+    if (level === "MEDIUM") return "text-risky border-risky/20 bg-risky/10";
+    return "text-dont border-dont/20 bg-dont/10";
+}
+
+function getPostureTone(posture?: string) {
+    if (!posture) return "border-white/[0.08] bg-white/[0.03] text-muted-foreground";
+    if (/productize now/i.test(posture)) return "border-build/20 bg-build/10 text-build";
+    if (/hybrid/i.test(posture)) return "border-primary/20 bg-primary/10 text-primary";
+    if (/service-first|concierge/i.test(posture)) return "border-risky/20 bg-risky/10 text-risky";
+    return "border-dont/20 bg-dont/10 text-dont";
 }
 
 function describeIdea(idea: IdeaRow): string {
@@ -482,6 +519,66 @@ export default function ExplorePage() {
                                     <p className="text-sm leading-relaxed text-foreground/88">{getTopSignal(idea)}</p>
                                 </div>
 
+                                <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                                        <span
+                                            className={`rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getTrustTone(idea.trust.level)}`}
+                                        >
+                                            {idea.trust.label}
+                                        </span>
+                                        <span className="text-sm font-mono text-foreground">
+                                            {idea.trust.score}/100 trust
+                                        </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                                        <div>
+                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Evidence</span>
+                                            <p className="mt-1 text-foreground">{idea.trust.evidence_count} recent posts</p>
+                                        </div>
+                                        <div>
+                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Freshness</span>
+                                            <p className="mt-1 text-foreground">{idea.trust.freshness_label}</p>
+                                        </div>
+                                        <div>
+                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Direct proof</span>
+                                            <p className="mt-1 text-foreground">
+                                                {idea.trust.direct_evidence_count} evidence posts | {idea.trust.direct_quote_count} pain quotes
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {idea.trust.weak_signal && idea.trust.weak_signal_reasons.length > 0 && (
+                                        <p className="mt-3 text-xs text-risky">
+                                            Weak signal: {idea.trust.weak_signal_reasons.join(" • ")}
+                                        </p>
+                                    )}
+                                </div>
+
+                                {idea.strategy_preview && (
+                                    <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                                            <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                                Productization posture
+                                            </span>
+                                            <span
+                                                className={`rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getPostureTone(idea.strategy_preview.posture)}`}
+                                            >
+                                                {idea.strategy_preview.posture}
+                                            </span>
+                                            <span className="text-sm font-mono text-foreground">
+                                                {idea.strategy_preview.readiness_score}/100 readiness
+                                            </span>
+                                        </div>
+                                        <p className="text-sm leading-relaxed text-foreground/88 line-clamp-3">
+                                            {idea.strategy_preview.posture_rationale}
+                                        </p>
+                                        <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
+                                            Next move: {idea.strategy_preview.next_move_summary}
+                                        </p>
+                                    </div>
+                                )}
+
                                 <div className="mb-4 flex flex-wrap gap-2">
                                     <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
                                         {getTrendLabel(idea.trend_direction)}
@@ -489,6 +586,11 @@ export default function ExplorePage() {
                                     <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
                                         {getConfidenceLabel(idea.confidence_level)}
                                     </span>
+                                    {idea.strategy_preview?.why_now_category && (
+                                        <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            {idea.strategy_preview.why_now_category}
+                                        </span>
+                                    )}
                                 </div>
 
                                 <div className="mt-auto flex items-end justify-between gap-4 border-t border-white/[0.07] pt-4">
@@ -518,6 +620,12 @@ export default function ExplorePage() {
                             ? "Try a different search query."
                             : "The scraper has not collected any ideas yet. Run the scraper to populate the board."}
                     </p>
+                    <Link
+                        href="/dashboard/validate"
+                        className="mt-4 inline-flex items-center rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-[11px] font-mono uppercase tracking-widest text-primary transition-colors hover:bg-primary/20"
+                    >
+                        {"Run Validation ->"}
+                    </Link>
                 </div>
             )}
         </div>

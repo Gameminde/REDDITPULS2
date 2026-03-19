@@ -38,9 +38,12 @@ interface IdeaDetail {
     trend_direction: string;
     confidence_level: string;
     post_count_total: number;
+    post_count_24h?: number;
+    pain_count?: number;
+    pain_summary?: string;
     post_count_7d: number;
     source_count: number;
-    sources: string[];
+    sources: Array<{ platform: string; count: number }>;
     category: string;
     reddit_velocity: number;
     google_trend_score: number;
@@ -53,6 +56,71 @@ interface IdeaDetail {
     keywords: string[];
     first_seen: string;
     last_updated: string;
+    trust: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        label: string;
+        score: number;
+        evidence_count: number;
+        direct_evidence_count: number;
+        direct_quote_count: number;
+        source_count: number;
+        freshness_hours: number | null;
+        freshness_label: string;
+        weak_signal: boolean;
+        weak_signal_reasons: string[];
+        inference_flags: string[];
+    };
+    strategy?: {
+        demand_proof: {
+            summary: string;
+        };
+        buyer_clarity: {
+            summary: string;
+            wedge_summary: string;
+        };
+        competitor_gap: {
+            strongest_gap: string;
+        };
+        why_now: {
+            timing_category: string;
+            summary: string;
+            inferred_why_now_note: string;
+        };
+        revenue_path: {
+            summary: string;
+            recommended_entry_mode: string;
+            first_offer_suggestion: string;
+            first_customer_path: string;
+        };
+        service_first_pathfinder: {
+            recommended_productization_posture: string;
+            posture_rationale: string;
+            strongest_reason_for_posture: string;
+            strongest_caution: string;
+            productization_readiness_score: number;
+            what_must_become_true_before_productization: string[];
+        };
+        anti_idea: {
+            verdict: {
+                label: string;
+                summary: string;
+            };
+        };
+        next_move: {
+            summary: string;
+            recommended_action: string;
+            first_step: string;
+        };
+    };
+}
+
+function decodeHtml(str: string) {
+    return str
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
 }
 
 const CONF_MAP: Record<string, { label: string; color: string; bg: string }> = {
@@ -169,6 +237,20 @@ function SourceBadge({ source }: { source: string }) {
     );
 }
 
+function trustTone(level: IdeaDetail["trust"]["level"]) {
+    if (level === "HIGH") return "border-build/20 bg-build/10 text-build";
+    if (level === "MEDIUM") return "border-risky/20 bg-risky/10 text-risky";
+    return "border-dont/20 bg-dont/10 text-dont";
+}
+
+function postureTone(posture?: string) {
+    if (!posture) return "border-white/10 bg-white/[0.03] text-muted-foreground";
+    if (/productize now/i.test(posture)) return "border-build/20 bg-build/10 text-build";
+    if (/hybrid/i.test(posture)) return "border-primary/20 bg-primary/10 text-primary";
+    if (/service-first|concierge/i.test(posture)) return "border-risky/20 bg-risky/10 text-risky";
+    return "border-dont/20 bg-dont/10 text-dont";
+}
+
 export default function IdeaDetailPage() {
     const params = useParams();
     const router = useRouter();
@@ -247,7 +329,7 @@ export default function IdeaDetailPage() {
                 <div>
                     <div className="flex items-center gap-3 mb-2 flex-wrap">
                         <h1 className="text-[28px] font-extrabold text-white font-display tracking-tight m-0">
-                            {idea.topic}
+                            {decodeHtml(idea.topic)}
                         </h1>
                         <span 
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-bold"
@@ -259,7 +341,7 @@ export default function IdeaDetailPage() {
                     </div>
                     <div className="flex gap-2 items-center flex-wrap mt-2">
                         <span className="text-[11px] px-2 py-0.5 rounded bg-primary/10 text-primary uppercase font-bold tracking-wider">
-                            {idea.category}
+                            {decodeHtml(idea.category)}
                         </span>
                         <span 
                             className="text-[11px] px-2 py-0.5 rounded font-bold tracking-wider" 
@@ -267,7 +349,7 @@ export default function IdeaDetailPage() {
                         >
                             {conf.label}
                         </span>
-                        {(idea.sources || []).map((s) => <SourceBadge key={s} source={s} />)}
+                        {(idea.sources || []).map((s) => <SourceBadge key={s.platform} source={s.platform} />)}
                     </div>
                 </div>
 
@@ -290,6 +372,123 @@ export default function IdeaDetailPage() {
                 <MetricBox label="Volume" value={idea.post_count_total} color="#8b5cf6" subtitle={`${idea.post_count_7d} this week`} />
                 <MetricBox label="Sources" value={idea.source_count} color="#3b82f6" />
             </div>
+
+            <motion.div className="bento-cell p-6 rounded-2xl mb-6"
+                initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                        <h2 className="text-[14px] font-bold text-white mb-2">
+                            Trust and Evidence
+                        </h2>
+                        <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${trustTone(idea.trust.level)}`}>
+                            {idea.trust.label}
+                            <span className="text-current/80">{idea.trust.score}/100</span>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 text-sm text-muted-foreground md:grid-cols-3">
+                        <div>
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Evidence</div>
+                            <div className="mt-1 text-white">{idea.trust.evidence_count} recent posts</div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Direct proof</div>
+                            <div className="mt-1 text-white">{idea.trust.direct_evidence_count} posts | {idea.trust.direct_quote_count} quotes</div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Freshness</div>
+                            <div className="mt-1 text-white">{idea.trust.freshness_label}</div>
+                        </div>
+                    </div>
+                </div>
+
+                {idea.trust.weak_signal && idea.trust.weak_signal_reasons.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-risky/20 bg-risky/8 p-4 text-sm text-risky">
+                        Weak signal: {idea.trust.weak_signal_reasons.join(" • ")}
+                    </div>
+                )}
+
+                {idea.trust.inference_flags.length > 0 && (
+                    <div className="mt-3 text-xs text-muted-foreground">
+                        Inference notes: {idea.trust.inference_flags.join(" • ")}
+                    </div>
+                )}
+            </motion.div>
+
+            {idea.strategy && (
+                <motion.div
+                    className="bento-cell p-6 rounded-2xl mb-6"
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.08 }}
+                >
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                        <div>
+                            <h2 className="text-[14px] font-bold text-white mb-2">
+                                Productization posture
+                            </h2>
+                            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${postureTone(idea.strategy.service_first_pathfinder.recommended_productization_posture)}`}>
+                                {idea.strategy.service_first_pathfinder.recommended_productization_posture}
+                                <span className="text-current/80">{idea.strategy.service_first_pathfinder.productization_readiness_score}/100</span>
+                            </div>
+                        </div>
+                        <div className="max-w-2xl text-sm text-muted-foreground leading-relaxed">
+                            {idea.strategy.service_first_pathfinder.posture_rationale}
+                        </div>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Strongest reason</div>
+                            <p className="mt-2 text-sm text-foreground/90 leading-relaxed">
+                                {idea.strategy.service_first_pathfinder.strongest_reason_for_posture}
+                            </p>
+                        </div>
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Strongest caution</div>
+                            <p className="mt-2 text-sm text-foreground/90 leading-relaxed">
+                                {idea.strategy.service_first_pathfinder.strongest_caution}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Why now</div>
+                            <p className="mt-2 text-sm text-foreground/90 leading-relaxed">
+                                {idea.strategy.why_now.inferred_why_now_note}
+                            </p>
+                        </div>
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Revenue path</div>
+                            <p className="mt-2 text-sm text-foreground/90 leading-relaxed">
+                                {idea.strategy.revenue_path.summary}
+                            </p>
+                        </div>
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Next move</div>
+                            <p className="mt-2 text-sm text-foreground/90 leading-relaxed">
+                                {idea.strategy.next_move.summary}
+                            </p>
+                        </div>
+                    </div>
+
+                    {idea.strategy.service_first_pathfinder.what_must_become_true_before_productization.length > 0 && (
+                        <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/70">Before productizing</div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {idea.strategy.service_first_pathfinder.what_must_become_true_before_productization.map((item, index) => (
+                                    <span
+                                        key={`${item}-${index}`}
+                                        className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-xs text-muted-foreground"
+                                    >
+                                        {item}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </motion.div>
+            )}
 
             {/* Chart */}
             <motion.div className="bento-cell p-6 rounded-2xl mb-6"
@@ -331,10 +530,10 @@ export default function IdeaDetailPage() {
                             >
                                 <div className="flex-1 min-w-0 pr-4">
                                     <div className="text-[13px] text-white/90 mb-1 font-medium truncate group-hover:text-primary transition-colors">
-                                        {post.title}
+                                        {decodeHtml(post.title)}
                                     </div>
                                     <div className="text-[11px] text-muted-foreground/80">
-                                        {post.source}{post.subreddit ? ` · r/${post.subreddit}` : ""}
+                                        {decodeHtml(post.source)}{post.subreddit ? ` | r/${decodeHtml(post.subreddit)}` : ""}
                                     </div>
                                 </div>
                                 <div className="flex gap-3 md:gap-4 items-center text-[11px] text-muted-foreground flex-shrink-0">
@@ -358,7 +557,7 @@ export default function IdeaDetailPage() {
                     <div className="flex gap-2 flex-wrap">
                         {idea.keywords.map((kw) => (
                             <span key={kw} className="text-[12px] px-3 py-1.5 rounded-lg bg-primary/10 text-primary border border-primary/20 font-medium">
-                                {kw}
+                                {decodeHtml(kw)}
                             </span>
                         ))}
                     </div>

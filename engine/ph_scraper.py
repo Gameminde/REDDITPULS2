@@ -414,6 +414,8 @@ def run_ph_scrape(keywords, max_pages=2, return_health=False):
 
     method = "RSS-only" if graphql_failed else "GraphQL"
     print(f"    [PH] Total: {len(all_posts)} posts (via {method})")
+    if graphql_failed and not all_posts and graphql_error_code == "graphql_auth_failed":
+        print("    [PH] ProductHunt currently unavailable - known auth limitation")
     if not return_health:
         return all_posts
 
@@ -431,7 +433,11 @@ def run_ph_scrape(keywords, max_pages=2, return_health=False):
             posts=[],
             status="failed",
             error_code=graphql_error_code or "graphql_fallback",
-            error_detail=graphql_error_detail or "GraphQL unavailable and RSS returned 0 posts",
+            error_detail=(
+                "ProductHunt currently unavailable - known auth limitation"
+                if graphql_error_code == "graphql_auth_failed"
+                else (graphql_error_detail or "GraphQL unavailable and RSS returned 0 posts")
+            ),
             method=method,
         )
 

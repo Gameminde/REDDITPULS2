@@ -69,13 +69,22 @@ export default function SettingsPage() {
     const [detecting, setDetecting] = useState(false);
     const [loadingModels, setLoadingModels] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [configMessage, setConfigMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
     const fetchConfigs = useCallback(async () => {
         try {
             const r = await fetch("/api/settings/ai");
             const d = await r.json();
+            if (!r.ok) {
+                setConfigMessage({ type: "error", text: d.error || "Could not load AI settings." });
+                setConfigs([]);
+                return;
+            }
             setConfigs(d.configs || []);
-        } catch { }
+            setConfigMessage((prev) => (prev?.type === "error" ? null : prev));
+        } catch {
+            setConfigMessage({ type: "error", text: "Could not load AI settings." });
+        }
     }, []);
 
     // Load real profile from Supabase
@@ -130,6 +139,7 @@ export default function SettingsPage() {
         setNewKey(key);
         setDetectedProvider(null);
         setDetectHint("");
+        setConfigMessage(null);
         setAvailableModels([]);
         setSelectedModel("");
 
@@ -173,8 +183,9 @@ export default function SettingsPage() {
     const handleSave = async () => {
         if (!selectedProvider || !selectedModel || !newKey.trim()) return;
         setSaving(true);
+        setConfigMessage(null);
         try {
-            await fetch("/api/settings/ai", {
+            const response = await fetch("/api/settings/ai", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -185,6 +196,11 @@ export default function SettingsPage() {
                     priority: configs.length + 1,
                 }),
             });
+            const payload = await response.json();
+            if (!response.ok) {
+                setConfigMessage({ type: "error", text: payload.error || "Could not save this AI configuration." });
+                return;
+            }
             await fetchConfigs();
             setShowAddForm(false);
             setNewKey("");
@@ -192,7 +208,13 @@ export default function SettingsPage() {
             setSelectedProvider("");
             setAvailableModels([]);
             setSelectedModel("");
-        } catch { }
+            setConfigMessage({
+                type: payload.verification?.status === "error" ? "error" : "success",
+                text: payload.verification?.message || "AI configuration saved.",
+            });
+        } catch {
+            setConfigMessage({ type: "error", text: "Could not save this AI configuration." });
+        }
         setSaving(false);
     };
 
@@ -294,6 +316,18 @@ export default function SettingsPage() {
                                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-4">
                                     Add New AI Model
                                 </p>
+
+                                {configMessage && (
+                                    <div
+                                        className={`mb-4 rounded-lg px-3 py-2 text-[11px] font-mono ${
+                                            configMessage.type === "error"
+                                                ? "border border-dont/20 bg-dont/5 text-dont"
+                                                : "border border-build/20 bg-build/5 text-build"
+                                        }`}
+                                    >
+                                        {configMessage.text}
+                                    </div>
+                                )}
 
                                 {/* API Key input with auto-detect */}
                                 <div className="mb-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { PremiumGate } from "@/app/components/premium-gate";
 import { motion } from "framer-motion";
 import { GlowBadge, StaggerContainer, StaggerItem } from "@/app/components/motion";
@@ -28,15 +28,31 @@ export default function WtpPage() {
     const { isPremium } = useUserPlan();
     const [wtpData, setWtpData] = useState<WtpItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const loadWtp = useCallback(async () => {
+        setLoading(true);
+        try {
+            const response = await fetch("/api/intelligence?section=wtp");
+            const payload = await response.json();
+            if (!response.ok || payload?.error) {
+                throw new Error(payload?.error || "Could not load data");
+            }
+            setWtpData(payload.data || []);
+            setError(null);
+        } catch (err) {
+            console.error(err);
+            setWtpData([]);
+            setError("Could not load data");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (!isPremium) return;
-        fetch("/api/intelligence?section=wtp")
-            .then(r => r.json())
-            .then(res => { if (res.data) setWtpData(res.data); })
-            .catch(console.error)
-            .finally(() => setLoading(false));
-    }, [isPremium]);
+        loadWtp();
+    }, [isPremium, loadWtp]);
 
     if (!isPremium) return <PremiumGate feature="WTP Detection" />;
 
@@ -57,6 +73,17 @@ export default function WtpPage() {
                             <div className="h-3 w-[70%] bg-white/[0.03] rounded-[4px]" />
                         </div>
                     ))}
+                </div>
+            ) : error ? (
+                <div className="bento-cell p-12 text-center rounded-2xl mt-6 flex flex-col items-center justify-center">
+                    <AlertCircle className="w-8 h-8 text-dont/70 mb-3" />
+                    <p className="text-[14px] font-medium text-foreground mb-1">Could not load data</p>
+                    <button
+                        onClick={loadWtp}
+                        className="mt-4 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-[11px] font-mono uppercase tracking-widest text-foreground hover:bg-white/10"
+                    >
+                        Retry
+                    </button>
                 </div>
             ) : wtpData.length > 0 ? (
                 <>

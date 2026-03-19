@@ -30,8 +30,8 @@
 #### API Routes
 | Method/Route | File Path | Purpose |
 |--------------|-----------|---------|
-| `POST /api/validate` | `app/src/app/api/validate/route.ts` | Rate limits (5/hr), Premium check, Spawns Python `child_process` orchestrator with `--config-file`, Returns `validationId`. |
-| `GET /api/validate/[id]`| `app/src/app/api/validate/[id]/route.ts` | Polling endpoint for `idea_validations` row. |
+| `POST /api/validate` | `app/src/app/api/validate/route.ts` | Rate limits (5/hr), Premium check, accepts optional `depth` field (`quick`/`deep`/`investigation`), Spawns Python `child_process` orchestrator with `--config-file`, Returns `validationId`. |
+| `GET /api/validate/[jobId]/status`| `app/src/app/api/validate/[jobId]/status/route.ts` | Polling endpoint for queue state + `idea_validations` row. |
 | `GET/POST/DELETE /api/settings/ai`| `app/src/app/api/settings/ai/route.ts` | Manage `user_ai_config` (calls RPC `upsert_ai_config_encrypted` vs plaintext fallback). |
 | `POST /api/settings/ai/verify`| `app/src/app/api/settings/ai/verify/route.ts` | Verifies AI provider API key live via `/engines/models/verify_key` logic. |
 | `GET /api/intelligence` | `app/src/app/api/intelligence/route.ts` | Aggregates & extracts JSON from `report` field across all runs. |
@@ -67,7 +67,7 @@
 - `scraper_job.py`: Massive cron-capable worker targeting massive subreddits spanning 45 static hardcoded topics to populate the global "Stock Market" (`ideas` / `posts`).
 
 #### Engine Modules (`/engine/`)
-- **Core Pipeline:** `multi_brain.py` (parallel LLM adapter + debate consensus logic), `config.py` (master scraping dictionaries), `report_synthesizer.py`.
+- **Core Pipeline:** `multi_brain.py` (parallel LLM adapter + debate consensus logic), `config.py` (master scraping dictionaries), `validation_depth.py` (3-mode depth configs: Quick/Deep/Investigation — scales source budgets, evidence caps, batch signal limits), `report_synthesizer.py`.
 - **Scraping Layer (6-tier architecture):**
   - Layer 1: `reddit_async.py` (async JSON API across 42 subs)
   - Layer 2: `pullpush_scraper.py` (90 days historical pushshift/pullpush)
@@ -79,7 +79,8 @@
 - **Inference Modeling:** `icp.py` (Persona generation), `scorer.py` (Data-driven metric calculation), `ai_analyzer.py` / `analyzer.py`, `credibility.py` (filters out AI slop, spam, and humor).
 
 #### API Call Graph (Validation Run)
-1. `validate_idea.py` fires `multi_brain` DECOMPOSE.
+1. `validate_idea.py` loads `depth_config` from config JSON (defaults to `quick`).
+2. `validate_idea.py` fires `multi_brain` DECOMPOSE with mode-specific keyword/subreddit caps.
 2. Parallel fanout to Scrapers (`reddit`, `hn`, `ph`, `ih`).
 3. Intelligence sweeps (`trends.py`, `competition.py`).
 4. Output fan-in: `_batch_summarize_all` merges posts into dense signal context.
@@ -106,7 +107,7 @@
 | `scraper_runs` | Audit logs for background master job duration and error states. |
 | `scans` | User-initiated global keyword sweeps. Arrays of `keywords`. RLS protected. |
 | `ai_analysis` | Bridges `scan_id` to individual `post_id` with LLM responses (`problem_description`, `willingness_to_pay`). |
-| `idea_validations`| The primary table for `validate/page.tsx`! Holds `status`, `verdict`, `confidence`, and the massive `report` JSONB. |
+| `idea_validations`| The primary table for `validate/page.tsx`! Holds `status`, `verdict`, `confidence`, `depth` (quick/deep/investigation), and the massive `report` JSONB (includes `depth_metadata`). |
 | `user_ai_config` | Holds user's BYOK LLM keys. Uses `pgp_sym_encrypt` storing `api_key_encrypted` (BYTEA). Max 6 active per user. |
 | `user_settings` | Notification prefs & scan limits. |
 | `enrichment_cache`| Short-lived (7 day TTL via `expires_at`). Caches GitHub/StackOverflow triangulated JSON blobs to prevent heavy re-scraping. |
@@ -150,5 +151,5 @@
 **What MUST BE PRESERVED (Do Not Touch 🚫):**
 1. **Database Table Structures:** `posts`, `ideas`, `idea_validations`, `scans`, `user_ai_config`, etc. Altering these will crash the Python Orchestrators which lack auto-remapping ORM logic and rely heavily on raw REST patches/inserts parsing these exact named structures.
 2. **Python System Prompts / Keys:** I must not rename `launch_roadmap` to `action_plan` inside `VERDICT_SYSTEM` or `validate_idea.py` — I must mold the *frontend* to consume what Python outputs, not the inverse. Changing Python keys risks breaking the LLM's comprehension and `extract_json` parsing.
-3. **Subprocess Polling Architectures:** The `POST /api/validate` spawn logic (`python validate_idea.py --config-file ...`) and the `GET /api/validate/[id]` long-poll loops MUST remain intact. The 3000ms polling sequence is the lifeline connecting the isolated Python runtime back to the Next.js React hydration cycle.
+3. **Queue Polling Architecture:** The `POST /api/validate` enqueue logic and the `GET /api/validate/[jobId]/status` polling loop MUST remain intact. The 3000ms polling sequence is the lifeline connecting the queued Python runtime back to the Next.js React hydration cycle.
 4. **Environment Variables & Keys:** `AI_ENCRYPTION_KEY`, `SUPABASE_KEY` / `url` must stay structurally identical to properly allow the RPC logic in Postgres (`pgp_sym_encrypt`) to process BYOK keys.

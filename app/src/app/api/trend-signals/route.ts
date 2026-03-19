@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase-server";
+import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 
 const supabaseAdmin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -26,27 +27,6 @@ function safeParseJson(value: unknown) {
         }
     }
     return value;
-}
-
-function normalizeSources(value: unknown) {
-    const parsed = safeParseJson(value);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-        .map((item) => {
-            if (typeof item === "string") {
-                return { platform: item, count: 0 };
-            }
-            if (item && typeof item === "object") {
-                const row = item as { platform?: unknown; count?: unknown };
-                return {
-                    platform: String(row.platform || "unknown"),
-                    count: Number(row.count || 0),
-                };
-            }
-            return null;
-        })
-        .filter(Boolean) as Array<{ platform: string; count: number }>;
 }
 
 function normalizePosts(value: unknown) {
@@ -170,6 +150,15 @@ export async function GET() {
                 return null;
             }
 
+            const trustRow = {
+                ...row,
+                source_count: sourceCount,
+                post_count_24h: postCount24h,
+                post_count_7d: postCount7d,
+                sources,
+                top_posts: normalizePosts(row.top_posts),
+            };
+
             return {
                 id: String(row.id || row.slug || row.topic),
                 slug: String(row.slug || ""),
@@ -187,8 +176,9 @@ export async function GET() {
                 confidence_level: String(row.confidence_level || "UNKNOWN"),
                 pain_count: Number(row.pain_count || 0),
                 pain_summary: String(row.pain_summary || ""),
-                top_posts: normalizePosts(row.top_posts),
+                top_posts: trustRow.top_posts,
                 last_updated: String(row.last_updated || ""),
+                trust: buildOpportunityTrust(trustRow),
             };
         })
         .filter(Boolean)

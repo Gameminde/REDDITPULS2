@@ -1,11 +1,10 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import {
-    TrendingUp, TrendingDown, Minus, Star, Plus,
+    TrendingUp, TrendingDown, Minus, Plus,
     ArrowUpRight, ArrowDownRight, Activity, BarChart3,
     Eye, Zap, Clock, ExternalLink, Flame, Skull, Sparkles,
 } from "lucide-react";
@@ -32,6 +31,78 @@ interface Idea {
     top_posts: { title: string; source: string; subreddit: string; score: number; comments: number; url: string }[];
     first_seen: string;
     last_updated: string;
+}
+
+type IdeaTopPost = Idea["top_posts"][number];
+
+const PAIN_SIGNAL_KEYWORDS = [
+    "hate", "frustrated", "struggling", "help", "issue",
+    "problem", "broken", "slow", "expensive", "annoying",
+    "anyone else", "does anyone", "how do i", "why does",
+    "can't", "cannot", "won't", "doesn't work", "need help",
+    "looking for", "recommendations", "alternative",
+];
+
+const THIRD_PARTY_PROBLEM_PATTERNS = [
+    "my mom", "my friend", "my neighbor", "my ex",
+];
+
+function decodeHtml(str: string) {
+    return str
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
+}
+
+function painSignalMatches(title: string) {
+    const normalized = decodeHtml(title).toLowerCase();
+    return PAIN_SIGNAL_KEYWORDS.filter((keyword) => normalized.includes(keyword));
+}
+
+function isThirdPartyProblemTitle(title: string) {
+    const normalized = decodeHtml(title).toLowerCase();
+    return THIRD_PARTY_PROBLEM_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function isLikelyMemeTitle(post: IdeaTopPost) {
+    const normalized = decodeHtml(post.title || "").toLowerCase();
+    const hasQuestion = normalized.includes("?");
+    const painMatches = painSignalMatches(normalized).length;
+    return !hasQuestion && painMatches === 0 && Number(post.score || 0) > 500;
+}
+
+function getPainSignalPosts(posts: IdeaTopPost[]) {
+    const filtered = posts.filter((post) => !isThirdPartyProblemTitle(post.title || "") && !isLikelyMemeTitle(post));
+    const sorted = [...filtered].sort((left, right) => {
+        const leftPainCount = painSignalMatches(left.title || "").length;
+        const rightPainCount = painSignalMatches(right.title || "").length;
+        const leftHasPain = leftPainCount > 0 ? 1 : 0;
+        const rightHasPain = rightPainCount > 0 ? 1 : 0;
+
+        if (leftHasPain !== rightHasPain) {
+            return rightHasPain - leftHasPain;
+        }
+
+        if (leftPainCount !== rightPainCount) {
+            return rightPainCount - leftPainCount;
+        }
+
+        return Number(right.score || 0) - Number(left.score || 0);
+    });
+
+    if (sorted.length < 2) {
+        return {
+            posts: posts.slice(0, 3),
+            usedFallback: true,
+        };
+    }
+
+    return {
+        posts: sorted.slice(0, 3),
+        usedFallback: false,
+    };
 }
 
 type TabType = "top" | "trending" | "dying" | "new";
@@ -108,65 +179,15 @@ function ScoreBar({ score, color = "#f97316" }: { score: number; color?: string 
     );
 }
 
-interface EnrichmentData {
-    status: string;
-    stackoverflow?: { questions: { id: number; title: string; score: number; view_count: number; tags: string[]; url: string }[]; total: number; top_tags: { tag: string; count: number }[] };
-    github?: { issues: { id: number; title: string; thumbs_up: number; comments: number; repo: string; url: string; labels: string[] }[]; total: number; top_repos: { repo: string; issue_count: number }[] };
-    confirmed_gaps?: { gap_term: string; so_question: { title: string; score: number }; gh_issue: { title: string; thumbs_up: number; repo: string } }[];
-}
-
 function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
     const [expanded, setExpanded] = useState(false);
-    const [enrichment, setEnrichment] = useState<EnrichmentData | null>(null);
-    const [enrichLoading, setEnrichLoading] = useState(false);
+    const painSignalSelection = getPainSignalPosts(idea.top_posts || []);
 
-    const handleClick = async (e: React.MouseEvent) => {
+    const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
-        setExpanded(!expanded);
-
-        if (!expanded && !enrichment) {
-            setEnrichLoading(true);
-            try {
-                // Try cache first
-                const cacheResp = await fetch(`/api/enrich?slug=${idea.slug}`);
-                const cacheData = await cacheResp.json();
-
-                if (cacheData.status === "done") {
-                    setEnrichment(cacheData);
-                    setEnrichLoading(false);
-                    return;
-                }
-
-                // Trigger enrichment
-                const keywords = idea.top_posts?.map(p => p.title.split(" ").slice(0, 3).join(" ")) || [];
-                await fetch("/api/enrich", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ slug: idea.slug, topic_name: idea.topic, keywords }),
-                });
-
-                // Poll for results
-                const poll = setInterval(async () => {
-                    const r = await fetch(`/api/enrich?slug=${idea.slug}`);
-                    const d = await r.json();
-                    if (d.status === "done") {
-                        setEnrichment(d);
-                        setEnrichLoading(false);
-                        clearInterval(poll);
-                    } else if (d.status === "error") {
-                        setEnrichLoading(false);
-                        clearInterval(poll);
-                    }
-                }, 3000);
-
-                // Timeout after 90 seconds
-                setTimeout(() => { clearInterval(poll); setEnrichLoading(false); }, 90000);
-            } catch {
-                setEnrichLoading(false);
-            }
-        }
+        setExpanded((current) => !current);
     };
 
     return (
@@ -200,7 +221,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <TrendIcon direction={idea.trend_direction} />
                         <span style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>
-                            {idea.topic}
+                            {decodeHtml(idea.topic)}
                         </span>
                         <span style={{
                             fontSize: 10, padding: "1px 6px", borderRadius: 4,
@@ -210,7 +231,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                             {idea.category}
                         </span>
                         {expanded && (
-                            <span style={{ fontSize: 9, color: "#64748b" }}>▼ Deep Signals</span>
+                            <span style={{ fontSize: 9, color: "#64748b" }}>Open details</span>
                         )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b" }}>
@@ -270,7 +291,8 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                 </div>
             </motion.div>
 
-            {/* Deep Signals Panel */}
+            
+            {/* Expanded Detail Panel */}
             <AnimatePresence>
                 {expanded && (
                     <motion.div
@@ -288,263 +310,151 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                             border: "1px solid rgba(249,115,22,0.1)",
                             borderTop: "1px solid rgba(249,115,22,0.15)",
                         }}>
-                            {enrichLoading ? (
-                                <div style={{ textAlign: "center", padding: 30, color: "#64748b" }}>
-                                    <motion.div
-                                        animate={{ rotate: 360 }}
-                                        transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                                        style={{ display: "inline-block", marginBottom: 8 }}
-                                    >
-                                        <Zap style={{ width: 20, height: 20, color: "#f97316" }} />
-                                    </motion.div>
-                                    <div style={{ fontSize: 13 }}>Enriching with Stack Overflow & GitHub data...</div>
-                                    <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>First time takes 15-30 seconds, then cached for 7 days</div>
-                                </div>
-                            ) : enrichment?.status === "done" ? (
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                                    {/* Confirmed Gaps — spans full width if present */}
-                                    {enrichment.confirmed_gaps && enrichment.confirmed_gaps.length > 0 && (
-                                        <div style={{ gridColumn: "1 / -1", marginBottom: 4 }}>
-                                            <div style={{
-                                                display: "flex", alignItems: "center", gap: 6,
-                                                marginBottom: 10, fontSize: 12, fontWeight: 700,
-                                                color: "#fbbf24",
-                                            }}>
-                                                <Star style={{ width: 14, height: 14 }} />
-                                                Confirmed Gaps — Found in both SO & GitHub
-                                            </div>
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                                {enrichment.confirmed_gaps.map((gap, i) => (
-                                                    <div key={i} style={{
-                                                        padding: "10px 14px", borderRadius: 8,
-                                                        background: "rgba(251,191,36,0.08)",
-                                                        border: "1px solid rgba(251,191,36,0.2)",
-                                                    }}>
-                                                        <div style={{ fontSize: 12, fontWeight: 600, color: "#fbbf24", marginBottom: 4 }}>
-                                                            🎯 &ldquo;{gap.gap_term}&rdquo;
+                            <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
+                                <div style={{
+                                    padding: 14,
+                                    borderRadius: 10,
+                                    background: "rgba(255,255,255,0.02)",
+                                    border: "1px solid rgba(255,255,255,0.06)",
+                                }}>
+                                    <div style={{
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "flex-start",
+                                        gap: 3,
+                                        marginBottom: 10,
+                                    }}>
+                                        <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>
+                                            Pain signals
+                                        </span>
+                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>
+                                            {painSignalSelection.usedFallback
+                                                ? "Top posts (pain signals not yet available for this topic)"
+                                                : "Pain-keyword posts first, then upvotes"}
+                                        </span>
+                                    </div>
+                                    {idea.top_posts && idea.top_posts.length > 0 ? (
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                            {painSignalSelection.posts.map((post, index) => (
+                                                <a
+                                                    key={`${idea.slug}-post-${index}`}
+                                                    href={post.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "flex-start",
+                                                        justifyContent: "space-between",
+                                                        gap: 12,
+                                                        padding: "10px 12px",
+                                                        borderRadius: 8,
+                                                        textDecoration: "none",
+                                                        color: "inherit",
+                                                        background: "rgba(249,115,22,0.04)",
+                                                        border: "1px solid rgba(249,115,22,0.08)",
+                                                    }}
+                                                >
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{
+                                                            fontSize: 12,
+                                                            lineHeight: 1.45,
+                                                            color: "#e2e8f0",
+                                                            marginBottom: 4,
+                                                        }}>
+                                                            {decodeHtml(post.title)}
                                                         </div>
-                                                        <div style={{ display: "flex", gap: 16, fontSize: 10, color: "#94a3b8" }}>
-                                                            <span>SO: {gap.so_question.title.slice(0, 60)}... ({gap.so_question.score}⬆)</span>
-                                                            <span>GH: {gap.gh_issue.repo} ({gap.gh_issue.thumbs_up}👍)</span>
+                                                        <div style={{
+                                                            display: "flex",
+                                                            gap: 8,
+                                                            flexWrap: "wrap",
+                                                            fontSize: 10,
+                                                            color: "#94a3b8",
+                                                        }}>
+                                                            <span>
+                                                                {post.subreddit ? `r/${decodeHtml(post.subreddit)}` : decodeHtml(post.source || "Unknown source")}
+                                                            </span>
+                                                            <span>{post.score} upvotes</span>
                                                         </div>
                                                     </div>
-                                                ))}
-                                            </div>
+                                                    <ExternalLink style={{
+                                                        width: 12,
+                                                        height: 12,
+                                                        color: "#64748b",
+                                                        flexShrink: 0,
+                                                        marginTop: 2,
+                                                    }} />
+                                                </a>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                                            No pain signals yet - run a scan to populate
                                         </div>
                                     )}
+                                </div>
 
-                                    {/* Stack Overflow Column */}
-                                    <div>
-                                        <div style={{
-                                            display: "flex", alignItems: "center", gap: 6,
-                                            marginBottom: 10, fontSize: 12, fontWeight: 700,
-                                            color: "#f48024",
-                                        }}>
-                                            <span style={{ fontSize: 14 }}>📋</span>
-                                            Stack Overflow — Unsolved Problems
-                                            <span style={{
-                                                fontSize: 10, padding: "1px 6px", borderRadius: 4,
-                                                background: "rgba(244,128,36,0.1)", color: "#f48024",
-                                            }}>
-                                                {enrichment.stackoverflow?.total || 0}
-                                            </span>
-                                        </div>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                            {(enrichment.stackoverflow?.questions || []).slice(0, 6).map((q) => (
-                                                <a
-                                                    key={q.id}
-                                                    href={q.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    style={{
-                                                        display: "flex", alignItems: "flex-start", gap: 8,
-                                                        padding: "8px 10px", borderRadius: 6,
-                                                        background: "rgba(244,128,36,0.04)",
-                                                        border: "1px solid rgba(244,128,36,0.08)",
-                                                        textDecoration: "none", color: "inherit",
-                                                        transition: "all 0.15s ease",
-                                                    }}
-                                                    onMouseEnter={(e) => {
-                                                        e.currentTarget.style.background = "rgba(244,128,36,0.1)";
-                                                        e.currentTarget.style.borderColor = "rgba(244,128,36,0.2)";
-                                                    }}
-                                                    onMouseLeave={(e) => {
-                                                        e.currentTarget.style.background = "rgba(244,128,36,0.04)";
-                                                        e.currentTarget.style.borderColor = "rgba(244,128,36,0.08)";
-                                                    }}
-                                                >
-                                                    <div style={{
-                                                        minWidth: 32, textAlign: "center",
-                                                        fontSize: 11, fontWeight: 700,
-                                                        color: q.score >= 10 ? "#22c55e" : q.score >= 3 ? "#f48024" : "#64748b",
-                                                        fontFamily: "var(--font-mono)",
-                                                        lineHeight: "1.2",
-                                                    }}>
-                                                        {q.score}
-                                                        <div style={{ fontSize: 8, color: "#475569" }}>votes</div>
-                                                    </div>
-                                                    <div>
-                                                        <div style={{ fontSize: 11, color: "#e2e8f0", lineHeight: 1.4 }}>
-                                                            {q.title.length > 80 ? q.title.slice(0, 80) + "..." : q.title}
-                                                        </div>
-                                                        <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                                                            {q.tags?.slice(0, 3).map((tag) => (
-                                                                <span key={tag} style={{
-                                                                    fontSize: 8, padding: "1px 4px", borderRadius: 3,
-                                                                    background: "rgba(244,128,36,0.1)", color: "#f48024",
-                                                                }}>
-                                                                    {tag}
-                                                                </span>
-                                                            ))}
-                                                            <span style={{ fontSize: 8, color: "#475569" }}>
-                                                                {q.view_count?.toLocaleString()} views
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                    <ExternalLink style={{
-                                                        width: 10, height: 10, color: "#475569",
-                                                        marginLeft: "auto", flexShrink: 0, marginTop: 2,
-                                                    }} />
-                                                </a>
-                                            ))}
-                                        </div>
-                                        {(enrichment.stackoverflow?.top_tags || []).length > 0 && (
-                                            <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                                {enrichment.stackoverflow?.top_tags?.slice(0, 6).map((t) => (
-                                                    <span key={t.tag} style={{
-                                                        fontSize: 9, padding: "2px 6px", borderRadius: 4,
-                                                        background: "rgba(244,128,36,0.08)", color: "#f48024",
-                                                    }}>
-                                                        {t.tag} ({t.count})
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* GitHub Issues Column */}
-                                    <div>
-                                        <div style={{
-                                            display: "flex", alignItems: "center", gap: 6,
-                                            marginBottom: 10, fontSize: 12, fontWeight: 700,
-                                            color: "#a78bfa",
-                                        }}>
-                                            <span style={{ fontSize: 14 }}>🐛</span>
-                                            GitHub — Feature Requests
-                                            <span style={{
-                                                fontSize: 10, padding: "1px 6px", borderRadius: 4,
-                                                background: "rgba(167,139,250,0.1)", color: "#a78bfa",
-                                            }}>
-                                                {enrichment.github?.total || 0}
-                                            </span>
-                                        </div>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                            {(enrichment.github?.issues || []).slice(0, 6).map((issue) => (
-                                                <a
-                                                    key={issue.id}
-                                                    href={issue.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    style={{
-                                                        display: "flex", alignItems: "flex-start", gap: 8,
-                                                        padding: "8px 10px", borderRadius: 6,
-                                                        background: "rgba(167,139,250,0.04)",
-                                                        border: "1px solid rgba(167,139,250,0.08)",
-                                                        textDecoration: "none", color: "inherit",
-                                                        transition: "all 0.15s ease",
-                                                    }}
-                                                    onMouseEnter={(e) => {
-                                                        e.currentTarget.style.background = "rgba(167,139,250,0.1)";
-                                                        e.currentTarget.style.borderColor = "rgba(167,139,250,0.2)";
-                                                    }}
-                                                    onMouseLeave={(e) => {
-                                                        e.currentTarget.style.background = "rgba(167,139,250,0.04)";
-                                                        e.currentTarget.style.borderColor = "rgba(167,139,250,0.08)";
-                                                    }}
-                                                >
-                                                    <div style={{
-                                                        minWidth: 32, textAlign: "center",
-                                                        fontSize: 11, fontWeight: 700,
-                                                        color: issue.thumbs_up >= 20 ? "#22c55e" : issue.thumbs_up >= 5 ? "#a78bfa" : "#64748b",
-                                                        fontFamily: "var(--font-mono)",
-                                                        lineHeight: "1.2",
-                                                    }}>
-                                                        {issue.thumbs_up}
-                                                        <div style={{ fontSize: 8, color: "#475569" }}>👍</div>
-                                                    </div>
-                                                    <div>
-                                                        <div style={{ fontSize: 11, color: "#e2e8f0", lineHeight: 1.4 }}>
-                                                            {issue.title.length > 80 ? issue.title.slice(0, 80) + "..." : issue.title}
-                                                        </div>
-                                                        <div style={{ display: "flex", gap: 6, marginTop: 3, fontSize: 9, color: "#64748b" }}>
-                                                            <span style={{ color: "#a78bfa" }}>{issue.repo?.split("/").pop()}</span>
-                                                            <span>💬 {issue.comments}</span>
-                                                            {issue.labels?.slice(0, 2).map((l) => (
-                                                                <span key={l} style={{
-                                                                    padding: "0 4px", borderRadius: 3,
-                                                                    background: "rgba(167,139,250,0.1)", color: "#a78bfa",
-                                                                }}>
-                                                                    {l}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                    <ExternalLink style={{
-                                                        width: 10, height: 10, color: "#475569",
-                                                        marginLeft: "auto", flexShrink: 0, marginTop: 2,
-                                                    }} />
-                                                </a>
-                                            ))}
-                                        </div>
-                                        {(enrichment.github?.top_repos || []).length > 0 && (
-                                            <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                                {enrichment.github?.top_repos?.slice(0, 4).map((r) => (
-                                                    <span key={r.repo} style={{
-                                                        fontSize: 9, padding: "2px 6px", borderRadius: 4,
-                                                        background: "rgba(167,139,250,0.08)", color: "#a78bfa",
-                                                    }}>
-                                                        {r.repo.split("/").pop()} ({r.issue_count})
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Full Validation CTA */}
+                                <div style={{
+                                    padding: 14,
+                                    borderRadius: 10,
+                                    background: "rgba(255,255,255,0.02)",
+                                    border: "1px solid rgba(255,255,255,0.06)",
+                                }}>
                                     <div style={{
-                                        gridColumn: "1 / -1", marginTop: 8,
-                                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                                        padding: "10px 14px", borderRadius: 8,
-                                        background: "rgba(249,115,22,0.05)",
-                                        border: "1px solid rgba(249,115,22,0.1)",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        marginBottom: 12,
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        color: "#f1f5f9",
                                     }}>
-                                        <div style={{ fontSize: 11, color: "#94a3b8" }}>
-                                            Want the full AI-powered validation with debate engine + competitive analysis?
+                                        <span style={{ color: "#22c55e" }}>Market momentum</span>
+                                    </div>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                        <div style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            alignSelf: "flex-start",
+                                            padding: "4px 10px",
+                                            borderRadius: 999,
+                                            background: `${idea.trend_direction === "rising" ? "#22c55e" : idea.trend_direction === "falling" ? "#ef4444" : "#64748b"}15`,
+                                            color: idea.trend_direction === "rising" ? "#22c55e" : idea.trend_direction === "falling" ? "#ef4444" : "#94a3b8",
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            textTransform: "uppercase",
+                                            letterSpacing: "0.06em",
+                                        }}>
+                                            <TrendIcon direction={idea.trend_direction} size={12} />
+                                            {idea.trend_direction || "stable"}
                                         </div>
-                                        <Link
-                                            href={`/dashboard?idea=${encodeURIComponent(idea.topic)}`}
-                                            onClick={(e) => e.stopPropagation()}
-                                            style={{
-                                                padding: "6px 16px", borderRadius: 6,
-                                                background: "linear-gradient(135deg, rgba(249,115,22,0.3), rgba(234,88,12,0.2))",
-                                                border: "1px solid rgba(249,115,22,0.3)",
-                                                color: "#fb923c", fontSize: 12, fontWeight: 600,
-                                                textDecoration: "none",
-                                                display: "flex", alignItems: "center", gap: 6,
-                                            }}
-                                        >
-                                            <Zap style={{ width: 12, height: 12 }} />
-                                            Run Full Validation
-                                        </Link>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                            <div style={{
+                                                padding: "10px 12px",
+                                                borderRadius: 8,
+                                                background: "rgba(255,255,255,0.03)",
+                                                border: "1px solid rgba(255,255,255,0.05)",
+                                            }}>
+                                                <div style={{ fontSize: 10, color: "#64748b", marginBottom: 6 }}>24h change</div>
+                                                <ChangeDisplay value={idea.change_24h} />
+                                            </div>
+                                            <div style={{
+                                                padding: "10px 12px",
+                                                borderRadius: 8,
+                                                background: "rgba(255,255,255,0.03)",
+                                                border: "1px solid rgba(255,255,255,0.05)",
+                                            }}>
+                                                <div style={{ fontSize: 10, color: "#64748b", marginBottom: 6 }}>7d change</div>
+                                                <ChangeDisplay value={idea.change_7d} />
+                                            </div>
+                                        </div>
+                                        <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                                            {idea.post_count_total} total posts across {idea.source_count} {idea.source_count === 1 ? "source" : "sources"}.
+                                        </div>
                                     </div>
                                 </div>
-                            ) : (
-                                <div style={{ textAlign: "center", padding: 20, color: "#64748b", fontSize: 12 }}>
-                                    Click to load deep signals for this opportunity
-                                </div>
-                            )}
+                            </div>
                         </div>
                     </motion.div>
                 )}
@@ -593,6 +503,9 @@ export default function StockMarketDashboard() {
     const [lastUpdated, setLastUpdated] = useState("");
     const [scanning, setScanning] = useState(false);
     const [scanStatus, setScanStatus] = useState<{ latestRun: any; ideaCount: number } | null>(null);
+    const [scanError, setScanError] = useState("");
+    const [trendCounts, setTrendCounts] = useState({ rising: 0, falling: 0 });
+    const isDocumentVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
 
     const fetchIdeas = useCallback(async () => {
         setLoading(true);
@@ -611,7 +524,29 @@ export default function StockMarketDashboard() {
         }
     }, [tab, category]);
 
+    const fetchTrendCounts = useCallback(async () => {
+        try {
+            const [risingRes, fallingRes] = await Promise.all([
+                fetch(`/api/ideas?sort=trending&category=${category}&limit=100`),
+                fetch(`/api/ideas?sort=dying&category=${category}&limit=100`),
+            ]);
+
+            const [risingData, fallingData] = await Promise.all([
+                risingRes.ok ? risingRes.json() : Promise.resolve({ ideas: [] }),
+                fallingRes.ok ? fallingRes.json() : Promise.resolve({ ideas: [] }),
+            ]);
+
+            setTrendCounts({
+                rising: Array.isArray(risingData.ideas) ? risingData.ideas.length : 0,
+                falling: Array.isArray(fallingData.ideas) ? fallingData.ideas.length : 0,
+            });
+        } catch {
+            console.error("Failed to fetch trend counts");
+        }
+    }, [category]);
+
     const fetchScanStatus = useCallback(async () => {
+        if (!isDocumentVisible()) return;
         try {
             const res = await fetch("/api/discover");
             if (res.ok) {
@@ -624,14 +559,16 @@ export default function StockMarketDashboard() {
                     // Scan just finished — refresh ideas
                     setScanning(false);
                     fetchIdeas();
+                    fetchTrendCounts();
                 }
             }
         } catch { /* silent */ }
-    }, [scanning, fetchIdeas]);
+    }, [scanning, fetchIdeas, fetchTrendCounts]);
 
     const launchScan = async () => {
         if (scanning) return;
         setScanning(true);
+        setScanError("");
         try {
             const res = await fetch("/api/discover", {
                 method: "POST",
@@ -640,32 +577,47 @@ export default function StockMarketDashboard() {
             });
             const data = await res.json();
             if (!res.ok) {
-                alert(data.error || "Failed to start scan");
+                setScanError(data.error || "Failed to start scan");
                 setScanning(false);
                 return;
             }
         } catch {
-            alert("Failed to start scan");
+            setScanError("Failed to start scan");
             setScanning(false);
         }
     };
 
     useEffect(() => {
         fetchIdeas();
-        fetchScanStatus();
+        fetchTrendCounts();
+        if (isDocumentVisible()) {
+            fetchScanStatus();
+        }
         const interval = setInterval(fetchIdeas, 60000);
         return () => clearInterval(interval);
-    }, [fetchIdeas, fetchScanStatus]);
+    }, [fetchIdeas, fetchScanStatus, fetchTrendCounts]);
 
     // Poll scan status while scanning
     useEffect(() => {
         if (!scanning) return;
-        const poll = setInterval(fetchScanStatus, 5000);
-        return () => clearInterval(poll);
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible") {
+                void fetchScanStatus();
+            }
+        };
+
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        const poll = setInterval(() => {
+            if (!isDocumentVisible()) return;
+            void fetchScanStatus();
+        }, 60000);
+
+        return () => {
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+            clearInterval(poll);
+        };
     }, [scanning, fetchScanStatus]);
 
-    const rising = ideas.filter((i) => i.trend_direction === "rising").length;
-    const falling = ideas.filter((i) => i.trend_direction === "falling").length;
     const avgScore = ideas.length > 0 ? ideas.reduce((a, b) => a + b.current_score, 0) / ideas.length : 0;
     const totalPosts = ideas.reduce((a, b) => a + b.post_count_total, 0);
 
@@ -786,11 +738,46 @@ export default function StockMarketDashboard() {
                 )}
             </AnimatePresence>
 
+            <AnimatePresence>
+                {scanError && (
+                    <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        style={{
+                            padding: "12px 18px", borderRadius: 10, marginBottom: 16,
+                            background: "rgba(239,68,68,0.08)",
+                            border: "1px solid rgba(239,68,68,0.18)",
+                            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                        }}
+                    >
+                        <div style={{ fontSize: 13, color: "#fca5a5", fontWeight: 600 }}>
+                            {scanError}
+                        </div>
+                        <button
+                            onClick={() => setScanError("")}
+                            style={{
+                                padding: "6px 10px",
+                                borderRadius: 8,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                                color: "#e2e8f0",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                fontWeight: 600,
+                            }}
+                        >
+                            Dismiss
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Stats Row */}
             <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
                 <StatCard label="Ideas Tracked" value={ideas.length} icon={Eye} color="#f97316" />
-                <StatCard label="Rising" value={rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
-                <StatCard label="Falling" value={falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
+                <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
+                <StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
                 <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" />
                 <StatCard label="Total Posts" value={totalPosts.toLocaleString()} icon={BarChart3} color="#8b5cf6" />
             </div>
@@ -907,4 +894,3 @@ export default function StockMarketDashboard() {
         </div>
     );
 }
-

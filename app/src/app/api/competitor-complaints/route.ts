@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { buildCompetitorComplaintEvidence, buildEvidenceBackedTrust, buildEvidenceSummary } from "@/lib/evidence";
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,6 +30,23 @@ export async function GET(req: NextRequest) {
         const matchesCompetitor = !competitorFilter || competitors.some((name) => name.toLowerCase() === competitorFilter);
         const matchesSignal = !signalFilter || signals.some((signal) => signal.toLowerCase().includes(signalFilter));
         return matchesCompetitor && matchesSignal;
+    }).map((item: Record<string, unknown>) => {
+        const evidence = buildCompetitorComplaintEvidence(item);
+        const evidenceSummary = buildEvidenceSummary(evidence);
+
+        return {
+            ...item,
+            evidence,
+            evidence_summary: evidenceSummary,
+            source_breakdown: evidenceSummary.source_breakdown,
+            direct_vs_inferred: evidenceSummary.direct_vs_inferred,
+            trust: buildEvidenceBackedTrust({
+                items: evidence,
+                extraWeakSignalReasons: Array.isArray(item.competitors_mentioned) && item.competitors_mentioned.length > 0
+                    ? []
+                    : ["Competitor identity is still ambiguous"],
+            }),
+        };
     });
 
     const competitors = Array.from(new Set(

@@ -172,9 +172,11 @@ def check_alerts_against_posts(posts: list) -> int:
             timeout=10,
         )
         if resp.status_code != 200:
+            print(f"  [PainStream] X Could not load alerts: {resp.status_code} {resp.text[:200]}")
             return 0
         alerts = resp.json()
-    except Exception:
+    except Exception as exc:
+        print(f"  [PainStream] X Alert fetch error: {exc}")
         return 0
 
     if not alerts:
@@ -199,7 +201,7 @@ def check_alerts_against_posts(posts: list) -> int:
 
             text = str(post.get("full_text") or post.get("title") or "")
             matched = _match_keywords(text, alert_keywords)
-            if len(matched) < 2:
+            if len(matched) < 1:
                 continue
 
             identity = _post_identity(post)
@@ -231,7 +233,7 @@ def check_alerts_against_posts(posts: list) -> int:
             if resp.status_code in (200, 201):
                 print(f"  [PainStream] OK {len(batch)} unique matches upserted across {len(alerts)} alerts")
             else:
-                print(f"  [PainStream] X Batch upsert failed: {resp.status_code}")
+                print(f"  [PainStream] X Batch upsert failed: {resp.status_code} {resp.text[:200]}")
                 return 0
         except Exception as exc:
             print(f"  [PainStream] X Batch upsert error: {exc}")
@@ -240,15 +242,17 @@ def check_alerts_against_posts(posts: list) -> int:
     try:
         now = datetime.now(timezone.utc).isoformat()
         for alert in alerts:
-            requests.patch(
+            patch_resp = requests.patch(
                 f"{SUPABASE_URL}/rest/v1/pain_alerts",
                 headers={**_headers(), "Prefer": "return=minimal"},
                 params={"id": f"eq.{alert['id']}"},
                 json={"last_checked": now},
                 timeout=5,
             )
-    except Exception:
-        pass
+            if patch_resp.status_code >= 400:
+                print(f"  [PainStream] X last_checked update failed for alert {alert['id']}: {patch_resp.status_code} {patch_resp.text[:120]}")
+    except Exception as exc:
+        print(f"  [PainStream] X last_checked update error: {exc}")
 
     return len(batch)
 

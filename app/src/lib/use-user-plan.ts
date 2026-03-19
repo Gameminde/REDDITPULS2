@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
 
-// ── Whitelisted emails — always premium ──
-const PREMIUM_EMAILS = [
+// ── Founder emergency fallback — DO NOT ADD CUSTOMER EMAILS HERE ──
+// These only trigger if the profiles DB query fails entirely.
+// To grant premium: update `profiles.plan` to 'pro' or 'enterprise' in Supabase.
+const FOUNDER_EMAILS = [
     "youcefneoyoucef@gmail.com",
     "chikhinazim@gmail.com",
     "cheriet.samimhamed@gmail.com",
@@ -14,8 +16,8 @@ const PREMIUM_EMAILS = [
  * Hook that checks the current user's plan from the `profiles` table.
  * Returns `{ isPremium, plan, loading }`.
  *
- * Premium means plan !== "free".
- * Whitelisted emails always get premium.
+ * PRIMARY: Reads profiles.plan from Supabase.
+ * FALLBACK: Founder email whitelist (only if DB query fails).
  */
 export function useUserPlan() {
     const [plan, setPlan] = useState<string>("free");
@@ -28,20 +30,26 @@ export function useUserPlan() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) { setLoading(false); return; }
 
-            // Whitelist check
-            if (user.email && PREMIUM_EMAILS.includes(user.email.toLowerCase())) {
-                setPlan("lifetime");
-                setLoading(false);
-                return;
+            // PRIMARY: check profiles.plan from database
+            try {
+                const { data, error } = await supabase
+                    .from("profiles")
+                    .select("plan")
+                    .eq("id", user.id)
+                    .single();
+
+                if (!error && data?.plan) {
+                    setPlan(data.plan);
+                    setLoading(false);
+                    return;
+                }
+            } catch { /* DB query failed — fall through to founder fallback */ }
+
+            // FALLBACK: founder emails only (when DB is unreachable)
+            if (user.email && FOUNDER_EMAILS.includes(user.email.toLowerCase())) {
+                setPlan("founder");
             }
 
-            const { data } = await supabase
-                .from("profiles")
-                .select("plan")
-                .eq("id", user.id)
-                .single();
-
-            if (data?.plan) setPlan(data.plan);
             setLoading(false);
         }
 

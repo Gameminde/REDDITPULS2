@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 # ── Supabase config ──
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
+AI_ENCRYPTION_KEY = os.environ.get("AI_ENCRYPTION_KEY", "").strip()
+ALLOW_LEGACY_PLAINTEXT_AI_CONFIG = os.environ.get("ALLOW_LEGACY_PLAINTEXT_AI_CONFIG", "").strip().lower() in ("1", "true", "yes")
 logger = logging.getLogger(__name__)
 
 
@@ -33,20 +35,51 @@ def _supabase_headers():
 
 def get_user_ai_configs(user_id):
     """Fetch active AI configs for a user, ordered by priority."""
-    url = (
+    rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/get_ai_configs_decrypted"
+    legacy_url = (
         f"{SUPABASE_URL}/rest/v1/user_ai_config"
         f"?select=id,provider,api_key,selected_model,is_active,priority,endpoint_url"
         f"&user_id=eq.{user_id}&is_active=eq.true&order=priority.asc"
     )
+
+    def _finalize(configs):
+        usable = []
+        missing_keys = 0
+        for i, config in enumerate(configs):
+            if not config.get("api_key"):
+                missing_keys += 1
+                continue
+            if not config.get("id"):
+                config["id"] = f"auto-{i}-{config.get('provider', 'unknown')}"
+            usable.append(config)
+        if missing_keys:
+            print(f"  [!] Ignoring {missing_keys} AI config(s) with no stored API key")
+        return usable
+
     try:
-        r = requests.get(url, headers=_supabase_headers(), timeout=10)
-        if r.status_code == 200:
-            configs = r.json()
-            # Ensure every config has an id for multi-instance tracking
-            for i, c in enumerate(configs):
-                if not c.get("id"):
-                    c["id"] = f"auto-{i}-{c.get('provider', 'unknown')}"
-            return configs
+        if AI_ENCRYPTION_KEY:
+            rpc_resp = requests.post(
+                rpc_url,
+                headers=_supabase_headers(),
+                json={"p_user_id": user_id, "p_key": AI_ENCRYPTION_KEY},
+                timeout=10,
+            )
+            if rpc_resp.status_code == 200:
+                return _finalize(rpc_resp.json() or [])
+
+            print(f"  [!] Decrypted AI config RPC failed ({rpc_resp.status_code}): {rpc_resp.text[:200]}")
+            if not ALLOW_LEGACY_PLAINTEXT_AI_CONFIG:
+                return []
+        else:
+            print("  [!] AI_ENCRYPTION_KEY missing - encrypted AI configs cannot be decrypted")
+            if not ALLOW_LEGACY_PLAINTEXT_AI_CONFIG:
+                return []
+
+        print("  [!] Legacy plaintext AI config compatibility mode enabled")
+        legacy_resp = requests.get(legacy_url, headers=_supabase_headers(), timeout=10)
+        if legacy_resp.status_code == 200:
+            return _finalize(legacy_resp.json() or [])
+        print(f"  [!] Legacy AI config query failed ({legacy_resp.status_code}): {legacy_resp.text[:200]}")
     except Exception as e:
         print(f"  [!] Failed to fetch AI configs: {e}")
     return []
@@ -139,7 +172,7 @@ def call_groq(prompt, system_prompt, api_key, model="meta-llama/llama-4-scout-17
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.3, "max_tokens": 8192,
+        "temperature": 0.3, "max_tokens": 16384,  # Was 8192 — caused Pass 3 JSON truncation
     }
     r = requests.post(url, json=payload, headers=headers, timeout=120)
     if r.status_code != 200:
@@ -240,7 +273,7 @@ def call_openrouter(prompt, system_prompt, api_key, model="openrouter/deepseek/d
         ],
         "temperature": 0.3, "max_tokens": 16384,
     }
-    r = requests.post(url, json=payload, headers=headers, timeout=120)
+    r = requests.post(url, json=payload, headers=headers, timeout=(10, 60))
     if r.status_code != 200:
         raise Exception(f"OpenRouter {r.status_code}: {r.text[:300]}")
     return _extract_content(r.json())
@@ -455,11 +488,29 @@ ANTI-SYCOPHANCY RULES:
 - Do NOT agree with other models just to be agreeable. Disagree if the evidence supports it.
 """
 
+ROUND2_DISCIPLINE_BLOCK = """
+
+CONFIDENCE RULES FOR ROUND 2:
+- Your confidence score may ONLY increase if you directly rebut a specific argument made by another model. Name the role ([BULL], [SKEPTIC], or [MARKET_ANALYST]) and explain why their point is wrong or incomplete.
+- If you cannot rebut any opposing argument, your confidence must stay at or below your Round 1 score.
+- If you concede a major point raised by another model, reduce your confidence by 5-10 points.
+- A response that simply restates your Round 1 position without engaging opposing arguments is not a rebuttal.
+
+ENGAGEMENT REQUIREMENT:
+- You must explicitly reference at least one argument from another model using their role label ([BULL], [SKEPTIC], or [MARKET_ANALYST]).
+- If you do not reference any other model, your response will be treated as a position restatement, not a debate contribution.
+"""
+
 
 def get_role_system_prompt(agent_index, base_prompt):
     """Inject adversarial role + calibration into each agent's system prompt."""
     role_name, role_instruction = AGENT_ROLES.get(agent_index % len(AGENT_ROLES), ("ANALYST", "Provide balanced analysis."))
     return f"{base_prompt}\n\nYOUR ROLE: {role_name}\n{role_instruction}{CALIBRATION_BLOCK}"
+
+
+def get_round2_role_system_prompt(agent_index, base_prompt):
+    """Round 2 adds debate-discipline rules on top of the normal role prompt."""
+    return f"{get_role_system_prompt(agent_index, base_prompt)}{ROUND2_DISCIPLINE_BLOCK}"
 
 
 # ═══════════════════════════════════════════════════════
@@ -480,6 +531,110 @@ def sanitize_for_debate(analysis_result):
         "price_signals": analysis_result.get("price_signals", "")[:300],
         # NO confidence score, NO verdict — prevents anchoring
     }
+
+
+def clamp_confidence(value, default=50):
+    """Keep confidence within 0-100 and robust to bad model output."""
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return max(0, min(100, int(default)))
+
+
+def normalize_verdict_text(value, default="RISKY"):
+    verdict = str(value or default).strip().upper().replace("-", "_").replace(" ", "_")
+    verdict = verdict.replace("DON'T_", "DONT_").replace("DON_T_", "DONT_")
+    return verdict or default
+
+
+def extract_argument_text(result):
+    if not isinstance(result, dict):
+        return ""
+    return str(
+        result.get("debate_note")
+        or result.get("executive_summary")
+        or result.get("summary")
+        or ""
+    ).strip()
+
+
+def calculate_engagement(response_text: str, other_roles: list[str]) -> tuple[int, str]:
+    """
+    Count how many other model roles are explicitly referenced in this response.
+    other_roles = the roles of the OTHER 2 models (not this one)
+    """
+    normalized_text = str(response_text or "").upper()
+    unique_roles = list(dict.fromkeys(role.upper() for role in other_roles if role))
+    count = sum(1 for role in unique_roles if f"[{role}]" in normalized_text or role in normalized_text)
+    total = max(len(unique_roles), 1)
+    if count >= total:
+        return total, f"Engaged {total}/{total} models"
+    if count == 1:
+        return 1, f"Partial engagement (1/{total} models)"
+    return 0, "Restated position - no opposing models referenced"
+
+
+def extract_first_substantive_sentence(text: str) -> Optional[str]:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip('"')
+    if not cleaned:
+        return None
+
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    for part in parts:
+        candidate = part.strip().strip('"')
+        if len(candidate) < 25:
+            continue
+        if len(candidate.split()) < 5:
+            continue
+        if not re.search(r"[A-Za-z]", candidate):
+            continue
+        return candidate
+
+    return None
+
+
+def build_dissent_reason(argument_text: str, verdict: str) -> Optional[str]:
+    direct_sentence = extract_first_substantive_sentence(argument_text)
+    if direct_sentence:
+        return direct_sentence
+
+    cleaned = re.sub(r"\s+", " ", str(argument_text or "")).strip().strip('"')
+    if not cleaned:
+        return None
+
+    snippet = cleaned[:140].rstrip(" .")
+    if not snippet:
+        return None
+
+    return f"{normalize_verdict_text(verdict, 'RISKY')} dissent focused on {snippet}."
+
+
+def generate_round2_summary(r1_entries, r2_entries) -> str:
+    changed = [entry for entry in r2_entries if not entry.get("held", True)]
+    conf_increased_without_rebuttal = [
+        entry for entry in r2_entries
+        if entry.get("confidence_delta", 0) > 0 and entry.get("engagement_score", 0) == 0
+    ]
+
+    parts = []
+    if not changed:
+        parts.append("No verdicts changed.")
+    else:
+        parts.append(f"{len(changed)} model(s) changed verdict.")
+
+    if r2_entries:
+        best_debater = max(r2_entries, key=lambda entry: entry.get("engagement_score", 0))
+        if best_debater.get("engagement_score", 0) >= 2:
+            parts.append(f"{best_debater.get('role', 'ANALYST')} engaged both opposing models.")
+        elif best_debater.get("engagement_score", 0) == 1:
+            parts.append(f"{best_debater.get('role', 'ANALYST')} partially engaged one model.")
+
+    for entry in conf_increased_without_rebuttal:
+        parts.append(
+            f"{entry.get('role', 'ANALYST')} raised confidence +{entry.get('confidence_delta', 0)}pts without rebutting any opposing argument."
+        )
+
+    return " ".join(parts).strip()
 
 
 # ═══════════════════════════════════════════════════════
@@ -513,7 +668,65 @@ def build_data_context(posts, metadata=None):
 - Time range: {metadata.get('date_range', 'unknown')}
 - Platforms: {metadata.get('platforms', 'unknown')}
 
-"""
+""" 
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap token estimate good enough for prompt-budget guardrails."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return 0
+    return max(1, int(round(len(normalized) / 4)))
+
+
+def _truncate_words(text: str, max_words: int) -> str:
+    words = str(text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(" ,;:.") + "..."
+
+
+def summarize_round1_for_debate(result: dict, role: str, max_words: int = 300, include_verdict: bool = False) -> str:
+    """Compress a round-1 result into a deterministic, shorter debate block."""
+    parts = []
+    verdict = normalize_verdict_text(result.get("verdict", "RISKY"), "RISKY")
+    confidence = clamp_confidence(result.get("confidence", 50), default=50)
+    if include_verdict:
+        parts.append(f"[{role}] Round 1 verdict: {verdict} at {confidence}% confidence.")
+
+    argument = _truncate_words(extract_argument_text(result), max(60, max_words // 2))
+    if argument:
+        parts.append(f"Core reasoning: {argument}")
+
+    evidence = [
+        _truncate_words(item, 30)
+        for item in (result.get("evidence") or [])[:4]
+        if str(item).strip()
+    ]
+    if evidence:
+        parts.append("Top evidence: " + "; ".join(evidence))
+
+    risks = [
+        _truncate_words(item, 24)
+        for item in (result.get("risk_factors") or [])[:3]
+        if str(item).strip()
+    ]
+    if risks:
+        parts.append("Risks: " + "; ".join(risks))
+
+    unknowns = [
+        _truncate_words(item, 20)
+        for item in (result.get("top_unknowns") or [])[:3]
+        if str(item).strip()
+    ]
+    if unknowns:
+        parts.append("Unknowns: " + "; ".join(unknowns))
+
+    price_signals = _truncate_words(result.get("price_signals", ""), 40)
+    if price_signals:
+        parts.append("Pricing/WTP: " + price_signals)
+
+    return _truncate_words(" ".join(parts).strip(), max_words)
 
 
 def call_provider(config, prompt, system_prompt):
@@ -546,6 +759,14 @@ def _is_413_error(err) -> bool:
     """Treat provider 413s as run-scoped temporary unavailability."""
     msg = str(err)
     return bool(re.search(r"\b413\b", msg))
+
+
+def _is_timeout_error(err) -> bool:
+    """Detect connect/read timeouts so slow agents can be skipped cleanly."""
+    if isinstance(err, requests.exceptions.Timeout):
+        return True
+    msg = str(err).lower()
+    return "timed out" in msg or "timeout" in msg or "read timed out" in msg
 
 
 def _short_model_label(model_name: str) -> str:
@@ -722,6 +943,7 @@ class AIBrain:
 
         analyses = []
         debate_log = []
+        round1_entries = []
         unavailable_roles = []
 
         def _analyze(config, agent_index):
@@ -764,7 +986,9 @@ class AIBrain:
                     "config_id": config["id"], "provider": config["provider"],
                     "model": config["selected_model"], "result": None, "raw": "",
                     "error": str(e),
-                    "status": "unavailable_413" if _is_413_error(e) else "error",
+                    "status": "timeout" if _is_timeout_error(e) else (
+                        "unavailable_413" if _is_413_error(e) else "error"
+                    ),
                     "role": role_name,
                     "agent_index": agent_index,
                 }
@@ -779,30 +1003,61 @@ class AIBrain:
                 if analysis.get("status") == "unavailable_413":
                     self._unavailable_config_ids.add(analysis["config_id"])
                     unavailable_roles.append(analysis["role"])
+                elif analysis.get("status") == "timeout":
+                    self._unavailable_config_ids.add(analysis["config_id"])
+                    unavailable_roles.append(analysis["role"])
+                    timeout_label = "qwen" if "qwen" in str(analysis["model"]).lower() else _short_model_label(analysis["model"])
+                    msg = f"[Brain] {timeout_label} Round 1 timeout — skipping this agent"
+                    print(f"  {msg}")
+                    logger.warning(msg)
                 elif analysis["error"]:
                     print(f"  [Brain] ✗ {analysis['provider']}/{analysis['model']} [{analysis['role']}]: {analysis['error']}")
                 else:
+                    round1_verdict = normalize_verdict_text(analysis["result"].get("verdict", "RISKY"), "RISKY")
+                    round1_confidence = clamp_confidence(analysis["result"].get("confidence", 50), default=50)
+                    round1_argument = extract_argument_text(analysis["result"])
+                    analysis["result"]["verdict"] = round1_verdict
+                    analysis["result"]["confidence"] = round1_confidence
                     unknowns = len(analysis["result"].get("top_unknowns", []))
                     print(f"  [Brain] ✓ {analysis['provider']}/{analysis['model']} [{analysis['role']}]: "
-                          f"verdict={analysis['result'].get('verdict', '?')} "
-                          f"conf={analysis['result'].get('confidence', '?')} "
+                          f"verdict={round1_verdict} "
+                          f"conf={round1_confidence} "
                           f"unknowns={unknowns}")
+                    round1_entries.append({
+                        "model_id": analysis["config_id"],
+                        "role": analysis["role"],
+                        "verdict": round1_verdict,
+                        "confidence": round1_confidence,
+                        "confidence_delta": 0,
+                        "held": True,
+                        "argument_text": round1_argument,
+                        "engagement_score": 0,
+                        "engagement_label": "Initial position",
+                    })
                     debate_log.append({
                         "model": f"{analysis['provider']}/{analysis['model']}",
                         "role": analysis["role"],
                         "round": 1,
-                        "verdict": analysis["result"].get("verdict", "?"),
-                        "confidence": analysis["result"].get("confidence", 0),
+                        "verdict": round1_verdict,
+                        "confidence": round1_confidence,
                         "reasoning": (
-                            analysis["result"].get("debate_note")
-                            or analysis["result"].get("executive_summary")
-                            or analysis["result"].get("summary", "")
+                            round1_argument
                         )[:500],
                         "changed": False,
                     })
                 analyses.append(analysis)
 
         valid = [a for a in analyses if a["result"] is not None]
+        transcript_models = [
+            {
+                "id": analysis["config_id"],
+                "provider": analysis["provider"],
+                "model": analysis["model"],
+                "label": f"{analysis['provider']}/{analysis['model']}",
+                "role": analysis.get("role", "ANALYST"),
+            }
+            for analysis in valid
+        ]
         if unavailable_roles and valid:
             remaining_roles = " + ".join(a["role"] for a in valid)
             for role in unavailable_roles:
@@ -821,18 +1076,14 @@ class AIBrain:
 
         if len(valid) == 1:
             print(f"  [Brain] Only 1 model succeeded → returning its analysis directly")
-            single_result = dict(valid[0]["result"])
-            single_result.setdefault("models_used", [f"{valid[0]['provider']}/{valid[0]['model']}"])
-            single_result.setdefault("model_verdicts", {
-                f"{valid[0]['provider']}/{valid[0]['model']}": {
-                    "verdict": single_result.get("verdict", "?"),
-                    "role": valid[0].get("role", "ANALYST"),
-                }
-            })
-            single_result.setdefault("debate_mode", False)
-            single_result.setdefault("debate_log", debate_log)
-            single_result.setdefault("evidence_count", len(single_result.get("evidence", [])))
-            return single_result
+            return self._weighted_merge(
+                valid,
+                debate_log=debate_log,
+                transcript_models=transcript_models,
+                round1_entries=round1_entries,
+                round2_entries=[],
+                round2_summary="",
+            )
 
         # ── Check for disagreements ──
         verdicts = [a["result"].get("verdict", "UNKNOWN") for a in valid]
@@ -841,7 +1092,14 @@ class AIBrain:
 
         if len(unique_verdicts) == 1:
             print(f"  [Brain] ══ CONSENSUS: All models agree on '{verdicts[0]}' ══")
-            return self._weighted_merge(valid, debate_log=debate_log)
+            return self._weighted_merge(
+                valid,
+                debate_log=debate_log,
+                transcript_models=transcript_models,
+                round1_entries=round1_entries,
+                round2_entries=[],
+                round2_summary="",
+            )
 
         # ══ ROUND 2: Debate with Sanitized Reasoning + Non-LLM Data ══
         print(f"\n  [Brain] ══ ROUND 2: Debate (models disagree — scores hidden from peers) ══")
@@ -880,93 +1138,153 @@ Do NOT change your verdict just to agree. The non-LLM data above cannot lie — 
 Respond with the same JSON format. Add a "debate_note" field explaining why you held or changed."""
 
         debate_results = []
-        for a in valid:
+        round2_entries = []
+
+        def _run_round2(a):
+            """Run Round 2 debate for a single model. Returns (debate_result, r2_entry, log_entry)."""
             others = [o for o in valid if o["config_id"] != a["config_id"]]
             if not others:
-                debate_results.append({"provider": a["provider"], "model": a["model"], "result": a["result"], "role": a["role"]})
-                continue
+                return (
+                    {"config_id": a["config_id"], "provider": a["provider"], "model": a["model"],
+                     "result": a["result"], "role": a["role"], "agent_index": a["agent_index"]},
+                    None, None,
+                )
 
-            # FIX 1: Sanitize — only show reasoning + evidence, NOT scores/verdicts
+            # Sanitize — only show reasoning + evidence, NOT scores/verdicts
             others_text = "\n\n".join([
                 f"=== Model [{o['role']}] ===\n{json.dumps(sanitize_for_debate(o['result']), indent=2)}"
                 for o in others
             ])
+            own_analysis_text = json.dumps(a["result"], indent=2)
 
             debate_prompt = debate_prompt_template.format(
-                own_analysis=json.dumps(a["result"], indent=2),
+                own_analysis=own_analysis_text,
                 other_reasoning=others_text,
                 non_llm_data=non_llm_block,
             )
 
+            model_label = f"{a['provider']}/{a['model']}".lower()
+            initial_r2_tokens = estimate_tokens(debate_prompt)
+            if "qwen" in model_label and initial_r2_tokens > 6000:
+                summarized_own = summarize_round1_for_debate(
+                    a["result"], a["role"], max_words=300, include_verdict=True,
+                )
+                summarized_others = "\n\n".join([
+                    f"=== Model [{o['role']}] ===\n{summarize_round1_for_debate(o['result'], o['role'], max_words=300)}"
+                    for o in others
+                ])
+                debate_prompt = debate_prompt_template.format(
+                    own_analysis=summarized_own,
+                    other_reasoning=summarized_others,
+                    non_llm_data=non_llm_block,
+                )
+                trimmed_r2_tokens = estimate_tokens(debate_prompt)
+                print(
+                    f"  [Brain] R2 context trimmed for qwen: {initial_r2_tokens} -> {trimmed_r2_tokens} tokens",
+                    flush=True,
+                )
+
+            previous_verdict = normalize_verdict_text(a["result"].get("verdict", "RISKY"), "RISKY")
+            previous_confidence = clamp_confidence(a["result"].get("confidence", 50), default=50)
+
             try:
                 config = next(c for c in self.configs if c["id"] == a["config_id"])
-                # Keep the same role-specific system prompt
-                role_prompt = get_role_system_prompt(a["agent_index"], system_prompt)
+                role_prompt = get_round2_role_system_prompt(a["agent_index"], system_prompt)
                 _, _, text = call_provider(config, debate_prompt, role_prompt)
                 result = extract_json(text)
                 if "top_unknowns" not in result:
                     result["top_unknowns"] = []
-                debate_results.append({
-                    "provider": a["provider"], "model": a["model"],
-                    "result": result, "role": a["role"],
-                    "debate_note": result.get("debate_note", ""),
-                })
-                action = "HELD" if result.get("verdict") == a["result"].get("verdict") else "CHANGED"
-                debate_log.append({
-                    "model": f"{a['provider']}/{a['model']}",
-                    "role": a["role"],
-                    "round": 2,
-                    "verdict": result.get("verdict", "?"),
-                    "confidence": result.get("confidence", 0),
-                    "reasoning": (
-                        result.get("debate_note")
-                        or result.get("executive_summary")
-                        or result.get("summary", "")
-                    )[:500],
-                    "changed": result.get("verdict") != a["result"].get("verdict"),
-                })
+                current_verdict = normalize_verdict_text(result.get("verdict", previous_verdict), previous_verdict)
+                current_confidence = clamp_confidence(result.get("confidence", previous_confidence), default=previous_confidence)
+                argument_text = extract_argument_text(result)
+                engagement_score, engagement_label = calculate_engagement(argument_text, [other["role"] for other in others])
+                held = current_verdict == previous_verdict
+                if held:
+                    current_confidence = max(previous_confidence - 10, min(previous_confidence + 10, current_confidence))
+                if engagement_score == 0 and current_confidence > previous_confidence:
+                    current_confidence = previous_confidence
+                current_confidence = clamp_confidence(current_confidence, default=previous_confidence)
+                confidence_delta = current_confidence - previous_confidence
+                result["verdict"] = current_verdict
+                result["confidence"] = current_confidence
+                action = "HELD" if held else "CHANGED"
                 print(f"  [Brain] Debate → [{a['role']}] {a['provider']}/{a['model']}: {action} → verdict={result.get('verdict', '?')} | {result.get('debate_note', '')[:80]}")
+                return (
+                    {"config_id": a["config_id"], "provider": a["provider"], "model": a["model"],
+                     "result": result, "role": a["role"], "agent_index": a["agent_index"]},
+                    {"model_id": a["config_id"], "role": a["role"], "verdict": current_verdict,
+                     "confidence": current_confidence, "confidence_delta": confidence_delta,
+                     "held": held, "argument_text": argument_text,
+                     "engagement_score": engagement_score, "engagement_label": engagement_label},
+                    {"model": f"{a['provider']}/{a['model']}", "role": a["role"], "round": 2,
+                     "verdict": current_verdict, "confidence": current_confidence,
+                     "reasoning": argument_text[:500], "changed": not held},
+                )
             except Exception as e:
+                if _is_timeout_error(e):
+                    self._unavailable_config_ids.add(a["config_id"])
+                    timeout_label = "qwen" if "qwen" in str(a["model"]).lower() else _short_model_label(a["model"])
+                    msg = f"[Brain] {timeout_label} Round 2 timeout — skipping this agent"
+                    print(f"  {msg}")
+                    logger.warning(msg)
+                    return (None, None, None)  # skip — timeout
                 if _is_413_error(e):
-                    self._unavailable_config_ids.add(config["id"])
+                    self._unavailable_config_ids.add(a["config_id"])
                 print(f"  [Brain] Debate failed for {a['provider']}/{a['model']}: {e}")
-                debate_results.append({"provider": a["provider"], "model": a["model"], "result": a["result"], "role": a["role"]})
-                debate_log.append({
-                    "model": f"{a['provider']}/{a['model']}",
-                    "role": a["role"],
-                    "round": 2,
-                    "verdict": a["result"].get("verdict", "?"),
-                    "confidence": a["result"].get("confidence", 0),
-                    "reasoning": (
-                        a["result"].get("debate_note")
-                        or a["result"].get("executive_summary")
-                        or a["result"].get("summary", "")
-                    )[:500],
-                    "changed": False,
-                    "status": "round2_error",
-                    "fallback_to_round1": True,
-                    "round2_error": f"{type(e).__name__}: {e}",
-                })
+                fallback_argument = extract_argument_text(a["result"])
+                return (
+                    {"config_id": a["config_id"], "provider": a["provider"], "model": a["model"],
+                     "result": a["result"], "role": a["role"], "agent_index": a["agent_index"]},
+                    {"model_id": a["config_id"], "role": a["role"], "verdict": previous_verdict,
+                     "confidence": previous_confidence, "confidence_delta": 0,
+                     "held": True, "argument_text": fallback_argument,
+                     "engagement_score": 0, "engagement_label": "Restated position - round 2 failed"},
+                    {"model": f"{a['provider']}/{a['model']}", "role": a["role"], "round": 2,
+                     "verdict": previous_verdict, "confidence": previous_confidence,
+                     "reasoning": fallback_argument[:500], "changed": False,
+                     "status": "round2_error", "fallback_to_round1": True,
+                     "round2_error": f"{type(e).__name__}: {e}"},
+                )
+
+        # ── Run Round 2 in parallel (matches Round 1 pattern) ──
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(_run_round2, a): a for a in valid}
+            for future in concurrent.futures.as_completed(futures):
+                debate_result, r2_entry, log_entry = future.result()
+                if debate_result is not None:
+                    debate_results.append(debate_result)
+                if r2_entry is not None:
+                    round2_entries.append(r2_entry)
+                if log_entry is not None:
+                    debate_log.append(log_entry)
+
+        if not debate_results:
+            print("  [Brain] All Round 2 agents failed — falling back to Round 1 results")
+            debate_results = valid
+
 
         # ══ FINAL SYNTHESIS with Weighted Consensus ══
         print(f"\n  [Brain] ══ FINAL SYNTHESIS (uncertainty-weighted) ══")
+        round2_summary = generate_round2_summary(round1_entries, round2_entries)
         if on_progress:
             on_progress("synthesizing", "Synthesizing with uncertainty-weighted consensus")
 
         return self._weighted_merge(
-            [{"provider": d["provider"], "model": d["model"], "result": d["result"], "role": d.get("role", "ANALYST")} for d in debate_results],
+            debate_results,
             debate_log=debate_log,
+            transcript_models=transcript_models,
+            round1_entries=round1_entries,
+            round2_entries=round2_entries,
+            round2_summary=round2_summary,
         )
 
-    def _weighted_merge(self, analyses, debate_log=None):
+    def _weighted_merge(self, analyses, debate_log=None, transcript_models=None, round1_entries=None, round2_entries=None, round2_summary=""):
         """
         FIX 5 — Uncertainty-Weighted Consensus.
         Models that admitted more unknowns get LESS weight.
         This rewards intellectual honesty over false confidence.
         """
-        from collections import Counter
-
-        verdicts = [a["result"].get("verdict", "UNKNOWN") for a in analyses]
+        verdicts = [normalize_verdict_text(a["result"].get("verdict", "UNKNOWN"), "UNKNOWN") for a in analyses]
         total_models = len(analyses)
 
         # ── Fix I: evidence-rewarding weight formula ──
@@ -981,14 +1299,15 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
         for a in analyses:
             unknowns_count = len(a["result"].get("top_unknowns", []))
             evidence_count = len(a["result"].get("evidence", []))
-            confidence = a["result"].get("confidence", 50)
+            confidence = clamp_confidence(a["result"].get("confidence", 50), default=50)
             # More evidence cited = higher weight. Min weight 0.5 to avoid full exclusion.
             weight = max(0.5, 1.0 + (evidence_count * 0.1))
             weighted_entries.append({
+                "model_id": a.get("config_id") or f"{a['provider']}/{a['model']}",
                 "provider": a["provider"],
                 "model": a["model"],
                 "role": a.get("role", "ANALYST"),
-                "verdict": a["result"].get("verdict", "UNKNOWN"),
+                "verdict": normalize_verdict_text(a["result"].get("verdict", "UNKNOWN"), "UNKNOWN"),
                 "confidence": confidence,
                 "weight": weight,
                 "unknowns": unknowns_count,
@@ -1032,25 +1351,25 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             weighted_confidence = min(weighted_confidence, 40)
             consensus_note = "no-majority"
 
-        avg_confidence = int(weighted_confidence)
+        avg_confidence = clamp_confidence(weighted_confidence, default=50)
 
         # ── Build dissent section with roles ──
         dissent = []
+        dissent_entry = None
         for e in weighted_entries:
             if e["verdict"] != final_verdict:
                 dissent.append({
                     "model": f"{e['provider']}/{e['model']}",
+                    "model_id": e["model_id"],
                     "role": e["role"],
                     "verdict": e["verdict"],
                     "confidence": e["confidence"],
                     "weight": round(e["weight"], 2),
                     "unknowns": e["unknowns"],
-                    "reasoning": (
-                        e["result"].get("debate_note", "")
-                        or e["result"].get("executive_summary", "")
-                        or e["result"].get("summary", "")
-                    )[:300],
+                    "reasoning": extract_argument_text(e["result"])[:300],
                 })
+                if dissent_entry is None or e["weight"] > dissent_entry["weight"]:
+                    dissent_entry = e
 
         if dissent:
             print(f"  [Brain] Dissent from {len(dissent)} model(s):")
@@ -1130,10 +1449,64 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
         models_used = [f"{a['provider']}/{a['model']}" for a in analyses]
         model_verdicts = {
             f"{a['provider']}/{a['model']}": {
-                "verdict": a["result"].get("verdict", "?"),
+                "verdict": normalize_verdict_text(a["result"].get("verdict", "?"), "?"),
                 "role": a.get("role", "ANALYST"),
             }
             for a in analyses
+        }
+
+        final_weights = [
+            {
+                "model_id": entry["model_id"],
+                "role": entry["role"],
+                "weight": round(entry["weight"], 2),
+                "verdict": entry["verdict"],
+                "label": f"{entry['provider']}/{entry['model']}",
+            }
+            for entry in weighted_entries
+        ]
+        round2_by_model_id = {
+            entry["model_id"]: entry
+            for entry in (round2_entries or [])
+            if entry.get("model_id")
+        }
+        dissent_reason = None
+        if dissent_entry is not None:
+            dissent_round2 = round2_by_model_id.get(dissent_entry["model_id"])
+            dissent_argument = dissent_round2.get("argument_text", "") if dissent_round2 else extract_argument_text(dissent_entry["result"])
+            dissent_reason = build_dissent_reason(dissent_argument, dissent_entry["verdict"])
+
+        transcript_rounds = []
+        if round1_entries:
+            transcript_rounds.append({"round": 1, "entries": round1_entries})
+        if round2_entries:
+            transcript_rounds.append({"round": 2, "entries": round2_entries})
+
+        debate_transcript = {
+            "models": transcript_models or [
+                {
+                    "id": entry["model_id"],
+                    "provider": entry["provider"],
+                    "model": entry["model"],
+                    "label": f"{entry['provider']}/{entry['model']}",
+                    "role": entry["role"],
+                }
+                for entry in weighted_entries
+            ],
+            "rounds": transcript_rounds,
+            "round2_summary": round2_summary if round2_entries else "",
+            "final": {
+                "verdict": final_verdict,
+                "confidence": avg_confidence,
+                "weights": final_weights,
+                "dissent": {
+                    "exists": dissent_entry is not None,
+                    "dissenting_model_id": dissent_entry["model_id"] if dissent_entry is not None else None,
+                    "dissenting_role": dissent_entry["role"] if dissent_entry is not None else None,
+                    "dissenting_verdict": dissent_entry["verdict"] if dissent_entry is not None else None,
+                    "dissent_reason": dissent_reason,
+                },
+            },
         }
 
         merged = {
@@ -1158,6 +1531,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             "debate_mode": len(analyses) > 1,
             "debate_log": debate_log or [],
             "debate_rounds": max((entry.get("round", 1) for entry in (debate_log or [])), default=1),
+            "debate_transcript": debate_transcript,
             # Weighted consensus metadata
             "consensus_strength": f"{len(top_verdicts)}-way tie/{total_models}" if tie_detected else f"{majority_count}/{total_models}",
             "consensus_type": consensus_note,
