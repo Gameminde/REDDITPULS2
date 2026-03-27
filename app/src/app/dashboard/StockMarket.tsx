@@ -199,6 +199,64 @@ function normalizeScoreBreakdown(idea: Idea): ScoreBreakdown | null {
     return hasAnyRaw || hasVisibleSignal ? breakdown : null;
 }
 
+function DetailMetric({
+    label,
+    value,
+    hint,
+    accent = "#94a3b8",
+}: {
+    label: string;
+    value: string | number;
+    hint?: string;
+    accent?: string;
+}) {
+    return (
+        <div style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.06)",
+        }}>
+            <div style={{ fontSize: 10, color: "#64748b", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                {label}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: accent, fontFamily: "var(--font-mono)", lineHeight: 1.1 }}>
+                {value}
+            </div>
+            {hint && (
+                <div style={{ marginTop: 6, fontSize: 10, color: "#94a3b8", lineHeight: 1.45 }}>
+                    {hint}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function BreakdownMeter({ label, value, color }: { label: string; value: number; color: string }) {
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10 }}>
+                <span style={{ color: "#94a3b8" }}>{label}</span>
+                <span style={{ color: "#e2e8f0", fontFamily: "var(--font-mono)" }}>{Math.round(value)}</span>
+            </div>
+            <div style={{
+                width: "100%",
+                height: 6,
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.05)",
+                overflow: "hidden",
+            }}>
+                <div style={{
+                    width: `${Math.max(0, Math.min(100, value))}%`,
+                    height: "100%",
+                    borderRadius: 999,
+                    background: color,
+                }} />
+            </div>
+        </div>
+    );
+}
+
 function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
@@ -225,9 +283,26 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
     const hasThinDataWarning =
         ["LOW", "INSUFFICIENT"].includes(String(idea.confidence_level || "").toUpperCase())
         || signalContract?.support_level === "hypothesis";
+    const hasStructuredEvidence = representativePosts.some((post) => (
+        Boolean(post.market_support_level)
+        || Boolean(post.signal_kind)
+        || Boolean(post.voice_type)
+        || Boolean(post.directness_tier)
+    ));
+    const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
+    const supportingCount = Number(signalContract?.supporting_signal_count || 0);
+    const launchMetaCount = Number(signalContract?.launch_meta_count || 0);
+    const dominantPlatform = signalContract?.dominant_platform ? formatSourceName(signalContract.dominant_platform) : null;
     const sourceSummary = (idea.sources || [])
         .map((source) => `${formatSourceName(source.platform)} ${source.count}`)
         .join(" · ");
+    const scoreMeters = [
+        { label: "Velocity", value: Number(scoreBreakdown?.velocity || 0), color: "#22c55e" },
+        { label: "Pain density", value: Number(scoreBreakdown?.pain_density || 0), color: "#f97316" },
+        { label: "Cross-platform", value: Number(scoreBreakdown?.cross_platform || 0), color: "#3b82f6" },
+        { label: "Engagement", value: Number(scoreBreakdown?.engagement || 0), color: "#a855f7" },
+        { label: "Volume", value: Number(scoreBreakdown?.volume || 0), color: "#eab308" },
+    ].filter((item) => Number.isFinite(item.value) && item.value > 0);
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -398,7 +473,86 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                             border: "1px solid rgba(249,115,22,0.1)",
                             borderTop: "1px solid rgba(249,115,22,0.15)",
                         }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                                <div style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                    gap: 10,
+                                }}>
+                                    <div style={{
+                                        padding: "12px 14px",
+                                        borderRadius: 12,
+                                        background: "rgba(249,115,22,0.06)",
+                                        border: "1px solid rgba(249,115,22,0.14)",
+                                    }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4,
+                                                color: signalTone.color,
+                                                background: signalTone.background,
+                                                padding: "3px 8px",
+                                                borderRadius: 999,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                            }}>
+                                                {signalBadgeLabel}
+                                            </span>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4,
+                                                color: conf.color,
+                                                background: `${conf.color}15`,
+                                                padding: "3px 8px",
+                                                borderRadius: 999,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                            }}>
+                                                {conf.label}
+                                            </span>
+                                        </div>
+                                        <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.5 }}>
+                                            {signalContract?.summary || "Representative evidence ranked by buyer-native proof first."}
+                                        </div>
+                                    </div>
+
+                                    <DetailMetric
+                                        label="Direct buyer proof"
+                                        value={directBuyerCount}
+                                        hint={directBuyerCount > 0 ? "Direct buyer-native evidence is present." : "No direct buyer-native proof in the current card."}
+                                        accent={directBuyerCount > 0 ? "#22c55e" : "#94a3b8"}
+                                    />
+                                    <DetailMetric
+                                        label="Source diversity"
+                                        value={idea.source_count}
+                                        hint={dominantPlatform ? `Dominant source: ${dominantPlatform}` : "Mixed source pool"}
+                                        accent={idea.source_count > 1 ? "#3b82f6" : "#f59e0b"}
+                                    />
+                                    <DetailMetric
+                                        label="Data quality"
+                                        value={hasStructuredEvidence ? "Structured" : "Needs refresh"}
+                                        hint={hasStructuredEvidence ? "Posts include structured evidence metadata." : "Representative posts still use older scrape metadata."}
+                                        accent={hasStructuredEvidence ? "#22c55e" : "#f59e0b"}
+                                    />
+                                </div>
+
+                                {!hasStructuredEvidence && (
+                                    <div style={{
+                                        padding: "10px 14px",
+                                        borderRadius: 10,
+                                        background: "rgba(245,158,11,0.08)",
+                                        border: "1px solid rgba(245,158,11,0.16)",
+                                        color: "#fde68a",
+                                        fontSize: 12,
+                                        lineHeight: 1.55,
+                                    }}>
+                                        This card is still showing legacy representative-post metadata, so the signal labels can look harsher than the raw topic really deserves until the newest scraper run finishes writing structured evidence fields.
+                                    </div>
+                                )}
+
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
                                 <div style={{
                                     padding: 14,
                                     borderRadius: 10,
@@ -414,9 +568,6 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                     }}>
                                         <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>
                                             {signalPanelTitle}
-                                        </span>
-                                        <span style={{ color: "#94a3b8", fontSize: 10 }}>
-                                            {signalContract?.summary || "Representative evidence ranked by buyer-native proof first."}
                                         </span>
                                         {signalContract?.reasons && signalContract.reasons.length > 0 && (
                                             <div style={{
@@ -509,9 +660,10 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                                             color: "#94a3b8",
                                                         }}>
                                                             <span>
-                                                                {post.subreddit ? `r/${decodeHtml(post.subreddit)}` : decodeHtml(post.source || "Unknown source")}
+                                                                {post.subreddit ? `r/${decodeHtml(post.subreddit)}` : formatSourceName(post.source)}
                                                             </span>
                                                             <span>{post.score} upvotes</span>
+                                                            <span>{post.comments || 0} comments</span>
                                                         </div>
                                                     </div>
                                                     <ExternalLink style={{
@@ -536,6 +688,9 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                     borderRadius: 10,
                                     background: "rgba(255,255,255,0.02)",
                                     border: "1px solid rgba(255,255,255,0.06)",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 14,
                                 }}>
                                     <div style={{
                                         display: "flex",
@@ -546,9 +701,41 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                         fontWeight: 700,
                                         color: "#f1f5f9",
                                     }}>
-                                        <span style={{ color: "#22c55e" }}>Market momentum</span>
+                                        <span style={{ color: "#22c55e" }}>Signal audit</span>
                                     </div>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                        <DetailMetric
+                                            label="Supporting context"
+                                            value={supportingCount}
+                                            hint="Indirect or adjacent evidence in top posts."
+                                            accent={supportingCount > 0 ? "#3b82f6" : "#94a3b8"}
+                                        />
+                                        <DetailMetric
+                                            label="Launch / meta"
+                                            value={launchMetaCount}
+                                            hint={launchMetaCount > 0 ? "Builder chatter is mixed into this card." : "Top evidence is not launch-heavy."}
+                                            accent={launchMetaCount > 0 ? "#f59e0b" : "#22c55e"}
+                                        />
+                                    </div>
+
+                                    <div style={{
+                                        padding: "12px 14px",
+                                        borderRadius: 10,
+                                        background: "rgba(255,255,255,0.03)",
+                                        border: "1px solid rgba(255,255,255,0.05)",
+                                    }}>
+                                        <div style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            marginBottom: 10,
+                                            fontSize: 12,
+                                            fontWeight: 700,
+                                            color: "#f1f5f9",
+                                        }}>
+                                            <span style={{ color: "#22c55e" }}>Momentum</span>
+                                        </div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                                         <div style={{
                                             display: "inline-flex",
                                             alignItems: "center",
@@ -592,11 +779,48 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
                                             Source mix: {sourceSummary || "No source mix yet"}.
                                         </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{
+                                        padding: "12px 14px",
+                                        borderRadius: 10,
+                                        background: "rgba(255,255,255,0.03)",
+                                        border: "1px solid rgba(255,255,255,0.05)",
+                                    }}>
+                                        <div style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            marginBottom: 10,
+                                            fontSize: 12,
+                                            fontWeight: 700,
+                                            color: "#f1f5f9",
+                                        }}>
+                                            <span style={{ color: "#f97316" }}>Why this score</span>
+                                        </div>
+                                        {scoreMeters.length > 0 ? (
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                                {scoreMeters.map((meter) => (
+                                                    <BreakdownMeter
+                                                        key={`${idea.slug}-${meter.label}`}
+                                                        label={meter.label}
+                                                        value={meter.value}
+                                                        color={meter.color}
+                                                    />
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                                                Score breakdown will look better after the latest scraper refresh writes updated breakdown fields.
+                                            </div>
+                                        )}
                                         <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
                                             The score is based on current evidence quality and momentum in this card, not a claim that this is the best business in the world.
                                         </div>
                                     </div>
                                 </div>
+                            </div>
                             </div>
                         </div>
                     </motion.div>
