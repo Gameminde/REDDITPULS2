@@ -35,6 +35,7 @@ interface Idea {
     reddit_velocity: number;
     google_trend_score: number;
     competition_score: number;
+    competition_data?: Record<string, unknown> | null;
     cross_platform_multiplier: number;
     pain_count?: number;
     score_breakdown?: Partial<ScoreBreakdown> | null;
@@ -127,6 +128,65 @@ function formatSourceShort(platform?: string | null) {
     return String(platform || "?").slice(0, 2).toUpperCase();
 }
 
+type MarketLeader = {
+    name: string;
+    mention_count: number;
+    source_count: number;
+    buyer_signal_count: number;
+    evidence_mode: string;
+    known_weakness: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeMarketLeaders(competitionData: Record<string, unknown> | null | undefined): MarketLeader[] {
+    if (!isRecord(competitionData)) return [];
+
+    const rawRows = Array.isArray(competitionData.direct_competitors)
+        ? competitionData.direct_competitors
+        : Array.isArray(competitionData.competitors)
+            ? competitionData.competitors
+            : [];
+
+    const normalizedRows = rawRows.reduce<MarketLeader[]>((acc, row) => {
+            if (typeof row === "string") {
+                acc.push({
+                    name: row,
+                    mention_count: 0,
+                    source_count: 0,
+                    buyer_signal_count: 0,
+                    evidence_mode: "known_market_map",
+                    known_weakness: null,
+                } satisfies MarketLeader);
+                return acc;
+            }
+            if (!isRecord(row)) return acc;
+            const name = decodeHtml(String(row.name || "")).trim();
+            if (!name) return acc;
+            acc.push({
+                name,
+                mention_count: Number(row.mention_count || 0),
+                source_count: Number(row.source_count || 0),
+                buyer_signal_count: Number(row.buyer_signal_count || 0),
+                evidence_mode: String(row.evidence_mode || "known_market_map"),
+                known_weakness: row.known_weakness ? String(row.known_weakness) : null,
+            } satisfies MarketLeader);
+            return acc;
+        }, []);
+
+    return normalizedRows.slice(0, 4);
+}
+
+function leaderEvidenceLabel(leader: MarketLeader) {
+    if (leader.mention_count > 0) {
+        const sourceText = leader.source_count > 0 ? ` across ${leader.source_count} ${leader.source_count === 1 ? "source" : "sources"}` : "";
+        return `Mentioned in ${leader.mention_count} post${leader.mention_count === 1 ? "" : "s"}${sourceText}`;
+    }
+    return "Known incumbent for this workflow";
+}
+
 function ChangeDisplay({ value, prefix = "" }: { value: number; prefix?: string }) {
     const color = value > 0 ? "#22c55e" : value < 0 ? "#ef4444" : "#64748b";
     const bg = value > 0 ? "rgba(34,197,94,0.1)" : value < 0 ? "rgba(239,68,68,0.1)" : "rgba(100,116,139,0.1)";
@@ -188,11 +248,13 @@ function normalizeScoreBreakdown(idea: Idea): ScoreBreakdown | null {
             : typeof (raw as Record<string, unknown>).volume_bonus === "number"
                 ? Math.min(100, (Number((raw as Record<string, unknown>).volume_bonus) / 15) * 100)
                 : volumeFallback,
-        velocity_weight: typeof raw.velocity_weight === "number" ? raw.velocity_weight : 0.25,
-        pain_density_weight: typeof raw.pain_density_weight === "number" ? raw.pain_density_weight : 0.25,
-        cross_platform_weight: typeof raw.cross_platform_weight === "number" ? raw.cross_platform_weight : 0.20,
-        engagement_weight: typeof raw.engagement_weight === "number" ? raw.engagement_weight : 0.20,
+        evidence_quality: typeof raw.evidence_quality === "number" ? raw.evidence_quality : null,
+        velocity_weight: typeof raw.velocity_weight === "number" ? raw.velocity_weight : 0.20,
+        pain_density_weight: typeof raw.pain_density_weight === "number" ? raw.pain_density_weight : 0.20,
+        cross_platform_weight: typeof raw.cross_platform_weight === "number" ? raw.cross_platform_weight : 0.15,
+        engagement_weight: typeof raw.engagement_weight === "number" ? raw.engagement_weight : 0.15,
         volume_weight: typeof raw.volume_weight === "number" ? raw.volume_weight : 0.10,
+        evidence_quality_weight: typeof raw.evidence_quality_weight === "number" ? raw.evidence_quality_weight : 0.20,
         raw_weighted_score: typeof raw.raw_weighted_score === "number" ? raw.raw_weighted_score : null,
     };
 
@@ -339,6 +401,10 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
     const sourceSummary = (idea.sources || [])
         .map((source) => `${formatSourceName(source.platform)} ${source.count}`)
         .join(" · ");
+    const marketLeaders = normalizeMarketLeaders(idea.competition_data);
+    const marketLeadersSummary = isRecord(idea.competition_data) && typeof idea.competition_data.market_leaders_summary === "string"
+        ? idea.competition_data.market_leaders_summary
+        : "";
     const validateHref = buildMarketValidationHref(
         idea,
         representativePosts,
@@ -351,6 +417,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
         { label: "Cross-platform", value: Number(scoreBreakdown.cross_platform ?? 0), color: "#3b82f6" },
         { label: "Engagement", value: Number(scoreBreakdown.engagement ?? 0), color: "#a855f7" },
         { label: "Volume", value: Number(scoreBreakdown.volume ?? 0), color: "#eab308" },
+        { label: "Evidence quality", value: Number(scoreBreakdown.evidence_quality ?? 0), color: "#14b8a6" },
     ].filter((item) => Number.isFinite(item.value)) : [];
 
     const handleClick = (e: React.MouseEvent) => {
@@ -809,6 +876,57 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                             fontWeight: 700,
                                             color: "#f1f5f9",
                                         }}>
+                                            <span style={{ color: "#38bdf8" }}>Market leaders</span>
+                                        </div>
+                                        {marketLeaders.length > 0 ? (
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                                    {marketLeaders.map((leader) => (
+                                                        <div
+                                                            key={`${idea.slug}-${leader.name}`}
+                                                            style={{
+                                                                padding: "8px 10px",
+                                                                borderRadius: 10,
+                                                                background: "rgba(56,189,248,0.08)",
+                                                                border: "1px solid rgba(56,189,248,0.14)",
+                                                                minWidth: 120,
+                                                            }}
+                                                        >
+                                                            <div style={{ fontSize: 11, fontWeight: 700, color: "#e0f2fe" }}>
+                                                                {leader.name}
+                                                            </div>
+                                                            <div style={{ marginTop: 3, fontSize: 10, color: "#94a3b8", lineHeight: 1.45 }}>
+                                                                {leaderEvidenceLabel(leader)}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                                                    {marketLeadersSummary || "These are the incumbents or alternatives most visible in the evidence attached to this idea."}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                                                No clear incumbent names have been extracted yet. The next scraper refresh may find them as more posts accumulate.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div style={{
+                                        padding: "12px 14px",
+                                        borderRadius: 10,
+                                        background: "rgba(255,255,255,0.03)",
+                                        border: "1px solid rgba(255,255,255,0.05)",
+                                    }}>
+                                        <div style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            marginBottom: 10,
+                                            fontSize: 12,
+                                            fontWeight: 700,
+                                            color: "#f1f5f9",
+                                        }}>
                                             <span style={{ color: "#22c55e" }}>Momentum</span>
                                         </div>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -893,7 +1011,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                         )}
                                         <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
                                             These bars are weighted ingredients, not numbers that add directly to the final score.
-                                            Final score = velocity 25% + pain density 25% + cross-platform proof 20% + engagement 20% + volume 10%.
+                                            Final score = velocity 20% + pain density 20% + cross-platform proof 15% + engagement 15% + volume 10% + evidence quality 20%.
                                         </div>
                                     </div>
                                 </div>

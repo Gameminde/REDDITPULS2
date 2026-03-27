@@ -557,6 +557,283 @@ def _market_support_level_from_top_posts(top_posts, source_breakdown=None, sourc
     }
 
 
+def _calculate_market_evidence_quality(signal_posts, source_breakdown=None):
+    signal_posts = signal_posts or []
+    source_breakdown = source_breakdown or _build_source_breakdown(signal_posts)
+
+    if not signal_posts:
+        return 0.0, {
+            "buyer_native_direct_count": 0,
+            "supporting_signal_count": 0,
+            "launch_meta_count": 0,
+            "buyer_native_count": 0,
+            "source_count": len(source_breakdown),
+            "single_source": len(source_breakdown) < 2,
+            "hn_launch_heavy": False,
+        }
+
+    source_count = len(source_breakdown)
+    support_rank_counts = Counter(_market_post_support_rank(post) for post in signal_posts)
+    buyer_native_direct_count = int(support_rank_counts.get(3, 0))
+    supporting_signal_count = int(support_rank_counts.get(2, 0))
+    launch_meta_count = sum(1 for post in signal_posts if _is_launch_meta_market_post(post))
+    buyer_native_count = sum(1 for post in signal_posts if _is_buyer_native_market_post(post))
+    dominant_platform = None
+    if source_breakdown:
+        dominant_platform = str(
+            max(source_breakdown, key=lambda item: int(item.get("count", 0) or 0)).get("platform", "") or ""
+        ).lower() or None
+
+    single_source = source_count < 2
+    hn_launch_heavy = dominant_platform == "hackernews" and launch_meta_count >= 2 and buyer_native_direct_count == 0
+    total_posts = max(len(signal_posts), 1)
+
+    direct_ratio = buyer_native_direct_count / total_posts
+    supporting_ratio = supporting_signal_count / total_posts
+    buyer_native_ratio = buyer_native_count / total_posts
+    launch_meta_ratio = launch_meta_count / total_posts
+
+    quality_score = (
+        min(buyer_native_direct_count, 4) * 18 +
+        min(supporting_signal_count, 5) * 8 +
+        min(source_count, 4) * 7 +
+        buyer_native_ratio * 12 +
+        supporting_ratio * 10 -
+        launch_meta_ratio * 35 -
+        (8 if single_source else 0) -
+        (12 if buyer_native_direct_count == 0 else 0)
+    )
+
+    if buyer_native_direct_count == 0 and supporting_signal_count == 0:
+        quality_score = min(quality_score, 22)
+
+    if hn_launch_heavy:
+        quality_score = min(quality_score, 15)
+
+    return max(0.0, min(100.0, round(quality_score, 1))), {
+        "buyer_native_direct_count": buyer_native_direct_count,
+        "supporting_signal_count": supporting_signal_count,
+        "launch_meta_count": launch_meta_count,
+        "buyer_native_count": buyer_native_count,
+        "source_count": source_count,
+        "single_source": single_source,
+        "hn_launch_heavy": hn_launch_heavy,
+    }
+
+
+MARKET_LEADER_STOPWORDS = {
+    "reddit", "hacker news", "hackernews", "indie hackers", "indiehackers", "product hunt", "producthunt",
+    "show hn", "ask hn", "launch ph", "show ih", "launch ih", "ai", "api", "saas", "tool", "tools",
+    "software", "platform", "solution", "startup", "founder", "company", "business", "team", "teams",
+    "workflow", "automation", "invoice automation", "accounting automation", "project management",
+    "customer support", "email marketing", "landing page", "social media", "browser", "copilot",
+    "spreadsheet", "billing", "invoicing", "crm", "erp",
+}
+
+MARKET_LEADER_CONTEXT_PATTERNS = [
+    re.compile(
+        r"(?:(?i:alternative\s+to|alternatives\s+to|replace|replacing|replacement\s+for|switched\s+from|switch\s+from|"
+        r"migrated\s+from|migrate\s+from|vs\.?|versus|compare(?:d)?\s+to|using|use))\s+"
+        r"([A-Z0-9][A-Za-z0-9+.#/\-]*(?:\s+[A-Z0-9][A-Za-z0-9+.#/\-]*){0,2})"
+    ),
+]
+
+
+def _normalize_market_leader_name(value):
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n-:;,.'\"()[]{}")
+    cleaned = re.sub(r"(?:'s|’s)$", "", cleaned)
+    if not cleaned:
+        return ""
+
+    words = [word for word in cleaned.split() if word]
+    if len(words) > 3:
+        words = words[:3]
+    cleaned = " ".join(words).strip()
+    lowered = cleaned.lower()
+
+    if len(cleaned) < 3 or lowered in MARKET_LEADER_STOPWORDS:
+        return ""
+    if re.fullmatch(r"[0-9\W_]+", cleaned):
+        return ""
+
+    return cleaned
+
+
+def _build_market_leaders(topic_slug, topic_name, posts, keywords=None, limit=4):
+    posts = posts or []
+    keywords = keywords or []
+    topic_text = " ".join(
+        part for part in [
+            str(topic_slug or "").replace("-", " "),
+            str(topic_name or ""),
+            *[str(keyword or "") for keyword in keywords or []],
+        ]
+        if str(part).strip()
+    ).lower()
+
+    canonical_lookup = {}
+    seeded_competitors = []
+    for category_key, data in KNOWN_COMPETITORS.items():
+        competitors = data.get("competitors", []) or []
+        for competitor in competitors:
+            name = _normalize_market_leader_name(competitor.get("name", "") if isinstance(competitor, dict) else competitor)
+            if name:
+                canonical_lookup[name.lower()] = name
+
+        triggers = [category_key.replace("_", " ")] + list(data.get("triggers", []) or [])
+        if any(str(trigger or "").lower() in topic_text for trigger in triggers if str(trigger or "").strip()):
+            for competitor in competitors:
+                if isinstance(competitor, dict):
+                    seeded_competitors.append(competitor)
+                else:
+                    seeded_competitors.append({"name": competitor})
+
+    leader_stats = {}
+
+    def _get_stat(name):
+        stat = leader_stats.setdefault(name, {
+            "name": name,
+            "posts": set(),
+            "sources": set(),
+            "buyer_signal_count": 0,
+            "supporting_signal_count": 0,
+            "engagement": 0,
+            "seeded": False,
+            "known_weakness": None,
+            "price": None,
+            "users": None,
+        })
+        return stat
+
+    for competitor in seeded_competitors:
+        canonical = _normalize_market_leader_name(competitor.get("name", "") if isinstance(competitor, dict) else competitor)
+        if not canonical:
+            continue
+        stat = _get_stat(canonical)
+        stat["seeded"] = True
+        if isinstance(competitor, dict):
+            stat["known_weakness"] = competitor.get("weakness") or stat["known_weakness"]
+            stat["price"] = competitor.get("price") or stat["price"]
+            stat["users"] = competitor.get("users") or stat["users"]
+
+    for post in posts:
+        text = _compose_post_text(post)
+        if not text:
+            continue
+        text_lower = text.lower()
+        post_key = _market_post_key(post) or post.get("title") or text[:120]
+        source_name = _normalized_market_source(post)
+
+        mentioned_names = set()
+
+        for alias_lower, canonical in canonical_lookup.items():
+            if alias_lower and alias_lower in text_lower:
+                mentioned_names.add(canonical)
+
+        for pattern in MARKET_LEADER_CONTEXT_PATTERNS:
+            for match in pattern.finditer(text):
+                raw_candidate = match.group(1)
+                candidate = _normalize_market_leader_name(raw_candidate)
+                if not candidate:
+                    continue
+                canonical = canonical_lookup.get(candidate.lower())
+                if not canonical:
+                    tokens = [token for token in raw_candidate.split() if token]
+                    if not tokens or not all(re.fullmatch(r"[A-Z0-9][A-Za-z0-9+.#/\-]*", token) for token in tokens):
+                        continue
+                    canonical = candidate
+                mentioned_names.add(canonical)
+
+        if not mentioned_names:
+            continue
+
+        for canonical in mentioned_names:
+            stat = _get_stat(canonical)
+            stat["posts"].add(post_key)
+            if source_name:
+                stat["sources"].add(source_name)
+            if _is_buyer_native_market_post(post):
+                stat["buyer_signal_count"] += 1
+            if _market_post_support_rank(post) >= 2:
+                stat["supporting_signal_count"] += 1
+            stat["engagement"] += min(_engagement_score(post), 120)
+
+    live_leaders = []
+    inferred_leaders = []
+    for stat in leader_stats.values():
+        mention_count = len(stat["posts"])
+        source_count = len(stat["sources"])
+        score = (
+            mention_count * 5 +
+            stat["buyer_signal_count"] * 4 +
+            stat["supporting_signal_count"] * 2 +
+            source_count * 3 +
+            min(stat["engagement"] / 80, 3)
+        )
+        if stat["seeded"] and mention_count > 0:
+            score += 2
+
+        row = {
+            "name": stat["name"],
+            "mention_count": mention_count,
+            "source_count": source_count,
+            "buyer_signal_count": stat["buyer_signal_count"],
+            "supporting_signal_count": stat["supporting_signal_count"],
+            "evidence_mode": "hybrid" if stat["seeded"] and mention_count > 0 else ("live_mentions" if mention_count > 0 else "known_market_map"),
+            "known_weakness": stat["known_weakness"],
+            "price": stat["price"],
+            "users": stat["users"],
+            "leader_score": round(score, 1),
+        }
+
+        if mention_count > 0:
+            live_leaders.append(row)
+        elif stat["seeded"]:
+            inferred_leaders.append(row)
+
+    live_leaders.sort(
+        key=lambda row: (
+            int(row.get("mention_count", 0) or 0),
+            int(row.get("buyer_signal_count", 0) or 0),
+            int(row.get("source_count", 0) or 0),
+            float(row.get("leader_score", 0) or 0),
+        ),
+        reverse=True,
+    )
+    inferred_leaders.sort(
+        key=lambda row: (
+            float(row.get("leader_score", 0) or 0),
+            row.get("name", ""),
+        ),
+        reverse=True,
+    )
+
+    selected = live_leaders[:limit]
+    if len(selected) < limit:
+        for row in inferred_leaders:
+            if row["name"] in {item["name"] for item in selected}:
+                continue
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+
+    if not selected:
+        return None
+
+    live_names = [row["name"] for row in selected if row["mention_count"] > 0][:3]
+    if live_names:
+        summary = f"Recurring competitor mentions center on {', '.join(live_names)}."
+    else:
+        summary = f"Known incumbents in this workflow include {', '.join(row['name'] for row in selected[:3])}."
+
+    return {
+        "available": True,
+        "market_leaders_summary": summary,
+        "direct_competitors": selected,
+        "extraction_method": "hybrid" if live_names and any(row["mention_count"] == 0 for row in selected) else ("live_mentions" if live_names else "known_market_map"),
+    }
+
+
 def _confidence_rank(level):
     return {
         "INSUFFICIENT": 0,
@@ -1633,13 +1910,7 @@ def classify_post_to_topics(post):
 def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=None):
     """
     Calculate the live score (0-100) for an idea topic.
-    
-    Score = (
-        reddit_velocity      * 0.30 +
-        google_trend_growth  * 0.25 +
-        cross_platform_score * 0.25 +
-        engagement_signal    * 0.20
-    )
+    The score rewards momentum, pain density, source breadth, and evidence quality.
     """
     signal_posts = signal_posts or posts
 
@@ -1694,12 +1965,17 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
     volume_bonus = min(math.log(len(signal_posts) + 1) / math.log(500) * 15, 15)
 
     # ── Final score (pain-weighted: pain signals are the core value) ──
+    evidence_quality_score, evidence_quality_meta = _calculate_market_evidence_quality(
+        signal_posts,
+        source_breakdown=source_breakdown,
+    )
     raw_score = (
-        velocity_score * 0.25 +
-        pain_boost * 0.25 +
-        cross_platform_score * 0.20 +
-        engagement_score * 0.20 +
-        volume_bonus * 0.10
+        velocity_score * 0.20 +
+        pain_boost * 0.20 +
+        cross_platform_score * 0.15 +
+        engagement_score * 0.15 +
+        volume_bonus * 0.10 +
+        evidence_quality_score * 0.20
     )
 
     final_score = max(0, min(100, round(raw_score, 1)))
@@ -1710,11 +1986,13 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
         "cross_platform": round(cross_platform_score, 1),
         "engagement": round(engagement_score, 1),
         "volume": round(volume_bonus / 15 * 100, 1) if volume_bonus else 0.0,
-        "velocity_weight": 0.25,
-        "pain_density_weight": 0.25,
-        "cross_platform_weight": 0.20,
-        "engagement_weight": 0.20,
+        "evidence_quality": round(evidence_quality_score, 1),
+        "velocity_weight": 0.20,
+        "pain_density_weight": 0.20,
+        "cross_platform_weight": 0.15,
+        "engagement_weight": 0.15,
         "volume_weight": 0.10,
+        "evidence_quality_weight": 0.20,
         "raw_weighted_score": round(raw_score, 1),
         "source_count": source_count,
         "sources": source_breakdown,
@@ -1723,6 +2001,12 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
         "post_count_7d": recent_count,
         "post_count_total": len(signal_posts),
         "pain_count": pain_count,
+        "buyer_native_direct_count": evidence_quality_meta["buyer_native_direct_count"],
+        "supporting_signal_count": evidence_quality_meta["supporting_signal_count"],
+        "launch_meta_count": evidence_quality_meta["launch_meta_count"],
+        "buyer_native_count": evidence_quality_meta["buyer_native_count"],
+        "single_source": evidence_quality_meta["single_source"],
+        "hn_launch_heavy": evidence_quality_meta["hn_launch_heavy"],
         # Backward-compatible aliases for any legacy readers.
         "pain_signal": round(pain_boost, 1),
         "volume_bonus": round(volume_bonus, 1),
@@ -2164,6 +2448,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         "last_24h_update": table_has_column("ideas", "last_24h_update"),
         "last_7d_update": table_has_column("ideas", "last_7d_update"),
         "score_breakdown": table_has_column("ideas", "score_breakdown"),
+        "competition_data": table_has_column("ideas", "competition_data"),
     }
 
     # ── 4. Calculate scores + upsert ──
@@ -2247,6 +2532,12 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             continue
 
         pain_summary, pain_count = _build_pain_summary(posts, topic_name)
+        competition_data = _build_market_leaders(
+            slug,
+            topic_name,
+            posts,
+            keywords=topic_info.get("keywords", []),
+        )
 
         idea_row = {
             "topic": topic_name,
@@ -2285,6 +2576,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             idea_row["last_7d_update"] = baselines["next_last_7d_update"]
         if idea_optional_columns["score_breakdown"]:
             idea_row["score_breakdown"] = breakdown
+        if idea_optional_columns["competition_data"] and competition_data:
+            idea_row["competition_data"] = competition_data
 
         ideas_to_upsert.append(idea_row)
         ideas_updated += 1

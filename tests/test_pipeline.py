@@ -520,6 +520,139 @@ def test_dynamic_market_topics_promote_recurring_unmatched_phrase_clusters():
     assert len(assigned_keys) == 2
 
 
+def test_market_score_promotes_buyer_native_evidence_quality():
+    now = int(time.time())
+
+    direct_posts = [
+        {
+            "title": "Our accounting team is drowning in invoice categorization",
+            "full_text": "I hate manually cleaning invoice data every week and we need a better workflow.",
+            "source": "reddit",
+            "subreddit": "accounting",
+            "score": 22,
+            "num_comments": 10,
+            "created_utc": now - 1800,
+            "voice_type": "buyer",
+            "signal_kind": "pain_point",
+            "directness_tier": "direct",
+            "source_class": "forum",
+        },
+        {
+            "title": "Anyone else wasting hours reconciling supplier invoices?",
+            "full_text": "Manual reconciliation is broken and my ops team is tired of this process.",
+            "source": "reddit",
+            "subreddit": "smallbusiness",
+            "score": 19,
+            "num_comments": 8,
+            "created_utc": now - 2200,
+            "voice_type": "operator",
+            "signal_kind": "workaround",
+            "directness_tier": "adjacent",
+            "source_class": "forum",
+        },
+        {
+            "title": "Finance ops keeps asking for better invoice coding automation",
+            "full_text": "We would pay for software that reduces invoice coding errors.",
+            "source": "indiehackers",
+            "score": 16,
+            "num_comments": 7,
+            "created_utc": now - 2600,
+            "voice_type": "buyer",
+            "signal_kind": "willingness_to_pay",
+            "directness_tier": "direct",
+            "source_class": "review",
+        },
+    ]
+
+    launch_posts = [
+        {
+            "title": "Show HN: AI accounting co-pilot for back offices",
+            "full_text": "I built a new accounting copilot from scratch this weekend.",
+            "source": "hackernews",
+            "score": 24,
+            "num_comments": 11,
+            "created_utc": now - 1800,
+            "voice_type": "founder",
+            "signal_kind": "launch_discussion",
+            "directness_tier": "supporting",
+            "source_class": "forum",
+        },
+        {
+            "title": "Ask HN: anyone building accounting automation for SMBs?",
+            "full_text": "Curious if others are shipping this category right now.",
+            "source": "hackernews",
+            "score": 18,
+            "num_comments": 9,
+            "created_utc": now - 2200,
+            "voice_type": "founder",
+            "signal_kind": "launch_discussion",
+            "directness_tier": "supporting",
+            "source_class": "forum",
+        },
+        {
+            "title": "Launch PH: bookkeeping copilot",
+            "full_text": "New launch for founders doing finance workflows.",
+            "source": "producthunt",
+            "score": 20,
+            "num_comments": 8,
+            "created_utc": now - 2600,
+            "voice_type": "founder",
+            "signal_kind": "launch_discussion",
+            "directness_tier": "supporting",
+            "source_class": "forum",
+        },
+    ]
+
+    buyer_score, buyer_breakdown = market_scraper.calculate_idea_score("accounting-automation", direct_posts)
+    launch_score, launch_breakdown = market_scraper.calculate_idea_score("accounting-automation", launch_posts)
+
+    assert buyer_breakdown["evidence_quality"] > launch_breakdown["evidence_quality"]
+    assert buyer_score > launch_score
+
+
+def test_market_leaders_extract_live_mentions_and_known_market_map():
+    now = int(time.time())
+    competition = market_scraper._build_market_leaders(
+        "invoice-automation",
+        "Invoice Automation",
+        [
+            {
+                "title": "Need a QuickBooks alternative for invoice reminders",
+                "full_text": "We're using QuickBooks today and hate the reminder workflow.",
+                "source": "reddit",
+                "subreddit": "smallbusiness",
+                "score": 21,
+                "num_comments": 9,
+                "created_utc": now - 1200,
+                "voice_type": "buyer",
+                "signal_kind": "pain_point",
+                "directness_tier": "direct",
+            },
+            {
+                "title": "Switched from Xero back to QuickBooks because automation was weak",
+                "full_text": "Comparing Xero and QuickBooks is taking too much time for our team.",
+                "source": "indiehackers",
+                "score": 15,
+                "num_comments": 6,
+                "created_utc": now - 2200,
+                "voice_type": "operator",
+                "signal_kind": "workaround",
+                "directness_tier": "adjacent",
+            },
+        ],
+        keywords=["invoice", "billing"],
+    )
+
+    assert competition is not None
+    names = [entry["name"] for entry in competition["direct_competitors"]]
+    assert "QuickBooks" in names
+    assert "Xero" in names
+    quickbooks = next(entry for entry in competition["direct_competitors"] if entry["name"] == "QuickBooks")
+    assert quickbooks["mention_count"] >= 2
+    assert competition["market_leaders_summary"]
+    assert competition["extraction_method"] in {"live_mentions", "hybrid"}
+
+
 def test_dynamic_market_topics_ignore_launch_only_clusters():
     idea_posts, signal_posts, topic_meta, assigned_keys = market_scraper._discover_dynamic_market_topics(
         [

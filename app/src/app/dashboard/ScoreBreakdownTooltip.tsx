@@ -8,11 +8,13 @@ export interface ScoreBreakdown {
     cross_platform: number | null;
     engagement: number | null;
     volume: number | null;
+    evidence_quality?: number | null;
     velocity_weight?: number | null;
     pain_density_weight?: number | null;
     cross_platform_weight?: number | null;
     engagement_weight?: number | null;
     volume_weight?: number | null;
+    evidence_quality_weight?: number | null;
     raw_weighted_score?: number | null;
 }
 
@@ -53,12 +55,14 @@ export default function ScoreBreakdownTooltip({
             cross_platform: null,
             engagement: null,
             volume: null,
+            evidence_quality: null,
         };
-        const velocityWeight = Number(base.velocity_weight ?? 0.25);
-        const painWeight = Number(base.pain_density_weight ?? 0.25);
-        const crossWeight = Number(base.cross_platform_weight ?? 0.20);
-        const engagementWeight = Number(base.engagement_weight ?? 0.20);
+        const velocityWeight = Number(base.velocity_weight ?? 0.20);
+        const painWeight = Number(base.pain_density_weight ?? 0.20);
+        const crossWeight = Number(base.cross_platform_weight ?? 0.15);
+        const engagementWeight = Number(base.engagement_weight ?? 0.15);
         const volumeWeight = Number(base.volume_weight ?? 0.10);
+        const evidenceQualityWeight = Number(base.evidence_quality_weight ?? 0.20);
 
         const rows = [
             { label: "Velocity", value: clampPercent(base.velocity), weight: velocityWeight, emoji: "R" },
@@ -66,6 +70,7 @@ export default function ScoreBreakdownTooltip({
             { label: "Cross-Platform", value: clampPercent(base.cross_platform), weight: crossWeight, emoji: "X" },
             { label: "Engagement", value: clampPercent(base.engagement), weight: engagementWeight, emoji: "E" },
             { label: "Volume", value: clampPercent(base.volume), weight: volumeWeight, emoji: "V" },
+            { label: "Evidence Quality", value: clampPercent(base.evidence_quality), weight: evidenceQualityWeight, emoji: "Q" },
         ];
 
         const weightedTotal = rows.reduce((sum, row) => sum + ((row.value ?? 0) * row.weight), 0);
@@ -74,6 +79,7 @@ export default function ScoreBreakdownTooltip({
         const painDensity = rows[1].value;
         const crossPlatform = rows[2].value;
         const volume = rows[4].value;
+        const evidenceQuality = rows[5].value;
 
         if (velocity != null && painDensity != null && velocity > 70 && painDensity < 30) {
             warnings.push("High velocity but low pain. This could be hype, not durable demand.");
@@ -83,6 +89,9 @@ export default function ScoreBreakdownTooltip({
         }
         if (volume != null && volume < 20) {
             warnings.push("Very low volume. Treat this as an early signal, not a settled opportunity.");
+        }
+        if (evidenceQuality != null && evidenceQuality < 30) {
+            warnings.push("Evidence quality is weak. The topic may be active, but buyer-proof is still thin.");
         }
         if (rows.some((row) => row.value == null)) {
             warnings.push("Some score inputs are missing on older rows. A fresh market scan will fill them in.");
