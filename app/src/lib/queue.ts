@@ -5,6 +5,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveRedditLabContextForValidation } from "@/lib/reddit-lab-server";
+import { type RedditLabValidationOptions } from "@/lib/reddit-lab";
 
 export const VALIDATION_QUEUE = "idea-validation";
 const VALIDATION_RETRY_LIMIT = 2;
@@ -15,6 +17,8 @@ export interface ValidationJobPayload {
     userId: string;
     idea: string;
     depth: ValidationDepth;
+    origin?: string;
+    redditLab?: RedditLabValidationOptions | null;
 }
 
 export interface ValidationJobSnapshot {
@@ -311,11 +315,21 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
         }
     };
 
+    const redditLabResolved = payload.redditLab
+        ? await resolveRedditLabContextForValidation(
+            payload.userId,
+            payload.origin || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
+            payload.redditLab,
+            true,
+        )
+        : null;
+
     await fs.writeFile(configPath, JSON.stringify({
         validation_id: payload.validationId,
         idea: payload.idea,
         user_id: payload.userId,
         depth: payload.depth || DEFAULT_DEPTH,
+        reddit_lab: redditLabResolved?.workerContext || null,
     }));
 
     try {

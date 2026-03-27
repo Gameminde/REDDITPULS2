@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import { Dock } from "./components/Dock";
 import { TopBar } from "./components/TopBar";
+import { FEATURE_FLAGS } from "@/lib/feature-flags";
 
 export function DashboardLayout({
     children,
@@ -36,13 +37,17 @@ export function DashboardLayout({
             .catch(() => {});
 
         const refreshAlerts = () => {
+            if (!FEATURE_FLAGS.ALERTS_ENABLED) {
+                setAlertCount(0);
+                return;
+            }
             fetch("/api/alerts")
                 .then((r) => r.ok ? r.json() : { unread_count: 0 })
                 .then((res) => setAlertCount(res.unread_count || 0))
                 .catch(() => setAlertCount(0));
         };
         refreshAlerts();
-        const alertInterval = setInterval(refreshAlerts, 60000);
+        const alertInterval = FEATURE_FLAGS.ALERTS_ENABLED ? setInterval(refreshAlerts, 60000) : null;
 
         supabase.from("posts").select("*", { count: "exact", head: true }).then(({ count }) => {
             setPostCount(count || 0);
@@ -56,7 +61,7 @@ export function DashboardLayout({
             .subscribe();
 
         return () => {
-            clearInterval(alertInterval);
+            if (alertInterval) clearInterval(alertInterval);
             supabase.removeChannel(channel);
         };
     }, [supabase]);

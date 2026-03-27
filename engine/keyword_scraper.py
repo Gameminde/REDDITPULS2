@@ -345,6 +345,24 @@ def discover_subreddits(
     return extras[:20]
 
 
+def _normalize_subreddit_name(value: str) -> str:
+    return str(value or "").strip().lower().replace("r/", "").replace("/r/", "")
+
+
+def _allow_global_post(post: dict, selected_subs: list[str], forced_subreddits: list | None, icp_category: str, min_keyword_matches: int) -> bool:
+    subreddit = _normalize_subreddit_name(post.get("subreddit", ""))
+    selected_lookup = {_normalize_subreddit_name(sub) for sub in (selected_subs or []) if str(sub).strip()}
+    forced_lookup = {_normalize_subreddit_name(sub) for sub in (forced_subreddits or []) if str(sub).strip()}
+    matched_count = len(post.get("matched_keywords", []) or [])
+    score = int(post.get("score", 0) or 0)
+
+    if subreddit and (subreddit in selected_lookup or subreddit in forced_lookup):
+        return True
+    if icp_category == "DEV_TOOL":
+        return matched_count >= max(1, min_keyword_matches)
+    return matched_count >= max(2, min_keyword_matches + 1) and score >= 5
+
+
 def run_keyword_scan(
     keywords: list,
     duration: str = "10min",
@@ -370,6 +388,7 @@ def run_keyword_scan(
     start_time = time.time()
     seen_ids = set()
     all_posts = []
+    selected_subs = []
 
     # ── Determine scraping mode: Official API vs Anonymous ──
     use_official_api = PRAW_IMPORTED and praw_available()
@@ -385,6 +404,15 @@ def run_keyword_scan(
     if forced_subreddits:
         print(f"  [>] Forced subreddits: {forced_subreddits}")
     print(f"  [>] Duration: {duration} ({max_seconds}s)")
+    try:
+        selected_subs = _select_subreddits(
+            keywords,
+            forced_subreddits=forced_subreddits,
+            idea_text=idea_text,
+        )
+    except TypeError:
+        selected_subs = _select_subreddits(keywords, forced_subreddits=forced_subreddits)
+    selected_subs = filter_subreddits_by_icp(selected_subs, icp_category)
 
     # ── Phase 1: Global Reddit search ──
     if on_progress:
@@ -403,7 +431,8 @@ def run_keyword_scan(
                     post_data["matched_keywords"] = matched_kw
                     post_data["id"] = eid
                     post_data["selftext"] = post_data.get("body", "")
-                    all_posts.append(post_data)
+                    if _allow_global_post(post_data, selected_subs, forced_subreddits, icp_category, min_keyword_matches):
+                        all_posts.append(post_data)
         print(f"    [PRAW] Global search: {len(all_posts)} posts")
         if on_progress:
             on_progress(len(all_posts), f"Official API global search: {len(all_posts)} posts")
@@ -422,7 +451,7 @@ def run_keyword_scan(
 
             for child in children:
                 post = _parse_post(child, keywords, min_keyword_matches=min_keyword_matches)
-                if post and post["id"] not in seen_ids:
+                if post and post["id"] not in seen_ids and _allow_global_post(post, selected_subs, forced_subreddits, icp_category, min_keyword_matches):
                     seen_ids.add(post["id"])
                     all_posts.append(post)
 
@@ -434,16 +463,6 @@ def run_keyword_scan(
             time.sleep(2.5)
 
     # ── Phase 2: Subreddit-specific searches ──
-    try:
-        selected_subs = _select_subreddits(
-            keywords,
-            forced_subreddits=forced_subreddits,
-            idea_text=idea_text,
-        )
-    except TypeError:
-        # Preserve compatibility with tests that monkeypatch _select_subreddits.
-        selected_subs = _select_subreddits(keywords, forced_subreddits=forced_subreddits)
-    selected_subs = filter_subreddits_by_icp(selected_subs, icp_category)
     if on_progress:
         on_progress(len(all_posts), f"Scanning {len(selected_subs)} subreddits...")
 

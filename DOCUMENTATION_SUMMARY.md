@@ -27,11 +27,12 @@ RedditPulse validates startup ideas by scraping **8 platforms** (Reddit, HN, Pro
 | Category | Count | Total Lines |
 |----------|-------|-------------|
 | Root Python scripts | 6 | ~4,100 |
-| Engine modules | 32 | ~9,500 |
-| SQL schemas + migrations | 19 | ~900 |
-| API routes | 18 | ~3,000 |
-| Frontend pages | 20 | ~8,000 |
-| Frontend libs | 20 | ~3,500 |
+| Engine modules | 29 | ~9,500 |
+| SQL schemas + migrations | 19+ | ~900 |
+| API routes | 28 | ~3,000 |
+| Frontend pages | 21 | ~8,000 |
+| Frontend libs | 25 | ~3,500 |
+| Tests | 2 | targeted pipeline coverage |
 | Design docs | 17 | — |
 | **Total** | **~115+** | **~25,000+** |
 
@@ -71,7 +72,7 @@ Scheduled scrape → 45 topics × 12 categories → Score calculation → "Stock
 
 ---
 
-## Database (20+ tables)
+## Database (20+ live tables)
 
 **Core:** `idea_validations`, `ideas`, `idea_history`, `posts`, `profiles`, `user_ai_config`
 
@@ -79,7 +80,7 @@ Scheduled scrape → 45 topics × 12 categories → Score calculation → "Stock
 
 **Supporting:** `scans`, `ai_analysis`, `scraper_runs`, `trend_signals`, `enrichment_cache`, `graveyard_reports`, `morning_brief_cache`
 
-**Security:** RLS on every table. Plan escalation blocked. API keys encrypted at rest (`pgp_sym_encrypt`). Safe VIEW masks keys in browser queries.
+**Security:** RLS is enabled on all current live base tables. `validation_queue` and `trend_signals` are no longer publicly readable. AI keys are encrypted at rest (`pgp_sym_encrypt`). Residual drift remains around `user_ai_config_safe`, which is still publicly readable despite masking the key itself.
 
 ---
 
@@ -108,6 +109,6 @@ Stripe webhook upgrades `profiles.plan` to `"pro"` on payment.
 1. Google/Bing scraping susceptible to blocks (fallback: known competitors DB)
 2. PullPush.io has intermittent downtime
 3. G2/AppStore HTML parsing is fragile
-4. No automated tests
-5. Python spawned via pg-boss queue worker (config JSON passed via `--config-file`)
+4. Test coverage now exists, but it is still narrow and mostly focused on pipeline smoke/unit cases
+5. Validation now runs through a `pg-boss` queue worker, but scraper reliability and worker observability still need hardening
 6. Premium emails hardcoded in two separate files

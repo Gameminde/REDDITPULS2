@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkPremium } from "@/lib/check-premium";
 import { enqueueValidationJob } from "@/lib/queue";
 import { isValidDepth, DEFAULT_DEPTH, type ValidationDepth } from "@/lib/validation-depth";
+import { FEATURE_FLAGS } from "@/lib/feature-flags";
+import { hasRedditLabOptions, type RedditLabValidationOptions } from "@/lib/reddit-lab";
+import { getRedditConnectionSummary, loadSourcePackForUser, resolveRedditLabContextForValidation } from "@/lib/reddit-lab-server";
 
 const validateTimestamps = new Map<string, number[]>();
 const MAX_VALIDATIONS_PER_HOUR = 5;
@@ -45,6 +48,31 @@ export async function POST(req: NextRequest) {
 
         const trimmedIdea = idea.trim().slice(0, 2000);
         const depth: ValidationDepth = isValidDepth(body?.depth) ? body.depth : DEFAULT_DEPTH;
+        let redditLabOptions: RedditLabValidationOptions | null = hasRedditLabOptions(body?.reddit_lab)
+            ? body.reddit_lab
+            : null;
+
+        if (redditLabOptions && !FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED) {
+            return NextResponse.json({ error: "Reddit Connection Lab is disabled." }, { status: 400 });
+        }
+
+        if (!redditLabOptions && FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED) {
+            const [connection, defaultPack] = await Promise.all([
+                getRedditConnectionSummary(user.id),
+                loadSourcePackForUser(user.id, null),
+            ]);
+            if (connection?.status === "connected") {
+                redditLabOptions = {
+                    connection_id: connection.id,
+                    source_pack_id: defaultPack?.id || null,
+                    use_connected_context: true,
+                };
+            }
+        }
+
+        const redditLabPreview = redditLabOptions
+            ? await resolveRedditLabContextForValidation(user.id, req.nextUrl.origin, redditLabOptions, false)
+            : null;
 
         const { data: validation, error } = await supabase
             .from("idea_validations")
@@ -54,6 +82,7 @@ export async function POST(req: NextRequest) {
                 model: "multi-brain",
                 status: "queued",
                 depth,
+                report: redditLabPreview?.preview ? { reddit_lab_context: redditLabPreview.preview } : null,
             })
             .select()
             .single();
@@ -73,6 +102,8 @@ export async function POST(req: NextRequest) {
                 userId: user.id,
                 idea: trimmedIdea,
                 depth,
+                origin: req.nextUrl.origin,
+                redditLab: redditLabOptions,
             });
 
             return NextResponse.json({

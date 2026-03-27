@@ -113,7 +113,7 @@ RedditPulse is a **startup idea validation platform** that scrapes Reddit, Hacke
 | `run_validation_test.py` | 70 | CLI test harness for validation pipeline |
 | `generate_report.py` | 43 | Safe CLI wrapper for report synthesis (replaces old RCE-vulnerable inline exec) |
 
-### Engine Modules (32 files)
+### Engine Modules (29 files)
 
 | Module | Lines | Category | Purpose |
 |--------|-------|----------|---------|
@@ -163,17 +163,23 @@ RedditPulse is a **startup idea validation platform** that scrapes Reddit, Hacke
 | `schema_scans.sql` | 88 | Extended `scans` + `ai_analysis` schema |
 | `fix_api_key_column.sql` | 13 | Adds plain `api_key` fallback column |
 
-### Migrations (6 files)
+### Migrations (selected highlights)
 
 | File | Purpose |
 |------|---------|
 | `005_strategic_features.sql` | Creates `pain_alerts`, `alert_matches`, `competitor_complaints`, `graveyard_reports` + RLS |
 | `006_morning_brief_cache.sql` | Creates `morning_brief_cache` (per-user, JSONB brief + timeline) |
+| `011_drop_legacy_plaintext_keys.sql` | Drops plaintext AI-key paths and recreates `user_ai_config_safe` masked view |
+| `012_ai_config_encryption_rpcs.sql` | Adds encrypted AI-config RPCs and base grant model |
+| `013_ai_config_multi_model_support.sql` | Extends encrypted AI-config RPCs for multi-model support |
 | `007_idea_validations_extra_columns.sql` | Adds `verdict_source`, `synthesis_method`, `debate_mode`, `platform_breakdown` |
 | `008_ideas_theme_fields.sql` | Adds `post_count_24h`, `pain_count`, `pain_summary` to ideas |
 | `009_monitor_core.sql` | Creates `monitors` + `monitor_events` (unified monitoring layer) |
 | `010_live_market_memory.sql` | Creates `monitor_snapshots` (state snapshots with direction tracking) |
 | `014_validation_depth.sql` | Adds `depth` column to `idea_validations` (text, default 'quick') |
+| `015_idea_trend_baselines.sql` | Adds `last_24h_update` / `last_7d_update` trend-baseline timestamps |
+| `016_schema_cleanup_lockdown_and_repair.sql` | Removes accidental foreign tables, restores `user_requested_subreddits`, and locks down `validation_queue` / `trend_signals` |
+| `017_normalize_public_grants.sql` | Normalizes anon/authenticated/service-role grants to match live RLS usage |
 
 ---
 
@@ -739,12 +745,12 @@ created_at TIMESTAMPTZ
 | `enrichment_cache` | SO/GH/G2/AppStore enrichment (7-day TTL) |
 | `graveyard_reports` | Public SEO pages for failed ideas |
 | `morning_brief_cache` | Per-user daily digest cache |
-| `user_settings` | Legacy settings (plaintext keys) |
+| `user_settings` | Legacy/drifted settings table still present in the live DB; migration intent and docs are not fully aligned |
 | `user_requested_subreddits` | User-discovered subreddits to add to scraper coverage |
 
 ### Row Level Security
 
-Every table has RLS enabled. Key policies:
+Every current live base table has RLS enabled. Key policies:
 
 - **User-scoped**: `idea_validations`, `pain_alerts`, `alert_matches`, `watchlists`, `monitors`, `monitor_events`, `monitor_snapshots` → `auth.uid() = user_id`
 - **Public read**: `ideas`, `idea_history`, `graveyard_reports` (where `is_public = true`), `enrichment_cache`, `scraper_runs`
@@ -752,6 +758,12 @@ Every table has RLS enabled. Key policies:
 - **API key protection**: `user_ai_config_safe` VIEW masks `api_key_encrypted` as `'••••••••'`
 
 ---
+
+Additional live security notes:
+
+- `validation_queue` and `trend_signals` are service-role-only after the 2026-03-24 hardening pass.
+- `user_ai_config_safe` is still a masked view, but its live grants remain broader than intended and should be tightened.
+- Current verification reference: [SUPABASE_POST_HARDENING_CHECKLIST.md](/c:/Users/PC/Desktop/youcef/A/SUPABASE_POST_HARDENING_CHECKLIST.md)
 
 ## 12. Frontend Architecture
 
@@ -876,6 +888,12 @@ const PREMIUM_EMAILS = [
 
 ## 15. Limitations & Known Issues
 
+**Current state note (2026-03-24):**
+
+- Validation now runs through a `pg-boss` queue worker with retries and depth-aware timeouts via [queue.ts](/c:/Users/PC/Desktop/youcef/A/RedditPulse/app/src/lib/queue.ts) and [worker.ts](/c:/Users/PC/Desktop/youcef/A/RedditPulse/app/worker.ts).
+- The repo now includes targeted pipeline tests in [test_pipeline.py](/c:/Users/PC/Desktop/youcef/A/RedditPulse/tests/test_pipeline.py).
+- Treat any older wording below that says “no queue” or “no tests” as historical drift from an earlier app state.
+
 1. **Google/Bing Scraping** — Competition analysis relies on web scraping of search results, which is susceptible to blocks and CAPTCHAs. Robust fallback to `KNOWN_COMPETITORS` database mitigates this.
 
 2. **PullPush.io Availability** — Historical Reddit data depends on PullPush.io, a third-party service that has intermittent downtime.
@@ -955,6 +973,12 @@ The `docs/` folder contains 17 design documents for planned/implemented features
 ---
 
 ## 17. Technical Debt & Remediation Roadmap
+
+**Current state note (2026-03-24):**
+
+- The queue gap called out in older audit text is no longer current; a `pg-boss` validation queue is now live in [queue.ts](/c:/Users/PC/Desktop/youcef/A/RedditPulse/app/src/lib/queue.ts).
+- The “zero automated tests” claim is also stale; the repo now has targeted validation pipeline tests in [test_pipeline.py](/c:/Users/PC/Desktop/youcef/A/RedditPulse/tests/test_pipeline.py).
+- The most urgent current security drift is the publicly readable `user_ai_config_safe` view documented in [SUPABASE_POST_HARDENING_CHECKLIST.md](/c:/Users/PC/Desktop/youcef/A/SUPABASE_POST_HARDENING_CHECKLIST.md).
 
 ### Overall Assessment: B+
 

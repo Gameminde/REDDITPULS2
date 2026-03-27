@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useUserPlan } from "@/lib/use-user-plan";
 import { PremiumGate } from "@/app/components/premium-gate";
 import { VALIDATION_DEPTHS, type ValidationDepth, DEFAULT_DEPTH } from "@/lib/validation-depth";
+import { ValidationProgressPane, type ValidationProgressEvent } from "./ValidationProgressPane";
 
 /* ── Status pipeline constants ───────────────────────── */
 
@@ -86,7 +87,9 @@ type Validation = {
     verdict: string;
     confidence: number;
     created_at?: string;
+    updated_at?: string;
     posts_found?: number;
+    progress_log?: ValidationProgressEvent[];
     report: any;
 };
 
@@ -127,6 +130,81 @@ function formatElapsedTime(totalSeconds: number) {
     const mm = String(Math.floor(safe / 60)).padStart(2, "0");
     const ss = String(safe % 60).padStart(2, "0");
     return `${mm}:${ss}`;
+}
+
+function deriveProgressEventsFromLiveProgress(report: any): ValidationProgressEvent[] {
+    const lines: LiveProgressLine[] = Array.isArray(report?.live_progress?.lines)
+        ? report.live_progress.lines
+        : [];
+
+    return lines
+        .map((line) => {
+            const message = typeof line?.message === "string" ? line.message.trim() : "";
+            if (!message) return null;
+
+            const lower = message.toLowerCase();
+            const event: ValidationProgressEvent = {
+                ts: typeof line.id === "number" ? line.id : undefined,
+                message,
+            };
+
+            const sourcePatterns: Array<[ValidationProgressEvent["source"], RegExp]> = [
+                ["reddit", /reddit:\s*(\d+)/i],
+                ["reddit_connected", /connected reddit:\s*(\d+)/i],
+                ["reddit_comment", /reddit comments?:\s*(\d+)/i],
+                ["hackernews", /(?:hn|hacker news):\s*(\d+)/i],
+                ["producthunt", /product ?hunt:\s*(\d+)/i],
+                ["indiehackers", /indie ?hackers:\s*(\d+)/i],
+                ["g2_review", /g2(?: reviews?)?:\s*(\d+)/i],
+                ["job_posting", /jobs?:\s*(\d+)/i],
+            ];
+
+            for (const [source, pattern] of sourcePatterns) {
+                const match = message.match(pattern);
+                if (match) {
+                    event.phase = "scraping";
+                    event.source = source;
+                    event.count = Number(match[1] || 0);
+                    return event;
+                }
+            }
+
+            if (lower.includes("decomposition complete")) {
+                event.phase = "decomposing";
+                return event;
+            }
+            if (lower.includes("deduplicated evidence")) {
+                event.phase = "dedup";
+                return event;
+            }
+            if (lower.includes("pass 1 of 3") || lower.includes("market analysis")) {
+                event.phase = "synthesis";
+                return event;
+            }
+            if (lower.includes("pass 2 of 3") || lower.includes("strategy")) {
+                event.phase = "synthesis";
+                return event;
+            }
+            if (lower.includes("pass 3 of 3") || lower.includes("action plan")) {
+                event.phase = "synthesis";
+                return event;
+            }
+            const roundMatch = message.match(/round\s+(\d+)/i);
+            if (roundMatch) {
+                event.phase = "debate";
+                event.round = Number(roundMatch[1]);
+                event.total_rounds = 2;
+                return event;
+            }
+            if (lower.includes("updated position")) {
+                event.phase = "debate";
+                event.changed = true;
+                return event;
+            }
+
+            return event;
+        })
+        .filter((event): event is ValidationProgressEvent => Boolean(event));
 }
 
 /* ── Helpers ─────────────────────────────────────────── */
@@ -257,6 +335,14 @@ const ValidatePage = () => {
         typeof activeValidation?.report === "string"
             ? JSON.parse(activeValidation.report)
             : activeValidation?.report || {};
+    const progressEvents = Array.isArray(activeValidation?.progress_log) && activeValidation.progress_log.length > 0
+        ? activeValidation.progress_log
+        : deriveProgressEventsFromLiveProgress(parsedReport);
+    const platformWarnings = Array.isArray(parsedReport?.data_quality?.platform_warnings)
+        ? parsedReport.data_quality.platform_warnings
+        : Array.isArray(parsedReport?.platform_warnings)
+            ? parsedReport.platform_warnings
+            : [];
 
     const appendLiveProgress = useCallback((report: any) => {
         const liveLines: LiveProgressLine[] = Array.isArray(report?.live_progress?.lines)
@@ -665,6 +751,16 @@ const ValidatePage = () => {
                         </Link>
                     </div>
                 </div>
+            )}
+
+            {(activeValidation || isValidating) && (
+                <ValidationProgressPane
+                    status={currentStatus || (isValidating ? "starting" : "")}
+                    progressEvents={progressEvents}
+                    createdAt={activeValidation?.created_at}
+                    platformWarnings={platformWarnings}
+                    redditLabContext={parsedReport?.reddit_lab_context || null}
+                />
             )}
 
             {activeValidationWarning && (

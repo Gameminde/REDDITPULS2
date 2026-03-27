@@ -1,3 +1,8 @@
+import {
+    buildOpportunitySignalContract,
+    type OpportunitySignalContract,
+} from "@/lib/opportunity-signal";
+
 export type TrustLevel = "HIGH" | "MEDIUM" | "LOW";
 
 export interface NormalizedSource {
@@ -110,13 +115,34 @@ function baseConfidencePoints(confidenceLevel: string, confidenceScore?: number)
     return 10;
 }
 
+function firstFiniteNumber(...values: unknown[]): number {
+    for (const value of values) {
+        if (value === null || value === undefined || value === "") continue;
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+}
+
 export function buildOpportunityTrust(row: Record<string, unknown>): TrustMetadata {
     const sources = normalizeSources(row.sources);
     const topPosts = normalizeArray<Record<string, unknown>>(row.top_posts);
+    const signalContract = (
+        row.signal_contract && typeof row.signal_contract === "object"
+            ? row.signal_contract
+            : buildOpportunitySignalContract({
+                topPosts,
+                sources,
+                sourceCount: Number(row.source_count || sources.length || 0),
+            })
+    ) as OpportunitySignalContract;
     const sourceCount = Number(row.source_count || sources.length || 0);
     const evidenceCount = Number(row.post_count_7d || row.post_count_total || topPosts.length || 0);
-    const directEvidenceCount = topPosts.length;
-    const directQuoteCount = Number(row.pain_count || 0);
+    const directEvidenceCount = Number(signalContract.buyer_native_direct_count || 0);
+    const directQuoteCount = Math.min(
+        Number(row.pain_count || 0),
+        Math.max(directEvidenceCount, 0),
+    );
     const freshnessHours = getFreshnessHours(String(row.last_updated || ""));
 
     const weakSignalReasons: string[] = [];
@@ -134,18 +160,30 @@ export function buildOpportunityTrust(row: Record<string, unknown>): TrustMetada
     if (String(row.confidence_level || "").toUpperCase() === "LOW") {
         weakSignalReasons.push("Model confidence is low");
     }
+    for (const reason of signalContract.reasons || []) {
+        if (!weakSignalReasons.includes(reason)) {
+            weakSignalReasons.push(reason);
+        }
+    }
     if (directEvidenceCount === 0) {
-        inferenceFlags.push("No representative evidence post attached yet");
+        inferenceFlags.push("No buyer-native direct proof attached yet");
     }
     if (directQuoteCount === 0 && evidenceCount > 0) {
         inferenceFlags.push("Pain summary is inferred from clustered posts, not direct quotes");
     }
+    if (signalContract.support_level === "hypothesis") {
+        inferenceFlags.push("Representative posts lean more on context than validated buyer pain");
+    }
 
     const score =
-        Math.min(evidenceCount, 40) * 0.75 +
+        Math.min(evidenceCount, 40) * 0.6 +
         Math.min(sourceCount, 4) * 6 +
+        Math.min(directEvidenceCount, 4) * 6 +
         baseConfidencePoints(String(row.confidence_level || "")) +
-        (freshnessHours == null ? 8 : freshnessHours <= 6 ? 20 : freshnessHours <= 24 ? 16 : freshnessHours <= 48 ? 10 : 4);
+        (signalContract.support_level === "evidence_backed" ? 16 : signalContract.support_level === "supporting_context" ? 8 : 0) +
+        (freshnessHours == null ? 8 : freshnessHours <= 6 ? 20 : freshnessHours <= 24 ? 16 : freshnessHours <= 48 ? 10 : 4) -
+        (signalContract.single_source ? 8 : 0) -
+        (signalContract.hn_launch_heavy ? 14 : 0);
 
     const normalizedScore = Math.max(0, Math.min(100, Math.round(score)));
     const level = levelFromScore(normalizedScore);
@@ -175,6 +213,7 @@ export function buildValidationTrust(input: {
     const report = (input.report || {}) as Record<string, unknown>;
     const signalSummary = (report.signal_summary || {}) as Record<string, unknown>;
     const dataQuality = (report.data_quality || {}) as Record<string, unknown>;
+    const audit = (report._audit || {}) as Record<string, unknown>;
     const platformWarnings = normalizeArray<Record<string, unknown>>(dataQuality.platform_warnings || report.platform_warnings);
     const contradictions = normalizeArray<unknown>(dataQuality.contradictions);
     const warnings = normalizeArray<unknown>(dataQuality.warnings);
@@ -191,7 +230,13 @@ export function buildValidationTrust(input: {
     const directQuoteCount =
         Number(signalSummary.pain_quotes_found || 0) ||
         normalizeArray((report.market_analysis as Record<string, unknown> | undefined)?.pain_quotes).length;
-    const directEvidenceCount = evidenceCount;
+    const directEvidenceCount = firstFiniteNumber(
+        audit.direct_evidence_count,
+        dataQuality.direct_evidence_count,
+        signalSummary.direct_evidence_count,
+        report.direct_evidence_count,
+        0,
+    );
     const freshnessHours = getFreshnessHours(String(input.completed_at || input.created_at || ""));
 
     const weakSignalReasons: string[] = [];

@@ -1,0 +1,19 @@
+export const FEATURE_FLAGS = {
+    ALERTS_ENABLED: process.env.NEXT_PUBLIC_ALERTS_ENABLED === "true",
+    DIGEST_ENABLED: process.env.NEXT_PUBLIC_DIGEST_ENABLED === "true",
+    TRENDS_ENABLED: process.env.NEXT_PUBLIC_TRENDS_ENABLED === "true",
+    COMPETITORS_ENABLED: process.env.NEXT_PUBLIC_COMPETITORS_ENABLED === "true",
+    WTP_ENABLED: process.env.NEXT_PUBLIC_WTP_ENABLED === "true",
+    GRAVEYARD_ENABLED: process.env.NEXT_PUBLIC_GRAVEYARD_ENABLED === "true",
+    OPPORTUNITY_LAB_ENABLED: process.env.NEXT_PUBLIC_OPPORTUNITY_LAB_ENABLED !== "false",
+    REDDIT_CONNECTION_LAB_ENABLED: process.env.NEXT_PUBLIC_REDDIT_CONNECTION_LAB_ENABLED !== "false",
+
+    VALIDATE_ENABLED: true,
+    REPORTS_ENABLED: true,
+    STOCK_MARKET_ENABLED: true,
+    EXPLORE_ENABLED: true,
+    SAVED_ENABLED: true,
+    SETTINGS_ENABLED: true,
+} as const;
+
+export type FeatureFlags = typeof FEATURE_FLAGS;

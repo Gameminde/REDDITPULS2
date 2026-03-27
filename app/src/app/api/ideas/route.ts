@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 import { buildEvidenceSummary, buildOpportunityEvidence } from "@/lib/evidence";
+import { buildOpportunitySignalContract, shouldSuppressOpportunityIdeaCard } from "@/lib/opportunity-signal";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 
 const supabase = createClient(
@@ -25,7 +26,8 @@ export async function GET(request: Request) {
     const sort = searchParams.get("sort") || "score";
     const direction = searchParams.get("direction") || "desc";
     const category = searchParams.get("category") || "";
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+    const includeExploratory = searchParams.get("include_exploratory") === "1";
+    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 200);
 
     let query = supabase
         .from("ideas")
@@ -71,11 +73,18 @@ export async function GET(request: Request) {
         const parsedKeywords = safeParseJson(idea.keywords);
         const parsedIcpData = safeParseJson(idea.icp_data);
         const parsedCompetitionData = safeParseJson(idea.competition_data);
+        const parsedScoreBreakdown = safeParseJson(idea.score_breakdown);
         const normalizedSources = normalizeSources(idea.sources);
+        const signalContract = buildOpportunitySignalContract({
+            topPosts: Array.isArray(parsedTopPosts) ? parsedTopPosts as Array<Record<string, unknown>> : [],
+            sources: normalizedSources,
+            sourceCount: Number(idea.source_count || normalizedSources.length || 0),
+        });
         const trust = buildOpportunityTrust({
             ...idea,
             sources: normalizedSources,
             top_posts: parsedTopPosts,
+            signal_contract: signalContract,
         });
         const evidence = buildOpportunityEvidence({
             ...idea,
@@ -105,6 +114,8 @@ export async function GET(request: Request) {
             keywords: parsedKeywords,
             icp_data: parsedIcpData,
             competition_data: parsedCompetitionData,
+            score_breakdown: parsedScoreBreakdown,
+            signal_contract: signalContract,
             trust,
             evidence,
             evidence_summary: evidenceSummary,
@@ -112,7 +123,14 @@ export async function GET(request: Request) {
             direct_vs_inferred: evidenceSummary.direct_vs_inferred,
             strategy_preview: buildOpportunityStrategyPreview(strategy),
         };
-    });
+    }).filter((idea: Record<string, unknown>) => (
+        includeExploratory
+            ? true
+            : !shouldSuppressOpportunityIdeaCard({
+                signalContract: idea.signal_contract as ReturnType<typeof buildOpportunitySignalContract>,
+                postCountTotal: Number(idea.post_count_total || 0),
+            })
+    ));
 
     return NextResponse.json({ ideas, total: ideas.length });
 }

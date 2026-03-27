@@ -11,6 +11,7 @@ Usage:
 """
 
 import asyncio
+from collections import Counter
 import random
 import re
 import time
@@ -63,6 +64,22 @@ class RateLimiter:
         self.semaphore.release()
 
 
+def _empty_stats(subs: list[str], sort_modes: list[str]) -> dict:
+    return {
+        "requested_subreddits": len(subs),
+        "requested_requests": len(subs) * len(sort_modes),
+        "successful_requests": 0,
+        "failed_requests": 0,
+        "status_counts": {},
+        "subreddit_post_counts": {},
+        "subreddits_with_posts": 0,
+        "zero_post_subreddits": list(subs),
+        "failures": [],
+        "elapsed_seconds": 0.0,
+        "mode": "async",
+    }
+
+
 # ═══════════════════════════════════════════════════════
 # ASYNC SCRAPER
 # ═══════════════════════════════════════════════════════
@@ -102,16 +119,25 @@ async def _fetch_subreddit(
     subreddit: str,
     sort: str = "new",
     limit: int = 100,
-) -> list[dict]:
+) -> dict:
     """Fetch posts from one subreddit with rate limiting + retry."""
     url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "application/json",
-    }
     params = {"limit": limit, "raw_json": 1}
+    result = {
+        "subreddit": subreddit,
+        "sort": sort,
+        "status": None,
+        "posts": [],
+        "error": None,
+        "attempts": 0,
+    }
 
     for attempt in range(RETRY_LIMIT + 1):
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "application/json",
+        }
+        result["attempts"] = attempt + 1
         await limiter.acquire()
         proxy = _rotator.format_for_aiohttp() if _rotator.has_proxies() else None
         try:
@@ -120,6 +146,7 @@ async def _fetch_subreddit(
                 proxy=proxy,
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
             ) as resp:
+                result["status"] = resp.status
                 if resp.status == 429:
                     # Rate limited — back off
                     wait = 5 * (attempt + 1)
@@ -129,8 +156,11 @@ async def _fetch_subreddit(
                     continue
 
                 if resp.status != 200:
+                    body = (await resp.text())[:160].replace("\n", " ").strip()
+                    result["error"] = f"HTTP {resp.status}: {body}" if body else f"HTTP {resp.status}"
+                    print(f"    [ASYNC] r/{subreddit}/{sort} returned {resp.status}")
                     limiter.release()
-                    return []
+                    return result
 
                 data = await resp.json()
                 limiter.release()
@@ -142,21 +172,24 @@ async def _fetch_subreddit(
                     post = _parse_post(child["data"])
                     if post:
                         posts.append(post)
-                return posts
+                result["posts"] = posts
+                return result
 
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             limiter.release()
+            result["error"] = f"{type(e).__name__}: {e}"
             if attempt < RETRY_LIMIT:
                 await asyncio.sleep(2 * (attempt + 1))
             else:
                 print(f"    [ASYNC] r/{subreddit}/{sort} failed after {RETRY_LIMIT + 1} attempts: {e}")
-                return []
+                return result
         except Exception as e:
             limiter.release()
+            result["error"] = f"{type(e).__name__}: {e}"
             print(f"    [ASYNC] r/{subreddit}/{sort} unexpected error: {e}")
-            return []
+            return result
 
-    return []
+    return result
 
 
 async def scrape_all_async(
@@ -185,6 +218,7 @@ async def scrape_all_async(
 
     subs = subreddits or TARGET_SUBREDDITS
     sort_modes = sorts or ["new", "hot"]
+    stats = _empty_stats(subs, sort_modes)
     limiter = RateLimiter(max_concurrent)
 
     # Build task list: every (subreddit, sort) combo
@@ -215,10 +249,30 @@ async def scrape_all_async(
 
             if isinstance(result, Exception):
                 print(f"    [ASYNC] r/{sub}/{sort} exception: {result}")
+                stats["failed_requests"] += 1
+                stats["failures"].append({
+                    "subreddit": sub,
+                    "sort": sort,
+                    "status": None,
+                    "error": str(result),
+                })
                 continue
 
+            status_key = str(result.get("status") or "unknown")
+            stats["status_counts"][status_key] = stats["status_counts"].get(status_key, 0) + 1
+            if result.get("error"):
+                stats["failed_requests"] += 1
+                stats["failures"].append({
+                    "subreddit": sub,
+                    "sort": sort,
+                    "status": result.get("status"),
+                    "error": result.get("error"),
+                })
+            else:
+                stats["successful_requests"] += 1
+
             new_count = 0
-            for post in result:
+            for post in result.get("posts", []):
                 key = post["external_id"]
                 if key not in seen:
                     seen.add(key)
@@ -229,6 +283,12 @@ async def scrape_all_async(
                 on_progress(completed, total, f"Scraped {completed}/{total} — {len(all_posts)} unique posts")
 
     elapsed = time.time() - start
+    subreddit_counts = Counter(p["subreddit"] for p in all_posts if p.get("subreddit"))
+    stats["subreddit_post_counts"] = dict(subreddit_counts)
+    stats["subreddits_with_posts"] = len(subreddit_counts)
+    stats["zero_post_subreddits"] = sorted([sub for sub in subs if subreddit_counts.get(sub, 0) == 0])
+    stats["elapsed_seconds"] = round(elapsed, 2)
+    scrape_all_async.last_run_stats = stats
     print(f"  [ASYNC] Done: {len(all_posts)} unique posts from {len(subs)} subs in {elapsed:.1f}s")
 
     return all_posts
@@ -239,6 +299,7 @@ def _sync_fallback(subreddits):
     import requests
     all_posts = []
     seen = set()
+    stats = _empty_stats(list(subreddits), ["new", "hot"])
     for sub in subreddits:
         for sort in ("new", "hot"):
             try:
@@ -249,8 +310,17 @@ def _sync_fallback(subreddits):
                 if proxies:
                     proxy_kwargs["proxies"] = proxies
                 resp = requests.get(url, headers=headers, params={"limit": 100, "raw_json": 1}, timeout=15, **proxy_kwargs)
+                stats["status_counts"][str(resp.status_code)] = stats["status_counts"].get(str(resp.status_code), 0) + 1
                 if resp.status_code != 200:
+                    stats["failed_requests"] += 1
+                    stats["failures"].append({
+                        "subreddit": sub,
+                        "sort": sort,
+                        "status": resp.status_code,
+                        "error": f"HTTP {resp.status_code}",
+                    })
                     continue
+                stats["successful_requests"] += 1
                 for child in resp.json().get("data", {}).get("children", []):
                     if child.get("kind") != "t3":
                         continue
@@ -258,10 +328,22 @@ def _sync_fallback(subreddits):
                     if post and post["external_id"] not in seen:
                         seen.add(post["external_id"])
                         all_posts.append(post)
-            except Exception:
-                pass
+            except Exception as e:
+                stats["failed_requests"] += 1
+                stats["failures"].append({
+                    "subreddit": sub,
+                    "sort": sort,
+                    "status": None,
+                    "error": f"{type(e).__name__}: {e}",
+                })
             time.sleep(2.5)
         print(f"    r/{sub}: {len([p for p in all_posts if p.get('subreddit') == sub])} posts")
+    subreddit_counts = Counter(p["subreddit"] for p in all_posts if p.get("subreddit"))
+    stats["subreddit_post_counts"] = dict(subreddit_counts)
+    stats["subreddits_with_posts"] = len(subreddit_counts)
+    stats["zero_post_subreddits"] = sorted([sub for sub in subreddits if subreddit_counts.get(sub, 0) == 0])
+    stats["mode"] = "sync"
+    _sync_fallback.last_run_stats = stats
     return all_posts
 
 

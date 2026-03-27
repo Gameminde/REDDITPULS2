@@ -8,7 +8,20 @@ import {
 } from "@/lib/trust";
 
 export type EvidenceEntityType = "opportunity" | "validation" | "alert" | "competitor";
-export type SourceClass = "pain" | "commercial" | "competitor" | "timing" | "verification";
+export type SourceClass =
+    | "pain"
+    | "commercial"
+    | "competitor"
+    | "timing"
+    | "verification"
+    | "community"
+    | "review"
+    | "jobs"
+    | "marketplace"
+    | "vendor"
+    | "trend"
+    | "forum"
+    | "dev-community";
 export type SignalKind =
     | "pain_point"
     | "buyer_intent"
@@ -16,9 +29,20 @@ export type SignalKind =
     | "competitor_weakness"
     | "trend_signal"
     | "market_summary"
-    | "execution_note";
+    | "execution_note"
+    | "complaint"
+    | "workaround"
+    | "willingness_to_pay"
+    | "job_requirement"
+    | "review_complaint"
+    | "launch_discussion"
+    | "feature_request";
 export type EvidenceDirectness = "direct_evidence" | "derived_metric" | "ai_inference";
 export type EvidenceConfidence = "HIGH" | "MEDIUM" | "LOW";
+export type VoiceType = "buyer" | "operator" | "founder" | "vendor" | "developer" | "marketplace" | "aggregator";
+export type EvidenceLayer = "problem" | "business" | "supporting";
+export type DirectnessTier = "direct" | "adjacent" | "supporting";
+export type ReliabilityTier = "stable" | "moderate" | "fragile";
 
 export interface EvidenceItem {
     id: string;
@@ -36,6 +60,10 @@ export interface EvidenceItem {
     score: number | null;
     directness: EvidenceDirectness;
     confidence: EvidenceConfidence;
+    voice_type?: VoiceType;
+    evidence_layer?: EvidenceLayer;
+    directness_tier?: DirectnessTier;
+    reliability_tier?: ReliabilityTier;
     metadata: Record<string, unknown>;
 }
 
@@ -136,6 +164,32 @@ function mapSourceClass(platform: string, signalKind: SignalKind): SourceClass {
     if (signalKind === "trend_signal") return "timing";
     if (platform === "github" || platform === "stackoverflow") return "verification";
     return "pain";
+}
+
+function normalizeSourceClass(value: unknown, platform: string, signalKind: SignalKind): SourceClass {
+    const raw = String(value || "").trim();
+    if (!raw) return mapSourceClass(platform, signalKind);
+    return raw as SourceClass;
+}
+
+function normalizeSignalKind(value: unknown, fallback: SignalKind): SignalKind {
+    const raw = String(value || "").trim();
+    if (!raw) return fallback;
+    return raw as SignalKind;
+}
+
+function mapDirectnessTier(value: unknown): DirectnessTier | undefined {
+    const raw = String(value || "").toLowerCase();
+    if (raw === "direct" || raw === "adjacent" || raw === "supporting") return raw as DirectnessTier;
+    return undefined;
+}
+
+function mapEvidenceDirectness(value: unknown): EvidenceDirectness {
+    const raw = String(value || "").toLowerCase();
+    if (raw === "direct") return "direct_evidence";
+    if (raw === "adjacent") return "derived_metric";
+    if (raw === "supporting") return "ai_inference";
+    return "direct_evidence";
 }
 
 export function buildEvidenceSummary(items: EvidenceItem[]): EvidenceSummary {
@@ -244,18 +298,22 @@ export function buildOpportunityEvidence(row: Record<string, unknown>, limit = 6
             id: buildId(["opportunity", row.id ? String(row.id) : null, "post", index]),
             entity_type: "opportunity",
             entity_key: String(row.slug || row.id || topic),
-            source_class: "pain",
-            source_name: platform,
+            source_class: normalizeSourceClass(post.source_class, platform, "pain_point"),
+            source_name: String(post.source_name || platform),
             platform,
             url: url || null,
             observed_at: toNullableIso(post.created_at || row.last_updated),
-            signal_kind: "pain_point",
+            signal_kind: normalizeSignalKind(post.signal_kind, "pain_point"),
             title: String(post.title || `Evidence for ${topic}`),
             snippet: String(post.summary || post.what_it_proves || "").trim() || null,
             author_handle: post.author ? String(post.author) : null,
             score: Number.isFinite(Number(post.score)) ? Number(post.score) : null,
-            directness: "direct_evidence",
+            directness: mapEvidenceDirectness(post.directness_tier),
             confidence: "HIGH",
+            voice_type: post.voice_type ? String(post.voice_type) as VoiceType : undefined,
+            evidence_layer: post.evidence_layer ? String(post.evidence_layer) as EvidenceLayer : undefined,
+            directness_tier: mapDirectnessTier(post.directness_tier),
+            reliability_tier: post.reliability_tier ? String(post.reliability_tier) as ReliabilityTier : undefined,
             metadata: {
                 subreddit: post.subreddit || null,
                 comments: post.comments || null,
@@ -302,19 +360,20 @@ export function buildValidationEvidence(report: Record<string, unknown>, validat
         const snippet = String(entry.what_it_proves || entry.insight || entry.summary || entry.body || "").trim() || null;
         const platform = inferPlatform(entry.source || url || entry.subreddit, "reddit");
         const whatItProves = String(entry.what_it_proves || "").toLowerCase();
-        const signalKind: SignalKind =
+        const inferredSignalKind: SignalKind =
             whatItProves.includes("price") || whatItProves.includes("pay") || whatItProves.includes("budget")
                 ? "pricing_signal"
                 : whatItProves.includes("compet")
                     ? "competitor_weakness"
                     : "pain_point";
+        const signalKind = normalizeSignalKind(entry.signal_kind, inferredSignalKind);
 
         return {
             id: buildId(["validation", validationId || "pending", "evidence", index]),
             entity_type: "validation" as const,
             entity_key: String(validationId || report.slug || "validation"),
-            source_class: mapSourceClass(platform, signalKind),
-            source_name: platform,
+            source_class: normalizeSourceClass(entry.source_class, platform, signalKind),
+            source_name: String(entry.source_name || platform),
             platform,
             url: url || null,
             observed_at: toNullableIso(entry.created_at || report.completed_at || report.generated_at),
@@ -323,8 +382,12 @@ export function buildValidationEvidence(report: Record<string, unknown>, validat
             snippet,
             author_handle: entry.author ? String(entry.author) : null,
             score: Number.isFinite(Number(entry.score)) ? Number(entry.score) : null,
-            directness: "direct_evidence" as const,
+            directness: mapEvidenceDirectness(entry.directness_tier),
             confidence: normalizeConfidence(entry.confidence),
+            voice_type: entry.voice_type ? String(entry.voice_type) as VoiceType : undefined,
+            evidence_layer: entry.evidence_layer ? String(entry.evidence_layer) as EvidenceLayer : undefined,
+            directness_tier: mapDirectnessTier(entry.directness_tier),
+            reliability_tier: entry.reliability_tier ? String(entry.reliability_tier) as ReliabilityTier : undefined,
             metadata: {
                 subreddit: entry.subreddit || null,
                 what_it_proves: entry.what_it_proves || null,

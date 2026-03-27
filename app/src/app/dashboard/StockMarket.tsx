@@ -1,13 +1,20 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import {
     TrendingUp, TrendingDown, Minus, Plus,
     ArrowUpRight, ArrowDownRight, Activity, BarChart3,
-    Eye, Zap, Clock, ExternalLink, Flame, Skull, Sparkles,
+    Eye, Zap, Clock, ExternalLink, Flame, Skull, Sparkles, AlertTriangle,
 } from "lucide-react";
+import ScoreBreakdownTooltip, { type ScoreBreakdown } from "./ScoreBreakdownTooltip";
+import {
+    getOpportunityPostSupportLevel,
+    rankOpportunityRepresentativePosts,
+    type OpportunitySignalContract,
+    type OpportunityTopPost,
+} from "@/lib/opportunity-signal";
 
 interface Idea {
     id: string;
@@ -22,87 +29,27 @@ interface Idea {
     post_count_total: number;
     post_count_7d: number;
     source_count: number;
-    sources: string[];
+    sources: Array<{ platform: string; count: number }>;
     category: string;
     reddit_velocity: number;
     google_trend_score: number;
     competition_score: number;
     cross_platform_multiplier: number;
-    top_posts: { title: string; source: string; subreddit: string; score: number; comments: number; url: string }[];
+    pain_count?: number;
+    score_breakdown?: Partial<ScoreBreakdown> | null;
+    signal_contract?: OpportunitySignalContract | null;
+    top_posts: OpportunityTopPost[];
     first_seen: string;
     last_updated: string;
 }
 
-type IdeaTopPost = Idea["top_posts"][number];
-
-const PAIN_SIGNAL_KEYWORDS = [
-    "hate", "frustrated", "struggling", "help", "issue",
-    "problem", "broken", "slow", "expensive", "annoying",
-    "anyone else", "does anyone", "how do i", "why does",
-    "can't", "cannot", "won't", "doesn't work", "need help",
-    "looking for", "recommendations", "alternative",
-];
-
-const THIRD_PARTY_PROBLEM_PATTERNS = [
-    "my mom", "my friend", "my neighbor", "my ex",
-];
-
-function decodeHtml(str: string) {
-    return str
+function decodeHtml(str?: string | null) {
+    return String(str || "")
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">");
-}
-
-function painSignalMatches(title: string) {
-    const normalized = decodeHtml(title).toLowerCase();
-    return PAIN_SIGNAL_KEYWORDS.filter((keyword) => normalized.includes(keyword));
-}
-
-function isThirdPartyProblemTitle(title: string) {
-    const normalized = decodeHtml(title).toLowerCase();
-    return THIRD_PARTY_PROBLEM_PATTERNS.some((pattern) => normalized.includes(pattern));
-}
-
-function isLikelyMemeTitle(post: IdeaTopPost) {
-    const normalized = decodeHtml(post.title || "").toLowerCase();
-    const hasQuestion = normalized.includes("?");
-    const painMatches = painSignalMatches(normalized).length;
-    return !hasQuestion && painMatches === 0 && Number(post.score || 0) > 500;
-}
-
-function getPainSignalPosts(posts: IdeaTopPost[]) {
-    const filtered = posts.filter((post) => !isThirdPartyProblemTitle(post.title || "") && !isLikelyMemeTitle(post));
-    const sorted = [...filtered].sort((left, right) => {
-        const leftPainCount = painSignalMatches(left.title || "").length;
-        const rightPainCount = painSignalMatches(right.title || "").length;
-        const leftHasPain = leftPainCount > 0 ? 1 : 0;
-        const rightHasPain = rightPainCount > 0 ? 1 : 0;
-
-        if (leftHasPain !== rightHasPain) {
-            return rightHasPain - leftHasPain;
-        }
-
-        if (leftPainCount !== rightPainCount) {
-            return rightPainCount - leftPainCount;
-        }
-
-        return Number(right.score || 0) - Number(left.score || 0);
-    });
-
-    if (sorted.length < 2) {
-        return {
-            posts: posts.slice(0, 3),
-            usedFallback: true,
-        };
-    }
-
-    return {
-        posts: sorted.slice(0, 3),
-        usedFallback: false,
-    };
 }
 
 type TabType = "top" | "trending" | "dying" | "new";
@@ -129,8 +76,9 @@ const CATEGORIES = [
 ];
 
 const CONFIDENCE_MAP: Record<string, { label: string; color: string; icon: string }> = {
-    LOW: { label: "Weak signal", color: "#f59e0b", icon: "⚠️" },
-    MEDIUM: { label: "Moderate", color: "#3b82f6", icon: "📊" },
+    INSUFFICIENT: { label: "Needs data", color: "#6b7280", icon: "🔍" },
+    LOW: { label: "Early signal", color: "#f59e0b", icon: "📡" },
+    MEDIUM: { label: "Solid signal", color: "#3b82f6", icon: "📊" },
     HIGH: { label: "Strong", color: "#22c55e", icon: "✅" },
     STRONG: { label: "Very Strong", color: "#10b981", icon: "🔥" },
 };
@@ -141,6 +89,24 @@ function TrendIcon({ direction, size = 14 }: { direction: string; size?: number 
     if (direction === "new") return <Sparkles style={{ width: size, height: size, color: "#8b5cf6" }} />;
     return <Minus style={{ width: size, height: size, color: "#64748b" }} />;
 }
+
+const SIGNAL_LEVEL_MAP: Record<OpportunitySignalContract["support_level"], { label: string; color: string; background: string }> = {
+    evidence_backed: {
+        label: "Buyer pain signal",
+        color: "#22c55e",
+        background: "rgba(34,197,94,0.12)",
+    },
+    supporting_context: {
+        label: "Context signal",
+        color: "#3b82f6",
+        background: "rgba(59,130,246,0.12)",
+    },
+    hypothesis: {
+        label: "Exploratory signal",
+        color: "#f59e0b",
+        background: "rgba(245,158,11,0.12)",
+    },
+};
 
 function ChangeDisplay({ value, prefix = "" }: { value: number; prefix?: string }) {
     const color = value > 0 ? "#22c55e" : value < 0 ? "#ef4444" : "#64748b";
@@ -179,11 +145,65 @@ function ScoreBar({ score, color = "#f97316" }: { score: number; color?: string 
     );
 }
 
+function normalizeScoreBreakdown(idea: Idea): ScoreBreakdown | null {
+    const raw = idea.score_breakdown && typeof idea.score_breakdown === "object"
+        ? idea.score_breakdown
+        : {};
+    const postCount = Number(idea.post_count_total || 0);
+    const painCount = Number(idea.pain_count || 0);
+    const painDensityFallback = postCount > 0 ? Math.min(100, (painCount / postCount) * 100) : null;
+    const volumeFallback = postCount > 0 ? Math.min(100, (Math.log(postCount + 1) / Math.log(500)) * 100) : null;
+    const hasAnyRaw = Object.keys(raw || {}).length > 0;
+
+    const breakdown: ScoreBreakdown = {
+        velocity: typeof raw.velocity === "number" ? raw.velocity : Number.isFinite(idea.reddit_velocity) ? idea.reddit_velocity : null,
+        pain_density: typeof raw.pain_density === "number"
+            ? raw.pain_density
+            : typeof (raw as Record<string, unknown>).pain_signal === "number"
+                ? Number((raw as Record<string, unknown>).pain_signal)
+                : painDensityFallback,
+        cross_platform: typeof raw.cross_platform === "number" ? raw.cross_platform : Number.isFinite(idea.cross_platform_multiplier) ? idea.cross_platform_multiplier : null,
+        engagement: typeof raw.engagement === "number" ? raw.engagement : null,
+        volume: typeof raw.volume === "number"
+            ? raw.volume
+            : typeof (raw as Record<string, unknown>).volume_bonus === "number"
+                ? Math.min(100, (Number((raw as Record<string, unknown>).volume_bonus) / 15) * 100)
+                : volumeFallback,
+        velocity_weight: typeof raw.velocity_weight === "number" ? raw.velocity_weight : 0.25,
+        pain_density_weight: typeof raw.pain_density_weight === "number" ? raw.pain_density_weight : 0.25,
+        cross_platform_weight: typeof raw.cross_platform_weight === "number" ? raw.cross_platform_weight : 0.20,
+        engagement_weight: typeof raw.engagement_weight === "number" ? raw.engagement_weight : 0.20,
+        volume_weight: typeof raw.volume_weight === "number" ? raw.volume_weight : 0.10,
+        raw_weighted_score: typeof raw.raw_weighted_score === "number" ? raw.raw_weighted_score : null,
+    };
+
+    const hasVisibleSignal = Object.values(breakdown).some((value) => typeof value === "number" && Number.isFinite(value));
+    return hasAnyRaw || hasVisibleSignal ? breakdown : null;
+}
+
 function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
     const [expanded, setExpanded] = useState(false);
-    const painSignalSelection = getPainSignalPosts(idea.top_posts || []);
+    const signalContract = idea.signal_contract || null;
+    const signalTone = signalContract
+        ? SIGNAL_LEVEL_MAP[signalContract.support_level]
+        : {
+            label: conf.label,
+            color: conf.color,
+            background: "rgba(148,163,184,0.12)",
+        };
+    const representativePosts = rankOpportunityRepresentativePosts(idea.top_posts || []).slice(0, 3);
+    const signalPanelTitle =
+        signalContract?.support_level === "evidence_backed"
+            ? "Buyer pain signals"
+            : signalContract?.support_level === "supporting_context"
+                ? "Supporting signals"
+                : "Context signals";
+    const scoreBreakdown = normalizeScoreBreakdown(idea);
+    const hasThinDataWarning =
+        ["LOW", "INSUFFICIENT"].includes(String(idea.confidence_level || "").toUpperCase())
+        || signalContract?.support_level === "hypothesis";
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -230,6 +250,23 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                         }}>
                             {idea.category}
                         </span>
+                        {hasThinDataWarning && (
+                            <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 10,
+                                padding: "2px 7px",
+                                borderRadius: 999,
+                                background: "rgba(245,158,11,0.12)",
+                                border: "1px solid rgba(245,158,11,0.18)",
+                                color: "#fbbf24",
+                                fontWeight: 700,
+                            }}>
+                                <AlertTriangle style={{ width: 10, height: 10 }} />
+                                Thin data
+                            </span>
+                        )}
                         {expanded && (
                             <span style={{ fontSize: 9, color: "#64748b" }}>Open details</span>
                         )}
@@ -237,21 +274,43 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b" }}>
                         <span>{idea.post_count_total} posts</span>
                         <span>{idea.source_count} {idea.source_count === 1 ? "source" : "sources"}</span>
-                        <span style={{ color: conf.color }}>{conf.icon} {conf.label}</span>
+                        <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            color: signalTone.color,
+                            background: signalTone.background,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            fontWeight: 700,
+                        }}>
+                            {signalTone.label}
+                        </span>
                     </div>
                 </div>
 
                 {/* Score */}
                 <div style={{ textAlign: "center" }}>
-                    <div style={{
-                        fontSize: 20, fontWeight: 800, color: scoreColor,
-                        fontFamily: "var(--font-mono)", lineHeight: 1,
-                    }}>
-                        {idea.current_score.toFixed(0)}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <div style={{
+                            fontSize: 20, fontWeight: 800, color: scoreColor,
+                            fontFamily: "var(--font-mono)", lineHeight: 1,
+                        }}>
+                            {idea.current_score.toFixed(0)}
+                        </div>
+                        <ScoreBreakdownTooltip
+                            score={idea.current_score}
+                            breakdown={scoreBreakdown}
+                        />
                     </div>
                     <div style={{ marginTop: 4, padding: "0 8px" }}>
                         <ScoreBar score={idea.current_score} color={scoreColor} />
                     </div>
+                    {hasThinDataWarning && (
+                        <div style={{ marginTop: 6, fontSize: 9, color: "#fbbf24", lineHeight: 1.4 }}>
+                            Score may overstate real demand
+                        </div>
+                    )}
                 </div>
 
                 {/* 24h */}
@@ -272,8 +331,10 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
 
                 {/* Sources */}
                 <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
-                    {(idea.sources || []).map((s) => (
-                        <span key={s} style={{
+                    {(idea.sources || []).map((source) => {
+                        const s = source.platform;
+                        return (
+                        <span key={`${idea.id}-${s}`} style={{
                             fontSize: 9, padding: "2px 5px", borderRadius: 3,
                             background: s === "reddit" ? "rgba(255,69,0,0.15)" :
                                 s === "hackernews" ? "rgba(255,102,0,0.15)" :
@@ -287,7 +348,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                         }}>
                             {s === "reddit" ? "R" : s === "hackernews" ? "HN" : s === "producthunt" ? "PH" : "IH"}
                         </span>
-                    ))}
+                    )})}
                 </div>
             </motion.div>
 
@@ -325,17 +386,18 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                         marginBottom: 10,
                                     }}>
                                         <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>
-                                            Pain signals
+                                            {signalPanelTitle}
                                         </span>
                                         <span style={{ color: "#94a3b8", fontSize: 10 }}>
-                                            {painSignalSelection.usedFallback
-                                                ? "Top posts (pain signals not yet available for this topic)"
-                                                : "Pain-keyword posts first, then upvotes"}
+                                            {signalContract?.summary || "Representative evidence ranked by buyer-native proof first."}
                                         </span>
                                     </div>
                                     {idea.top_posts && idea.top_posts.length > 0 ? (
                                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                            {painSignalSelection.posts.map((post, index) => (
+                                            {representativePosts.map((post, index) => {
+                                                const postSupport = getOpportunityPostSupportLevel(post);
+                                                const postTone = SIGNAL_LEVEL_MAP[postSupport];
+                                                return (
                                                 <a
                                                     key={`${idea.slug}-post-${index}`}
                                                     href={post.url}
@@ -356,6 +418,26 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                                     }}
                                                 >
                                                     <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                                                            <span style={{
+                                                                display: "inline-flex",
+                                                                alignItems: "center",
+                                                                gap: 4,
+                                                                fontSize: 9,
+                                                                padding: "2px 6px",
+                                                                borderRadius: 999,
+                                                                background: postTone.background,
+                                                                color: postTone.color,
+                                                                fontWeight: 700,
+                                                            }}>
+                                                                {postTone.label}
+                                                            </span>
+                                                            {post.signal_kind === "launch_discussion" && (
+                                                                <span style={{ fontSize: 9, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                                                                    launch/meta
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div style={{
                                                             fontSize: 12,
                                                             lineHeight: 1.45,
@@ -385,11 +467,11 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                                         marginTop: 2,
                                                     }} />
                                                 </a>
-                                            ))}
+                                            )})}
                                         </div>
                                     ) : (
                                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                                            No pain signals yet - run a scan to populate
+                                            No representative evidence yet - run a scan to populate
                                         </div>
                                     )}
                                 </div>
@@ -499,6 +581,7 @@ export default function StockMarketDashboard() {
     const [ideas, setIdeas] = useState<Idea[]>([]);
     const [tab, setTab] = useState<TabType>("top");
     const [category, setCategory] = useState("");
+    const [showEarlySignals, setShowEarlySignals] = useState(false);
     const [loading, setLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState("");
     const [scanning, setScanning] = useState(false);
@@ -513,7 +596,7 @@ export default function StockMarketDashboard() {
             const sortMap: Record<TabType, string> = {
                 top: "score", trending: "trending", dying: "dying", new: "new",
             };
-            const res = await fetch(`/api/ideas?sort=${sortMap[tab]}&category=${category}&limit=50`);
+            const res = await fetch(`/api/ideas?sort=${sortMap[tab]}&category=${category}&limit=120&include_exploratory=1`);
             const data = await res.json();
             setIdeas(data.ideas || []);
             setLastUpdated(new Date().toLocaleTimeString());
@@ -527,8 +610,8 @@ export default function StockMarketDashboard() {
     const fetchTrendCounts = useCallback(async () => {
         try {
             const [risingRes, fallingRes] = await Promise.all([
-                fetch(`/api/ideas?sort=trending&category=${category}&limit=100`),
-                fetch(`/api/ideas?sort=dying&category=${category}&limit=100`),
+                fetch(`/api/ideas?sort=trending&category=${category}&limit=200&include_exploratory=1`),
+                fetch(`/api/ideas?sort=dying&category=${category}&limit=200&include_exploratory=1`),
             ]);
 
             const [risingData, fallingData] = await Promise.all([
@@ -618,8 +701,20 @@ export default function StockMarketDashboard() {
         };
     }, [scanning, fetchScanStatus]);
 
-    const avgScore = ideas.length > 0 ? ideas.reduce((a, b) => a + b.current_score, 0) / ideas.length : 0;
-    const totalPosts = ideas.reduce((a, b) => a + b.post_count_total, 0);
+    const filteredIdeas = useMemo(() => {
+        if (showEarlySignals) return ideas;
+        return ideas.filter((idea) => {
+            const confidence = String(idea.confidence_level || "").toUpperCase();
+            const supportLevel = idea.signal_contract?.support_level || "hypothesis";
+            return !["LOW", "INSUFFICIENT"].includes(confidence) && supportLevel !== "hypothesis";
+        });
+    }, [ideas, showEarlySignals]);
+
+    const usingFallbackMarketFeed = !showEarlySignals && filteredIdeas.length === 0 && ideas.length > 0;
+    const visibleIdeas = usingFallbackMarketFeed ? ideas : filteredIdeas;
+    const hiddenEarlyCount = usingFallbackMarketFeed ? 0 : Math.max(0, ideas.length - visibleIdeas.length);
+    const avgScore = visibleIdeas.length > 0 ? visibleIdeas.reduce((a, b) => a + b.current_score, 0) / visibleIdeas.length : 0;
+    const totalPosts = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
 
     return (
         <div style={{ padding: "24px 32px", maxWidth: 1400, margin: "0 auto" }}>
@@ -826,8 +921,44 @@ export default function StockMarketDashboard() {
                             {c.label}
                         </button>
                     ))}
+                    <button
+                        onClick={() => setShowEarlySignals((value) => !value)}
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            border: `1px solid ${showEarlySignals ? "rgba(245,158,11,0.22)" : "rgba(255,255,255,0.08)"}`,
+                            background: showEarlySignals ? "rgba(245,158,11,0.12)" : "rgba(255,255,255,0.02)",
+                            color: showEarlySignals ? "#fbbf24" : "#94a3b8",
+                            cursor: "pointer",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            transition: "all 0.2s ease",
+                        }}
+                        title={showEarlySignals ? "Hide lower-confidence market signals" : "Show lower-confidence market signals too"}
+                    >
+                        <AlertTriangle style={{ width: 11, height: 11 }} />
+                        {showEarlySignals ? "Hide lower-confidence signals" : "Show all market signals"}
+                    </button>
                 </div>
             </div>
+
+            {!showEarlySignals && hiddenEarlyCount > 0 && (
+                <div style={{
+                    marginBottom: 14,
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    background: "rgba(34,197,94,0.07)",
+                    border: "1px solid rgba(34,197,94,0.14)",
+                    color: "#bbf7d0",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                }}>
+                    Showing stronger market signals first. {hiddenEarlyCount} lower-confidence or context-only idea{hiddenEarlyCount === 1 ? "" : "s"} hidden until you reveal the full market feed.
+                </div>
+            )}
 
             {/* Table Header */}
             <div style={{
@@ -848,7 +979,7 @@ export default function StockMarketDashboard() {
 
             {/* Idea Rows */}
             <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
-                {loading && ideas.length === 0 ? (
+                {loading && visibleIdeas.length === 0 ? (
                     <div style={{
                         padding: 60, textAlign: "center", color: "#475569",
                         fontSize: 14,
@@ -856,36 +987,40 @@ export default function StockMarketDashboard() {
                         <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
                         Loading ideas...
                     </div>
-                ) : ideas.length === 0 ? (
+                ) : visibleIdeas.length === 0 ? (
                     <div style={{
                         padding: 60, textAlign: "center", color: "#475569",
                         fontSize: 14,
                     }}>
-                        <Zap style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
-                        <div style={{ marginBottom: 12 }}>No ideas found yet.</div>
-                        <motion.button
-                            onClick={launchScan}
-                            disabled={scanning}
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            style={{
-                                padding: "10px 24px", borderRadius: 8,
-                                border: "1px solid rgba(249,115,22,0.3)",
-                                background: "linear-gradient(135deg, rgba(249,115,22,0.2), rgba(234,88,12,0.1))",
-                                color: "#fb923c", cursor: "pointer",
-                                fontSize: 14, fontWeight: 600,
-                            }}
-                        >
-                            <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-                            {scanning ? "Scanning..." : "Launch First Scan"}
-                        </motion.button>
-                        <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
-                            Scans Reddit, HN, ProductHunt & IndieHackers for opportunities
-                        </div>
+                        {ideas.length === 0 ? (
+                            <>
+                                <Zap style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
+                                <div style={{ marginBottom: 12 }}>No ideas found yet.</div>
+                                <motion.button
+                                    onClick={launchScan}
+                                    disabled={scanning}
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    style={{
+                                        padding: "10px 24px", borderRadius: 8,
+                                        border: "1px solid rgba(249,115,22,0.3)",
+                                        background: "linear-gradient(135deg, rgba(249,115,22,0.2), rgba(234,88,12,0.1))",
+                                        color: "#fb923c", cursor: "pointer",
+                                        fontSize: 14, fontWeight: 600,
+                                    }}
+                                >
+                                    <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
+                                    {scanning ? "Scanning..." : "Launch First Scan"}
+                                </motion.button>
+                                <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
+                                    Scans Reddit, HN, ProductHunt & IndieHackers for opportunities
+                                </div>
+                            </>
+                        ) : null}
                     </div>
                 ) : (
                     <AnimatePresence>
-                        {ideas.map((idea, i) => (
+                        {visibleIdeas.map((idea, i) => (
                             <IdeaRow key={idea.id} idea={idea} rank={i + 1} />
                         ))}
                     </AnimatePresence>

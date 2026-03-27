@@ -97,6 +97,7 @@ type NormalizedTranscript = {
 
 interface DebatePanelProps {
     transcript?: DebateTranscript | null;
+    contextNote?: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -293,7 +294,7 @@ function getVerdictTone(verdict: string) {
     return "text-risky";
 }
 
-export function DebatePanel({ transcript }: DebatePanelProps) {
+export function DebatePanel({ transcript, contextNote }: DebatePanelProps) {
     const normalized = normalizeTranscript(transcript);
     const availableTabs: DebateTabKey[] = [];
     if (normalized?.round1.length) {
@@ -445,6 +446,12 @@ export function DebatePanel({ transcript }: DebatePanelProps) {
                     )}
                 </div>
             </div>
+
+            {contextNote ? (
+                <div className="mt-4 rounded-xl border border-zinc-500/20 bg-zinc-500/10 p-3 text-xs leading-relaxed text-zinc-300">
+                    {contextNote}
+                </div>
+            ) : null}
 
             {activeTab === "round1" && renderEntries(normalized.round1, 1)}
             {activeTab === "round2" && (

@@ -16,3 +16,8 @@ sql/
 .vscode/
 .idea/
 *.swp
+.gitnexus
+.claude/
+AGENTS.md
+CLAUDE.md
+READKKK.md

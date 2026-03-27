@@ -142,7 +142,9 @@ def scrape_historical_multi(
         list of unique posts (deduplicated by external_id)
     """
     subs = subreddits or TARGET_SUBREDDITS
-    query = " ".join(keywords) if keywords else ""
+    query_terms = [str(keyword).strip() for keyword in (keywords or []) if str(keyword).strip()]
+    if not query_terms:
+        query_terms = [""]
 
     seen = set()
     all_posts = []
@@ -151,13 +153,14 @@ def scrape_historical_multi(
     print(f"  [PP] Historical scrape: {len(subs)} subs, {days_back} days back")
 
     for sub in subs:
-        posts = scrape_historical(sub, keyword=query, days_back=days_back, size=size_per_sub)
         new_count = 0
-        for post in posts:
-            if post["external_id"] not in seen:
-                seen.add(post["external_id"])
-                all_posts.append(post)
-                new_count += 1
+        for query in query_terms[:3]:
+            posts = scrape_historical(sub, keyword=query, days_back=days_back, size=size_per_sub)
+            for post in posts:
+                if post["external_id"] not in seen:
+                    seen.add(post["external_id"])
+                    all_posts.append(post)
+                    new_count += 1
 
         if new_count > 0:
             print(f"    [PP] r/{sub}: +{new_count} historical posts")
@@ -201,11 +204,13 @@ def scrape_historical_comments(
             body = item.get("body", "")
             if body in ("[removed]", "[deleted]") or len(body) < 20:
                 continue
+            snippet = re.sub(r"\s+", " ", body).strip()
+            title = snippet[:117] + "..." if len(snippet) > 120 else snippet
             comments.append({
                 "source": "reddit_comment",
                 "external_id": item.get("id", ""),
                 "subreddit": item.get("subreddit", ""),
-                "title": "",
+                "title": title,
                 "body": body[:3000],
                 "full_text": body[:3000],
                 "author": item.get("author", ""),
@@ -219,6 +224,57 @@ def scrape_historical_comments(
     except Exception as e:
         print(f"    [PP] Comments error for r/{subreddit}: {e}")
         return []
+
+
+def scrape_historical_comments_multi(
+    subreddits: list[str] | None = None,
+    keyword: str | list[str] = "",
+    days_back: int = 30,
+    size_per_sub: int = 25,
+    delay: float = 0.5,
+    max_total: int = 300,
+) -> list[dict]:
+    """
+    Scrape historical comments across multiple subreddits.
+
+    Comments are one of the strongest buyer-language sources in RedditPulse,
+    so we keep this helper lightweight and capped.
+    """
+    subs = subreddits or TARGET_SUBREDDITS
+    if isinstance(keyword, (list, tuple, set)):
+        query_terms = [str(item).strip() for item in keyword if str(item).strip()]
+    else:
+        query_terms = [str(keyword).strip()] if str(keyword).strip() else [""]
+    seen = set()
+    comments = []
+
+    for subreddit in subs:
+        added = 0
+        for query in query_terms[:3]:
+            batch = scrape_historical_comments(
+                subreddit,
+                keyword=query,
+                days_back=days_back,
+                size=size_per_sub,
+            )
+            for item in batch:
+                external_id = item.get("external_id")
+                if not external_id or external_id in seen:
+                    continue
+                seen.add(external_id)
+                comments.append(item)
+                added += 1
+                if len(comments) >= max_total:
+                    break
+            if len(comments) >= max_total:
+                break
+        if added:
+            print(f"    [PP] r/{subreddit}: +{added} historical comments")
+        if len(comments) >= max_total:
+            break
+        time.sleep(delay)
+
+    return comments[:max_total]
 
 
 # ═══════════════════════════════════════════════════════

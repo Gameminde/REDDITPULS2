@@ -31,11 +31,16 @@ from urllib.parse import quote
 # Add engine to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "engine"))
 
+from env_loader import load_local_env
+
+load_local_env(os.path.dirname(__file__))
+
 from config import TARGET_SUBREDDITS, PAIN_PHRASES, USER_AGENTS, SPAM_PATTERNS, HUMOR_INDICATORS
 from pain_stream import check_alerts_against_posts
 from competitor_deathwatch import scan_for_complaints, save_complaints
 from competition import KNOWN_COMPETITORS
 from trends_aggregator import aggregate_trends
+from evidence_taxonomy import apply_evidence_taxonomy, summarize_taxonomy
 import random
 
 # ── Supabase config ──
@@ -51,6 +56,7 @@ _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
 BASE_SUBREDDITS = list(TARGET_SUBREDDITS)
 _SCHEMA_CACHE = {}
+_ACTIVE_SCRAPER_CONTEXT = {}
 
 
 # ═══════════════════════════════════════════════════════
@@ -139,6 +145,94 @@ def load_user_requested_subreddits():
     all_subs = list(dict.fromkeys(BASE_SUBREDDITS + extra_subs))
     print(f"  [Scraper] Covering {len(all_subs)} subreddits ({len(extra_subs)} user-discovered)")
     return all_subs
+
+
+def reconcile_stale_scraper_runs(max_age_hours=6):
+    """Mark abandoned scraper_runs so the dashboard doesn't show zombie jobs forever."""
+    if not SUPABASE_URL:
+        return 0
+
+    stale_before = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    running_rows = sb_select("scraper_runs", "select=id,started_at,status&status=eq.running")
+    reconciled = 0
+
+    for row in running_rows:
+        started_at = _parse_datetime(row.get("started_at"))
+        if not started_at or started_at >= stale_before:
+            continue
+        resp = sb_patch("scraper_runs", f"id=eq.{row['id']}", {
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_text": f"Marked stale after exceeding {max_age_hours}h without completion",
+        })
+        if resp.status_code < 400:
+            reconciled += 1
+
+    if reconciled:
+        print(f"  [Scraper] Reconciled {reconciled} stale scraper_runs row(s)")
+    return reconciled
+
+
+def _count_source_posts(posts, source_prefix):
+    return sum(1 for post in posts if str(post.get("source", "")).startswith(source_prefix))
+
+
+def _should_retry_reddit_sync(async_stats, async_added, requested_subs):
+    if async_added < 10:
+        return True
+    if not async_stats:
+        return False
+
+    request_total = max(async_stats.get("requested_requests", 0), 1)
+    failure_ratio = async_stats.get("failed_requests", 0) / request_total
+    covered = async_stats.get("subreddits_with_posts", 0)
+    coverage_ratio = covered / max(len(requested_subs), 1)
+    return failure_ratio >= 0.4 or coverage_ratio < 0.3
+
+
+def _reddit_health_summary(subreddits, live_posts, async_stats=None, pullpush_posts=0, praw_posts=0, sitemap_posts=0):
+    reddit_live = [post for post in live_posts if str(post.get("source", "")).startswith("reddit")]
+    counts = Counter(post.get("subreddit", "") for post in reddit_live if post.get("subreddit"))
+    covered = sum(1 for sub in subreddits if counts.get(sub, 0) > 0)
+    coverage_ratio = covered / max(len(subreddits), 1)
+
+    warnings = []
+    if async_stats:
+        failed_requests = async_stats.get("failed_requests", 0)
+        request_total = max(async_stats.get("requested_requests", 0), 1)
+        if failed_requests:
+            warnings.append(f"async failures {failed_requests}/{request_total}")
+    if not reddit_live:
+        warnings.append("no live Reddit posts collected")
+    elif coverage_ratio < 0.3:
+        warnings.append(f"low subreddit coverage {covered}/{len(subreddits)}")
+    if pullpush_posts and not reddit_live:
+        warnings.append("historical-only Reddit signal")
+
+    summary = (
+        f"live={len(reddit_live)}, covered={covered}/{len(subreddits)}, "
+        f"pullpush={pullpush_posts}, sitemap={sitemap_posts}, praw={praw_posts}"
+    )
+    return {
+        "is_degraded": bool(warnings),
+        "warnings": warnings,
+        "summary": summary,
+    }
+
+
+def finalize_scraper_run_record(run_id, status, start_time, posts_collected=0, ideas_updated=0, notes=None):
+    if not run_id or not SUPABASE_URL:
+        return
+
+    error_text = " | ".join((notes or [])[:8]) if notes else None
+    sb_patch("scraper_runs", f"id=eq.{run_id}", {
+        "status": status,
+        "posts_collected": posts_collected,
+        "ideas_updated": ideas_updated,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "duration_seconds": round(time.time() - start_time, 1),
+        "error_text": error_text,
+    })
 
 
 def _to_iso_datetime(value):
@@ -361,13 +455,128 @@ def pain_score(post):
     return sum(1 for keyword in MARKET_PAIN_KEYWORDS if keyword in text)
 
 
+def _normalize_market_posts_with_taxonomy(posts):
+    normalized = []
+    for post in posts or []:
+        normalized.append(apply_evidence_taxonomy(post, icp_category="", forced_subreddits=[]))
+    return normalized
+
+
 def _engagement_score(post):
     return int(post.get("score", 0) or 0) + int(post.get("num_comments", 0) or 0)
 
 
+def _normalize_market_signal_text(value):
+    return (value or "").strip().lower()
+
+
+def _is_launch_meta_market_post(post):
+    title = _normalize_market_signal_text(post.get("title", ""))
+    signal_kind = _normalize_market_signal_text(post.get("signal_kind", ""))
+    voice_type = _normalize_market_signal_text(post.get("voice_type", ""))
+    source = _normalized_market_source(post)
+
+    if signal_kind == "launch_discussion":
+        return True
+    if source == "hackernews" and re.match(r"^(show|launch|ask)\s+hn:", title):
+        return True
+    if source == "indiehackers" and re.match(r"^(show|launch)\s+ih:", title):
+        return True
+    if source == "producthunt" and re.match(r"^(show|launch)\s+ph:", title):
+        return True
+    if voice_type == "founder" and "i built" in title:
+        return True
+    if voice_type in {"founder", "developer"} and ("open-source" in title or "open source" in title):
+        return True
+    return False
+
+
+def _is_buyer_native_market_post(post):
+    voice_type = _normalize_market_signal_text(post.get("voice_type", ""))
+    source_class = _normalize_market_signal_text(post.get("source_class", ""))
+    return voice_type in {"buyer", "operator"} or source_class in {"review", "jobs"}
+
+
+def _market_post_support_rank(post):
+    directness = _normalize_market_signal_text(post.get("directness_tier", ""))
+    signal_kind = _normalize_market_signal_text(post.get("signal_kind", ""))
+    launch_meta = _is_launch_meta_market_post(post)
+    buyer_native = _is_buyer_native_market_post(post)
+
+    if not launch_meta and buyer_native and directness == "direct":
+        return 3
+
+    if not launch_meta and (
+        directness == "adjacent"
+        or (buyer_native and directness == "supporting")
+        or signal_kind in {"complaint", "workaround", "feature_request", "review_complaint", "willingness_to_pay"}
+    ):
+        return 2
+
+    return 1
+
+
+def _market_support_level_from_top_posts(top_posts, source_breakdown=None, source_count=None):
+    top_posts = top_posts or []
+    source_breakdown = source_breakdown or []
+    resolved_source_count = int(source_count or len(source_breakdown) or 0)
+    buyer_native_direct_count = sum(
+        1 for post in top_posts
+        if (post.get("market_support_level") or "") == "evidence_backed"
+    )
+    supporting_signal_count = sum(
+        1 for post in top_posts
+        if (post.get("market_support_level") or "") == "supporting_context"
+    )
+    launch_meta_count = sum(1 for post in top_posts if _is_launch_meta_market_post(post))
+    dominant_platform = None
+    if source_breakdown:
+        dominant_platform = str(
+            max(source_breakdown, key=lambda item: int(item.get("count", 0) or 0)).get("platform", "") or ""
+        ).lower() or None
+    single_source = resolved_source_count < 2
+    hn_launch_heavy = dominant_platform == "hackernews" and launch_meta_count >= 2 and buyer_native_direct_count == 0
+
+    support_level = "hypothesis"
+    if (buyer_native_direct_count >= 2 and not single_source) or buyer_native_direct_count >= 3:
+        support_level = "evidence_backed"
+    elif buyer_native_direct_count >= 1 or supporting_signal_count >= 2:
+        support_level = "supporting_context"
+
+    if hn_launch_heavy:
+        support_level = "hypothesis"
+
+    return {
+        "support_level": support_level,
+        "buyer_native_direct_count": buyer_native_direct_count,
+        "supporting_signal_count": supporting_signal_count,
+        "launch_meta_count": launch_meta_count,
+        "single_source": single_source,
+        "hn_launch_heavy": hn_launch_heavy,
+        "dominant_platform": dominant_platform,
+    }
+
+
+def _confidence_rank(level):
+    return {
+        "INSUFFICIENT": 0,
+        "LOW": 1,
+        "MEDIUM": 2,
+        "HIGH": 3,
+        "STRONG": 4,
+    }.get(str(level or "").upper(), 0)
+
+
+def _min_confidence_level(level, cap):
+    if _confidence_rank(level) <= _confidence_rank(cap):
+        return level
+    return cap
+
+
 def build_top_posts_for_topic(posts):
     """
-    Select topic posts for the Market page by pain relevance first, then engagement.
+    Select representative topic posts for the Market page.
+    Buyer-native direct pain should beat launch chatter and generic tool posts.
     """
     if not posts:
         return []
@@ -380,14 +589,23 @@ def build_top_posts_for_topic(posts):
 
     ranked_posts = sorted(
         deduped.values(),
-        key=lambda post: (pain_score(post), _engagement_score(post)),
+        key=lambda post: (
+            _market_post_support_rank(post),
+            1 if _is_buyer_native_market_post(post) else 0,
+            1 if not _is_launch_meta_market_post(post) else 0,
+            pain_score(post),
+            _engagement_score(post),
+        ),
         reverse=True,
     )
-    pain_posts = [post for post in ranked_posts if is_pain_post(post)]
+    pain_posts = [
+        post for post in ranked_posts
+        if _market_post_support_rank(post) >= 2 or is_pain_post(post)
+    ]
 
     selected = list(pain_posts[:5])
     if len(selected) < 3:
-        for post in sorted(deduped.values(), key=_engagement_score, reverse=True):
+        for post in ranked_posts:
             key = post.get("external_id") or post.get("permalink") or post.get("url") or post.get("title")
             if key and all(
                 key != (picked.get("external_id") or picked.get("permalink") or picked.get("url") or picked.get("title"))
@@ -404,7 +622,13 @@ def build_top_posts_for_topic(posts):
             available_sources.append(source)
 
     def _rank_tuple(post):
-        return (pain_score(post), _engagement_score(post))
+        return (
+            _market_post_support_rank(post),
+            1 if _is_buyer_native_market_post(post) else 0,
+            1 if not _is_launch_meta_market_post(post) else 0,
+            pain_score(post),
+            _engagement_score(post),
+        )
 
     selected = selected[:5]
     for source in available_sources:
@@ -444,6 +668,18 @@ def build_top_posts_for_topic(posts):
         "comments": int(post.get("num_comments", 0) or 0),
         "url": post.get("permalink") or post.get("url") or "",
         "pain_score": pain_score(post),
+        "source_class": post.get("source_class", ""),
+        "source_name": post.get("source_name", _normalized_market_source(post)),
+        "voice_type": post.get("voice_type", ""),
+        "signal_kind": post.get("signal_kind", ""),
+        "evidence_layer": post.get("evidence_layer", ""),
+        "directness_tier": post.get("directness_tier", ""),
+        "reliability_tier": post.get("reliability_tier", ""),
+        "market_support_level": (
+            "evidence_backed" if _market_post_support_rank(post) == 3
+            else "supporting_context" if _market_post_support_rank(post) == 2
+            else "hypothesis"
+        ),
     } for post in selected[:5]]
 
 
@@ -452,12 +688,14 @@ def store_posts(rows):
     if not SUPABASE_URL or not rows:
         return 0
 
+    posts_has_source = table_has_column("posts", "source")
+    posts_has_score_breakdown = table_has_column("posts", "score_breakdown")
     payload = []
     for post in rows[:2000]:
         external_id = post.get("external_id") or post.get("id") or hashlib.md5(
             f"{post.get('source', 'unknown')}::{post.get('title', '')}".encode("utf-8", errors="ignore")
         ).hexdigest()
-        payload.append({
+        row = {
             "id": f"{post.get('source', 'src')}_{external_id}",
             "title": post.get("title", "")[:500],
             "selftext": (post.get("body") or post.get("selftext") or "")[:5000],
@@ -472,7 +710,21 @@ def store_posts(rows):
             "url": post.get("url", post.get("permalink", "")),
             "matched_phrases": post.get("matched_keywords", post.get("matched_phrases", [])) or [],
             "scraped_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if posts_has_source:
+            row["source"] = post.get("source", "")
+        if posts_has_score_breakdown:
+            row["score_breakdown"] = {
+                "evidence_meta": post.get("evidence_meta", {}),
+                "source_class": post.get("source_class", ""),
+                "source_name": post.get("source_name", ""),
+                "voice_type": post.get("voice_type", ""),
+                "signal_kind": post.get("signal_kind", ""),
+                "evidence_layer": post.get("evidence_layer", ""),
+                "directness_tier": post.get("directness_tier", ""),
+                "reliability_tier": post.get("reliability_tier", ""),
+            }
+        payload.append(row)
 
     saved = 0
     for row in payload:
@@ -563,9 +815,11 @@ def scrape_reddit_sub(subreddit, sort="new", limit=100):
     try:
         resp = requests.get(url, headers=headers, params={"limit": limit, "raw_json": 1}, timeout=15)
         if resp.status_code != 200:
+            print(f"    [SYNC] r/{subreddit}/{sort} returned {resp.status_code}")
             return []
         data = resp.json()
-    except Exception:
+    except Exception as e:
+        print(f"    [SYNC] r/{subreddit}/{sort} error: {e}")
         return []
 
     posts = []
@@ -604,9 +858,13 @@ def scrape_all_reddit(subreddits=None):
     """Scrape all target subreddits."""
     all_posts = []
     seen = set()
+    status_counts = Counter()
     for sub in (subreddits or BASE_SUBREDDITS):
         for sort in ("new", "hot"):
             posts = scrape_reddit_sub(sub, sort, limit=100)
+            status_counts["requests"] += 1
+            if not posts:
+                status_counts["empty"] += 1
             for p in posts:
                 key = p["external_id"]
                 if key not in seen:
@@ -614,6 +872,13 @@ def scrape_all_reddit(subreddits=None):
                     all_posts.append(p)
             time.sleep(2.5)  # respect rate limits
         print(f"    r/{sub}: {len([p for p in all_posts if p.get('subreddit') == sub])} posts")
+    scrape_all_reddit.last_run_stats = {
+        "mode": "sync",
+        "requested_subreddits": len(subreddits or BASE_SUBREDDITS),
+        "requested_requests": status_counts.get("requests", 0),
+        "failed_requests": status_counts.get("empty", 0),
+        "subreddit_post_counts": dict(Counter(p["subreddit"] for p in all_posts if p.get("subreddit"))),
+    }
     return all_posts
 
 
@@ -1004,7 +1269,7 @@ TRACKED_TOPICS = {
 }
 
 # ── Subreddit-to-category mapping for dynamic topic discovery ──
-SUBREDDIT_CATEGORIES = {
+RAW_SUBREDDIT_CATEGORIES = {
     "smallbusiness": "saas", "Entrepreneur": "saas", "startups": "saas",
     "SaaS": "saas", "sidehustle": "saas", "indiehackers": "saas",
     "microsaas": "saas", "EntrepreneurRideAlong": "saas", "sweatystartup": "saas",
@@ -1023,6 +1288,294 @@ SUBREDDIT_CATEGORIES = {
     "digitalnomad": "hr", "remotework": "hr", "WorkOnline": "hr",
     "artificial": "ai", "MachineLearning": "ai", "analytics": "data",
 }
+SUBREDDIT_CATEGORIES = {key.lower(): value for key, value in RAW_SUBREDDIT_CATEGORIES.items()}
+
+DYNAMIC_TOPIC_ALLOWED_SHORT_TOKENS = {"ai", "api", "b2b", "b2c", "hr", "ui", "ux"}
+DYNAMIC_TOPIC_STOPWORDS = {
+    "a", "across", "an", "and", "anyone", "are", "as", "at", "be", "because", "been", "being", "best",
+    "but", "by", "can", "could", "did", "do", "does", "doing", "for", "from", "get",
+    "got", "had", "has", "have", "having", "how", "i", "if", "in", "into", "is", "it",
+    "its", "just", "like", "make", "makes", "making", "me", "more", "most", "my", "need",
+    "now", "of", "on", "or", "our", "out", "really", "so", "some", "still", "than",
+    "solve", "solved", "that", "the", "their", "them", "then", "there", "these", "they", "this", "those",
+    "to", "too", "use", "using", "want", "was", "we", "were", "what", "when", "where",
+    "which", "who", "why", "will", "with", "would", "you", "your",
+}
+DYNAMIC_TOPIC_NOISE_TOKENS = {
+    "app", "apps", "builder", "build", "building", "built", "community", "discussion",
+    "founder", "founders", "hn", "idea", "ideas", "indiehackers", "launch", "launched",
+    "maker", "makers", "open", "opensource", "ph", "post", "posts", "product",
+    "producthunt", "project", "projects", "reddit", "saas", "show", "software", "startup",
+    "startups", "thread", "threads", "tool", "tools",
+}
+DYNAMIC_TOPIC_EXACT_BLOCKLIST = {
+    "ask hn",
+    "show hn",
+    "show ih",
+    "show ph",
+    "open source",
+    "from scratch",
+}
+
+
+def _normalize_dynamic_phrase(value):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+
+
+DYNAMIC_TOPIC_TRACKED_PHRASES = set()
+for _topic in TRACKED_TOPICS.values():
+    for _keyword in _topic.get("keywords", []):
+        normalized_keyword = _normalize_dynamic_phrase(_keyword)
+        if normalized_keyword:
+            DYNAMIC_TOPIC_TRACKED_PHRASES.add(normalized_keyword)
+
+
+def _market_post_key(post):
+    return str(
+        post.get("external_id")
+        or post.get("permalink")
+        or post.get("url")
+        or f"{post.get('source', 'unknown')}::{post.get('title', '')}"
+    ).strip()
+
+
+def _slugify_market_topic(text):
+    slug = re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")
+    return slug[:64] or hashlib.md5(str(text or "").encode("utf-8", errors="ignore")).hexdigest()[:12]
+
+
+def _humanize_dynamic_topic_name(phrase):
+    title = " ".join(word.capitalize() for word in phrase.split())
+    replacements = {
+        "Ai": "AI",
+        "Api": "API",
+        "B2b": "B2B",
+        "B2c": "B2C",
+        "Ui": "UI",
+        "Ux": "UX",
+    }
+    for source, target in replacements.items():
+        title = title.replace(source, target)
+    return title
+
+
+def _extract_dynamic_topic_tokens(text):
+    tokens = []
+    for raw_token in re.findall(r"[a-z0-9][a-z0-9/+_-]{1,24}", str(text or "").lower()):
+        token = raw_token.strip("-_/+")
+        if not token:
+            continue
+        if len(token) <= 2 and token not in DYNAMIC_TOPIC_ALLOWED_SHORT_TOKENS:
+            continue
+        if token.isdigit():
+            continue
+        if token in DYNAMIC_TOPIC_STOPWORDS or token in DYNAMIC_TOPIC_NOISE_TOKENS:
+            continue
+        if token in MARKET_PAIN_KEYWORDS:
+            continue
+        tokens.append(token)
+    return tokens
+
+
+def _is_valid_dynamic_phrase(tokens):
+    if len(tokens) < 2:
+        return False
+    phrase = " ".join(tokens)
+    normalized_phrase = _normalize_dynamic_phrase(phrase)
+    if not normalized_phrase or normalized_phrase in DYNAMIC_TOPIC_EXACT_BLOCKLIST:
+        return False
+    if normalized_phrase in DYNAMIC_TOPIC_TRACKED_PHRASES:
+        return False
+    if any(token in {"show", "ask", "launch", "build", "built", "building"} for token in tokens):
+        return False
+    if sum(1 for token in tokens if token in DYNAMIC_TOPIC_NOISE_TOKENS) >= 2:
+        return False
+    if len({token for token in tokens}) < len(tokens):
+        return False
+    if all(token in DYNAMIC_TOPIC_STOPWORDS or token in DYNAMIC_TOPIC_NOISE_TOKENS for token in tokens):
+        return False
+    return True
+
+
+def _extract_dynamic_topic_candidates(post):
+    if _is_launch_meta_market_post(post) and _market_post_support_rank(post) < 2 and not is_pain_post(post):
+        return []
+
+    candidate_phrases = []
+    text_candidates = [
+        post.get("title", ""),
+        (post.get("body") or post.get("selftext") or post.get("full_text") or "")[:240],
+    ]
+
+    for text in text_candidates:
+        tokens = _extract_dynamic_topic_tokens(text)
+        for size in (2, 3):
+            for index in range(max(len(tokens) - size + 1, 0)):
+                phrase_tokens = tokens[index:index + size]
+                if _is_valid_dynamic_phrase(phrase_tokens):
+                    candidate_phrases.append(" ".join(phrase_tokens))
+
+    deduped = []
+    seen = set()
+    for phrase in candidate_phrases:
+        if phrase in seen:
+            continue
+        seen.add(phrase)
+        deduped.append(phrase)
+        if len(deduped) >= 6:
+            break
+    return deduped
+
+
+def _infer_dynamic_topic_category(phrase, posts):
+    category_counts = Counter()
+    normalized_phrase = _normalize_dynamic_phrase(phrase)
+    phrase_tokens = set(normalized_phrase.split())
+
+    for post in posts:
+        subreddit = (post.get("subreddit", "") or "").strip().lower()
+        mapped = SUBREDDIT_CATEGORIES.get(subreddit)
+        if mapped:
+            category_counts[mapped] += 2
+
+    for topic_info in TRACKED_TOPICS.values():
+        category = topic_info.get("category", "general")
+        for keyword in topic_info.get("keywords", []):
+            normalized_keyword = _normalize_dynamic_phrase(keyword)
+            if not normalized_keyword:
+                continue
+            keyword_tokens = set(normalized_keyword.split())
+            if normalized_keyword == normalized_phrase:
+                category_counts[category] += 4
+            elif phrase_tokens & keyword_tokens:
+                category_counts[category] += 1
+
+    return category_counts.most_common(1)[0][0] if category_counts else "general"
+
+
+def _discover_dynamic_market_topics(unmatched_posts, unmatched_signal_posts):
+    posts_by_key = {}
+    for post in unmatched_posts:
+        post_key = _market_post_key(post)
+        if post_key and post_key not in posts_by_key:
+            posts_by_key[post_key] = post
+
+    if len(posts_by_key) < 2:
+        return {}, {}, {}, set()
+
+    signal_keys = {
+        _market_post_key(post)
+        for post in unmatched_signal_posts
+        if _market_post_key(post)
+    }
+
+    candidates_by_post_key = {}
+    phrase_to_post_keys = defaultdict(set)
+
+    for post_key, post in posts_by_key.items():
+        phrases = _extract_dynamic_topic_candidates(post)
+        if not phrases:
+            continue
+        candidates_by_post_key[post_key] = phrases
+        for phrase in phrases:
+            phrase_to_post_keys[phrase].add(post_key)
+
+    qualifying_phrase_scores = {}
+    phrase_source_counts = {}
+    for phrase, post_keys in phrase_to_post_keys.items():
+        phrase_posts = [posts_by_key[key] for key in post_keys]
+        signal_count = sum(1 for key in post_keys if key in signal_keys)
+        source_count = len({_normalized_market_source(post) for post in phrase_posts if _normalized_market_source(post)})
+        support_count = sum(1 for post in phrase_posts if _market_post_support_rank(post) >= 2)
+        pain_count = sum(1 for post in phrase_posts if is_pain_post(post))
+        launch_count = sum(1 for post in phrase_posts if _is_launch_meta_market_post(post))
+        total_engagement = sum(min(_engagement_score(post), 80) for post in phrase_posts)
+
+        if len(post_keys) < 2:
+            continue
+        if signal_count == 0:
+            continue
+        if signal_count < 2 and support_count == 0 and source_count < 2:
+            continue
+        if support_count == 0 and pain_count == 0:
+            continue
+        if launch_count == len(post_keys) and support_count == 0:
+            continue
+
+        qualifying_phrase_scores[phrase] = (
+            source_count * 100
+            + support_count * 25
+            + pain_count * 15
+            + signal_count * 12
+            + len(post_keys) * 10
+            + total_engagement / 10.0
+        )
+        phrase_source_counts[phrase] = source_count
+
+    assigned_posts = defaultdict(list)
+    for post_key, phrases in candidates_by_post_key.items():
+        viable_phrases = [phrase for phrase in phrases if phrase in qualifying_phrase_scores]
+        if not viable_phrases:
+            continue
+        best_phrase = max(
+            viable_phrases,
+            key=lambda phrase: (
+                qualifying_phrase_scores[phrase],
+                len(phrase_to_post_keys[phrase]),
+                phrase_source_counts.get(phrase, 0),
+                len(phrase),
+            ),
+        )
+        assigned_posts[best_phrase].append(posts_by_key[post_key])
+
+    dynamic_idea_posts = {}
+    dynamic_signal_posts = {}
+    dynamic_topic_meta = {}
+    assigned_post_keys = set()
+
+    for phrase, phrase_posts in sorted(
+        assigned_posts.items(),
+        key=lambda item: qualifying_phrase_scores.get(item[0], 0),
+        reverse=True,
+    ):
+        deduped_posts = []
+        seen_keys = set()
+        for post in phrase_posts:
+            post_key = _market_post_key(post)
+            if not post_key or post_key in seen_keys:
+                continue
+            seen_keys.add(post_key)
+            deduped_posts.append(post)
+
+        if len(deduped_posts) < 2:
+            continue
+
+        signal_bucket = [post for post in deduped_posts if _market_post_key(post) in signal_keys]
+        source_count = len({_normalized_market_source(post) for post in signal_bucket or deduped_posts if _normalized_market_source(post)})
+        support_count = sum(1 for post in deduped_posts if _market_post_support_rank(post) >= 2)
+
+        if not signal_bucket:
+            continue
+        if len(signal_bucket) < 2 and support_count == 0 and source_count < 2:
+            continue
+
+        slug_base = f"dyn-{_slugify_market_topic(phrase)}"
+        slug = slug_base
+        suffix = 2
+        while slug in dynamic_topic_meta:
+            slug = f"{slug_base[:58]}-{suffix}"
+            suffix += 1
+
+        dynamic_idea_posts[slug] = deduped_posts
+        dynamic_signal_posts[slug] = signal_bucket
+        dynamic_topic_meta[slug] = {
+            "topic": _humanize_dynamic_topic_name(phrase),
+            "category": _infer_dynamic_topic_category(phrase, deduped_posts),
+            "keywords": [phrase],
+        }
+        assigned_post_keys.update(_market_post_key(post) for post in deduped_posts if _market_post_key(post))
+
+    return dynamic_idea_posts, dynamic_signal_posts, dynamic_topic_meta, assigned_post_keys
 
 
 def classify_post_to_topics(post):
@@ -1032,6 +1585,7 @@ def classify_post_to_topics(post):
     subreddit_text = subreddit.replace("_", " ").replace("-", " ")
     combined_text = f"{subreddit_text} {text}".strip()
     source = _normalized_market_source(post)
+    builder_meta_post = _market_post_support_rank(post) == 1 and source in {"hackernews", "indiehackers", "producthunt"}
     subreddit_category = SUBREDDIT_CATEGORIES.get(subreddit, "")
     matches = []
 
@@ -1060,6 +1614,9 @@ def classify_post_to_topics(post):
         ):
             # Reddit complaints often use category-native buyer language in body text.
             score += 1
+
+        if builder_meta_post and not phrase_hit and keyword_hits < 2:
+            continue
 
         if phrase_hit or score >= 2:
             matches.append((slug, score))
@@ -1131,17 +1688,17 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
         if any(phrase.lower() in text_lower for phrase in PAIN_PHRASES[:20]):
             pain_count += 1
     pain_ratio = pain_count / max(len(signal_posts), 1)
-    pain_boost = pain_ratio * 20
+    pain_boost = min(pain_ratio * 40, 100)
 
     # ── Volume bonus (more data = more confident) ──
     volume_bonus = min(math.log(len(signal_posts) + 1) / math.log(500) * 15, 15)
 
-    # ── Final score ──
+    # ── Final score (pain-weighted: pain signals are the core value) ──
     raw_score = (
-        velocity_score * 0.30 +
-        cross_platform_score * 0.25 +
-        engagement_score * 0.25 +
-        pain_boost * 0.10 +
+        velocity_score * 0.25 +
+        pain_boost * 0.25 +
+        cross_platform_score * 0.20 +
+        engagement_score * 0.20 +
         volume_bonus * 0.10
     )
 
@@ -1149,10 +1706,16 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
 
     breakdown = {
         "velocity": round(velocity_score, 1),
+        "pain_density": round(pain_boost, 1),
         "cross_platform": round(cross_platform_score, 1),
         "engagement": round(engagement_score, 1),
-        "pain_signal": round(pain_boost, 1),
-        "volume_bonus": round(volume_bonus, 1),
+        "volume": round(volume_bonus / 15 * 100, 1) if volume_bonus else 0.0,
+        "velocity_weight": 0.25,
+        "pain_density_weight": 0.25,
+        "cross_platform_weight": 0.20,
+        "engagement_weight": 0.20,
+        "volume_weight": 0.10,
+        "raw_weighted_score": round(raw_score, 1),
         "source_count": source_count,
         "sources": source_breakdown,
         "source_names": source_names,
@@ -1160,6 +1723,9 @@ def calculate_idea_score(topic_slug, posts, signal_posts=None, existing_idea=Non
         "post_count_7d": recent_count,
         "post_count_total": len(signal_posts),
         "pain_count": pain_count,
+        # Backward-compatible aliases for any legacy readers.
+        "pain_signal": round(pain_boost, 1),
+        "volume_bonus": round(volume_bonus, 1),
     }
 
     return final_score, breakdown
@@ -1187,24 +1753,69 @@ def determine_trend(current, previous_24h, previous_7d):
     return "stable"
 
 
-def determine_confidence(post_count, source_count):
-    """Determine confidence level based on evidence thresholds (relaxed)."""
-    if post_count < 5:
-        return "INSUFFICIENT"
-    elif post_count < 15:
-        return "LOW"
-    elif post_count < 50:
-        if source_count >= 2:
-            return "MEDIUM"
-        return "LOW"
-    elif post_count < 150:
-        if source_count >= 2:
-            return "HIGH"
-        return "MEDIUM"
+def determine_confidence(post_count, source_count, pain_count=0, signal_contract=None):
+    """Determine confidence level based on evidence + pain signal density."""
+    pain_ratio = pain_count / max(post_count, 1)
+    support_level = str((signal_contract or {}).get("support_level", "") or "").lower()
+    buyer_native_direct_count = int((signal_contract or {}).get("buyer_native_direct_count", 0) or 0)
+    supporting_signal_count = int((signal_contract or {}).get("supporting_signal_count", 0) or 0)
+
+    if post_count < 3:
+        base_confidence = "INSUFFICIENT"
+    elif post_count < 8:
+        # Small sample - but cross-source/supporting patterns should still show up on the board.
+        base_confidence = (
+            "LOW"
+            if (
+                pain_ratio > 0.2
+                or source_count >= 2
+                or buyer_native_direct_count >= 1
+                or supporting_signal_count >= 2
+                or support_level in {"supporting_context", "evidence_backed"}
+            )
+            else "INSUFFICIENT"
+        )
+    elif post_count < 20:
+        if source_count >= 2 or pain_ratio > 0.3:
+            base_confidence = "MEDIUM"
+        else:
+            base_confidence = "LOW"
+    elif post_count < 80:
+        if source_count >= 2 and pain_ratio > 0.15:
+            base_confidence = "HIGH"
+        elif source_count >= 2 or pain_ratio > 0.25:
+            base_confidence = "MEDIUM"
+        else:
+            base_confidence = "LOW"
     else:
-        if source_count >= 3:
-            return "STRONG"
-        return "HIGH"
+        if source_count >= 3 and pain_ratio > 0.1:
+            base_confidence = "STRONG"
+        elif source_count >= 2:
+            base_confidence = "HIGH"
+        else:
+            base_confidence = "MEDIUM"
+
+    if not signal_contract:
+        return base_confidence
+
+    support_level = str(signal_contract.get("support_level", "") or "").lower()
+    buyer_native_direct_count = int(signal_contract.get("buyer_native_direct_count", 0) or 0)
+    hn_launch_heavy = bool(signal_contract.get("hn_launch_heavy"))
+    single_source = bool(signal_contract.get("single_source"))
+
+    if support_level == "hypothesis":
+        if hn_launch_heavy and buyer_native_direct_count == 0 and post_count < 15:
+            return "INSUFFICIENT"
+        if buyer_native_direct_count == 0 and (single_source or post_count < 12):
+            return _min_confidence_level(base_confidence, "LOW" if post_count >= 12 else "INSUFFICIENT")
+        return _min_confidence_level(base_confidence, "LOW")
+
+    if support_level == "supporting_context" and buyer_native_direct_count == 0:
+        if single_source and post_count < 15:
+            return _min_confidence_level(base_confidence, "LOW")
+        return _min_confidence_level(base_confidence, "MEDIUM")
+
+    return base_confidence
 
 
 # ═══════════════════════════════════════════════════════
@@ -1221,6 +1832,13 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     """
     start_time = time.time()
     run_id = None
+    run_status = "failed"
+    run_notes = []
+    ideas_updated = 0
+    ideas_to_upsert = []
+    idea_upsert_failures = []
+    all_posts = []
+    source_counts = Counter()
     sources = sources or ["reddit", "hackernews", "producthunt", "indiehackers"]
     if mode == "quick":
         sources = [source for source in sources if source in {"reddit", "hackernews"}]
@@ -1235,8 +1853,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     print(f"  Caller: {source_label}")
     print("=" * 60)
 
-    # Log run start
     if SUPABASE_URL:
+        reconcile_stale_scraper_runs()
         resp = sb_upsert("scraper_runs", [{
             "source": ",".join(sources),
             "status": "running",
@@ -1246,6 +1864,10 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             data = resp.json()
             if data:
                 run_id = data[0].get("id")
+                _ACTIVE_SCRAPER_CONTEXT.update({
+                    "run_id": run_id,
+                    "start_time": start_time,
+                })
 
     # ── 1. Scrape (4-Layer Architecture) ──
     all_posts = []
@@ -1281,6 +1903,11 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         return added
 
     all_subs = load_user_requested_subreddits()
+    reddit_async_stats = {}
+    pullpush_added = 0
+    comment_added = 0
+    sitemap_added = 0
+    praw_added = 0
 
     if "reddit" in sources:
         # ── Layer 1: Async Reddit JSON API (~15s for 42 subs) ──
@@ -1288,15 +1915,23 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         try:
             from reddit_async import scrape_all_async
             reddit_posts = asyncio.run(scrape_all_async(subreddits=all_subs))
+            reddit_async_stats = getattr(scrape_all_async, "last_run_stats", {}) or {}
             added = _merge(reddit_posts, bucket="live")
             print(f"  [OK] Layer 1 (async): {added} fresh posts")
-            if added < 10:
-                print("  [!] Layer 1 async returned too few posts - retrying with sync scraper")
+            if _should_retry_reddit_sync(reddit_async_stats, added, all_subs):
+                note = (
+                    f"Layer 1 async degraded: {reddit_async_stats.get('failed_requests', 0)}/"
+                    f"{reddit_async_stats.get('requested_requests', 0)} request failures"
+                )
+                run_notes.append(note)
+                print(f"  [!] {note} - retrying with sync scraper")
                 reddit_posts = scrape_all_reddit(subreddits=all_subs)
                 added = _merge(reddit_posts, bucket="live")
                 print(f"  [OK] Layer 1 (sync recovery): +{added} posts")
         except Exception as e:
-            print(f"  [!] Layer 1 async failed, falling back to sync: {e}")
+            note = f"Layer 1 async failed: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            print(f"  [!] {note} - falling back to sync")
             reddit_posts = scrape_all_reddit(subreddits=all_subs)
             added = _merge(reddit_posts, bucket="live")
             print(f"  [OK] Layer 1 (sync fallback): {added} posts")
@@ -1306,20 +1941,42 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         try:
             from pullpush_scraper import scrape_historical_multi
             pp_posts = scrape_historical_multi(subreddits=all_subs, days_back=90, size_per_sub=100, delay=0.5)
-            added = _merge(pp_posts, bucket="historical")
-            print(f"  [OK] Layer 2 (PullPush): +{added} historical posts")
+            pullpush_added = _merge(pp_posts, bucket="historical")
+            print(f"  [OK] Layer 2 (PullPush): +{pullpush_added} historical posts")
         except Exception as e:
-            print(f"  [!] Layer 2 (PullPush) skipped: {e}")
+            note = f"Layer 2 (PullPush) skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            print(f"  [!] {note}")
+
+        print("\n  [2.5/6] Layer 2b — PullPush comment scrape...")
+        try:
+            from pullpush_scraper import scrape_historical_comments_multi
+            comment_posts = scrape_historical_comments_multi(
+                subreddits=all_subs,
+                keywords=[],
+                days_back=90,
+                size_per_sub=25,
+                delay=0.25,
+                max_total=250,
+            )
+            comment_added = _merge(comment_posts, bucket="historical")
+            print(f"  [OK] Layer 2b (comments): +{comment_added} historical comments")
+        except Exception as e:
+            note = f"Layer 2b (comments) skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            print(f"  [!] {note}")
 
         # ── Layer 3: Reddit Sitemap (real-time discovery) ──
         print("\n  [3/6] Layer 3 — Sitemap real-time discovery...")
         try:
             from sitemap_listener import discover_new_posts
             sitemap_posts = discover_new_posts(max_fetch=30)
-            added = _merge(sitemap_posts, bucket="live")
-            print(f"  [OK] Layer 3 (sitemap): +{added} newly discovered posts")
+            sitemap_added = _merge(sitemap_posts, bucket="live")
+            print(f"  [OK] Layer 3 (sitemap): +{sitemap_added} newly discovered posts")
         except Exception as e:
-            print(f"  [!] Layer 3 (sitemap) skipped: {e}")
+            note = f"Layer 3 (sitemap) skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            print(f"  [!] {note}")
 
         # ── Layer 4: PRAW authenticated (optional) ──
         try:
@@ -1327,10 +1984,24 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             if praw_available():
                 print("\n  [3.5/6] Layer 4 — PRAW authenticated deep dive...")
                 praw_posts = scrape_all_authenticated(all_subs[:10], sorts=["rising"])
-                added = _merge(praw_posts, bucket="live")
-                print(f"  [OK] Layer 4 (PRAW): +{added} authenticated posts")
+                praw_added = _merge(praw_posts, bucket="live")
+                print(f"  [OK] Layer 4 (PRAW): +{praw_added} authenticated posts")
         except Exception as e:
-            pass  # PRAW is optional, silent skip
+            note = f"Layer 4 (PRAW) skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            print(f"  [!] {note}")
+
+        reddit_health = _reddit_health_summary(
+            all_subs,
+            live_posts,
+            async_stats=reddit_async_stats,
+            pullpush_posts=pullpush_added + comment_added,
+            praw_posts=praw_added,
+            sitemap_posts=sitemap_added,
+        )
+        print(f"  [Reddit health] {reddit_health['summary']}")
+        if reddit_health["is_degraded"]:
+            run_notes.append(f"Reddit degraded: {', '.join(reddit_health['warnings'])}")
 
     if "hackernews" in sources:
         print("\n  [4/6] Scraping Hacker News...")
@@ -1350,18 +2021,21 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         _merge(ih_posts, bucket="live")
         print(f"  [OK] IH: {len(ih_posts)} posts")
 
+    source_counts = Counter(_normalized_market_source(post) for post in all_posts)
+    all_posts = _normalize_market_posts_with_taxonomy(all_posts)
+    live_posts = _normalize_market_posts_with_taxonomy(live_posts)
     print(f"\n  Total posts scraped (deduplicated): {len(all_posts)}")
     print(f"  Live signal corpus: {len(live_posts)} posts")
     print(f"  Historical support corpus: {len(historical_ids)} posts")
+    if source_counts:
+        print(f"  Source mix: {dict(source_counts)}")
+        print(f"  Evidence taxonomy: {summarize_taxonomy(all_posts)}")
 
     if not all_posts:
         print("  [!] No posts collected — exiting")
-        if run_id:
-            sb_patch("scraper_runs", f"id=eq.{run_id}", {
-                "status": "failed", "error_text": "No posts collected",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "duration_seconds": round(time.time() - start_time, 1),
-            })
+        run_notes.append("No posts collected")
+        finalize_scraper_run_record(run_id, "failed", start_time, posts_collected=0, ideas_updated=0, notes=run_notes)
+        _ACTIVE_SCRAPER_CONTEXT.clear()
         return
 
     if SUPABASE_URL:
@@ -1407,16 +2081,65 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     print("\n  Clustering posts into idea topics...")
     idea_posts = defaultdict(list)
     signal_posts_by_topic = defaultdict(list)
+    unmatched_all_posts = []
+    unmatched_signal_posts = []
 
     for post in all_posts:
         topics = classify_post_to_topics(post)
-        for topic in topics:
-            idea_posts[topic].append(post)
+        if topics:
+            for topic in topics:
+                idea_posts[topic].append(post)
+        else:
+            unmatched_all_posts.append(post)
 
     for post in signal_posts:
         topics = classify_post_to_topics(post)
-        for topic in topics:
-            signal_posts_by_topic[topic].append(post)
+        if topics:
+            for topic in topics:
+                signal_posts_by_topic[topic].append(post)
+        else:
+            unmatched_signal_posts.append(post)
+
+    dynamic_topic_meta = {}
+    dynamic_idea_posts, dynamic_signal_topics, dynamic_topic_meta, assigned_dynamic_post_keys = _discover_dynamic_market_topics(
+        unmatched_all_posts,
+        unmatched_signal_posts,
+    )
+    for slug, posts in dynamic_idea_posts.items():
+        idea_posts[slug].extend(posts)
+    for slug, posts in dynamic_signal_topics.items():
+        signal_posts_by_topic[slug].extend(posts)
+    if dynamic_topic_meta:
+        print(f"  [Dynamic Themes] {len(dynamic_topic_meta)} recurring unmatched themes promoted into the market")
+
+    unmatched_signal_keys = {
+        _market_post_key(post)
+        for post in unmatched_signal_posts
+        if _market_post_key(post)
+    }
+    unmatched_by_sub = defaultdict(list)
+    for post in unmatched_all_posts:
+        post_key = _market_post_key(post)
+        if post_key in assigned_dynamic_post_keys:
+            continue
+        sub = (post.get("subreddit") or "").strip()
+        if sub and is_pain_post(post):
+            unmatched_by_sub[sub].append(post)
+
+    # ── Pain-gated dynamic topics from unmatched subreddit posts ──
+    # Only create a topic if ≥3 pain posts exist — no more raw subreddit dumps
+    dynamic_created = 0
+    for sub, pain_posts in unmatched_by_sub.items():
+        if len(pain_posts) < 3:
+            continue
+        dyn_slug = f"sub-{sub.lower()}"
+        idea_posts[dyn_slug].extend(pain_posts)
+        signal_bucket = [post for post in pain_posts if _market_post_key(post) in unmatched_signal_keys]
+        signal_posts_by_topic[dyn_slug].extend(signal_bucket or pain_posts)
+        dynamic_created += 1
+
+    if dynamic_created:
+        print(f"  [Pain Gate] {dynamic_created} dynamic topics qualified (>=3 pain posts each)")
 
     # Filter by topic if specified
     if topic_filter:
@@ -1440,6 +2163,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         "pain_summary": table_has_column("ideas", "pain_summary"),
         "last_24h_update": table_has_column("ideas", "last_24h_update"),
         "last_7d_update": table_has_column("ideas", "last_7d_update"),
+        "score_breakdown": table_has_column("ideas", "score_breakdown"),
     }
 
     # ── 4. Calculate scores + upsert ──
@@ -1450,14 +2174,31 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
     for slug, signal_bucket in active_topic_posts.items():
         posts = idea_posts.get(slug, signal_bucket)
-        topic_info = TRACKED_TOPICS.get(slug, {})
+        topic_info = TRACKED_TOPICS.get(slug) or dynamic_topic_meta.get(slug) or {}
 
-        # Handle dynamic topics (sub-<subreddit> from unmatched posts)
-        if slug.startswith("sub-"):
+        # Handle dynamic topics — phrase cluster first, then subreddit pain buckets.
+        if slug in dynamic_topic_meta:
+            topic_name = dynamic_topic_meta[slug].get("topic", slug.replace("-", " ").title())
+            topic_info = {
+                "category": dynamic_topic_meta[slug].get("category", "general"),
+                "keywords": dynamic_topic_meta[slug].get("keywords", []),
+            }
+        elif slug.startswith("sub-"):
             subreddit_name = slug[4:]
-            topic_name = f"{subreddit_name.replace('_', ' ').title()} Opportunities"
-            # Get category from subreddit mapping
             category = SUBREDDIT_CATEGORIES.get(subreddit_name, "general")
+            # Extract dominant pain theme for the topic name
+            pain_phrases_found = Counter()
+            for p in posts:
+                text_lower = _compose_post_text(p).lower()
+                for phrase in MARKET_PAIN_KEYWORDS:
+                    if phrase in text_lower:
+                        pain_phrases_found[phrase] += 1
+            top_pain = pain_phrases_found.most_common(2)
+            if top_pain:
+                theme = " & ".join(w.title() for w, _ in top_pain[:2])
+                topic_name = f"{theme} in {subreddit_name.replace('_', ' ').title()}"
+            else:
+                topic_name = f"{subreddit_name.replace('_', ' ').title()} Pain Signals"
             topic_info = {"category": category, "keywords": [subreddit_name]}
         else:
             topic_name = slug.replace("-", " ").title()
@@ -1476,14 +2217,35 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         prev_7d = baselines["prev_7d"]
         prev_30d = baselines["prev_30d"]
 
+        top_posts_json = build_top_posts_for_topic(posts)
+        signal_contract = _market_support_level_from_top_posts(
+            top_posts_json,
+            source_breakdown=breakdown.get("sources", []),
+            source_count=breakdown.get("source_count", 1),
+        )
         trend = determine_trend(score, prev_24h, prev_7d)
-        confidence = determine_confidence(len(posts), breakdown.get("source_count", 1))
+        confidence = determine_confidence(
+            len(posts),
+            breakdown.get("source_count", 1),
+            pain_count=breakdown.get("pain_count", 0),
+            signal_contract=signal_contract,
+        )
 
-        # Only skip if truly insufficient (< 3 posts) AND doesn't already exist
-        if len(posts) < 3 and not existing:
+        # Skip obviously weak launch-heavy hypotheses for brand-new topics.
+        min_new_posts = 2 if slug in dynamic_topic_meta else 3
+        if not existing and (
+            len(posts) < min_new_posts
+            or (
+                signal_contract.get("support_level") == "hypothesis"
+                and signal_contract.get("buyer_native_direct_count", 0) == 0
+                and (
+                    signal_contract.get("hn_launch_heavy")
+                    or len(posts) < (8 if slug in dynamic_topic_meta else 12)
+                )
+            )
+        ):
             continue
 
-        top_posts_json = build_top_posts_for_topic(posts)
         pain_summary, pain_count = _build_pain_summary(posts, topic_name)
 
         idea_row = {
@@ -1521,6 +2283,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             idea_row["last_24h_update"] = baselines["next_last_24h_update"]
         if idea_optional_columns["last_7d_update"]:
             idea_row["last_7d_update"] = baselines["next_last_7d_update"]
+        if idea_optional_columns["score_breakdown"]:
+            idea_row["score_breakdown"] = breakdown
 
         ideas_to_upsert.append(idea_row)
         ideas_updated += 1
@@ -1572,8 +2336,10 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
         if idea_upsert_failures:
             print(f"  [!] Idea upsert failures: {', '.join(idea_upsert_failures[:8])}")
+            run_notes.append(f"Idea upsert failures: {', '.join(idea_upsert_failures[:8])}")
         if history_failures:
             print(f"  [!] Idea history failures: {', '.join(history_failures[:8])}")
+            run_notes.append(f"Idea history failures: {', '.join(history_failures[:8])}")
 
         print(
             f"  [OK] {idea_upsert_successes}/{len(ideas_to_upsert)} ideas upserted + "
@@ -1581,25 +2347,22 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         )
 
     # ── 6. Update run log ──
-    duration = round(time.time() - start_time, 1)
-    if run_id and SUPABASE_URL:
-        run_status = "completed" if not (SUPABASE_URL and ideas_to_upsert and idea_upsert_failures) else "completed_errors"
-        error_text = None
-        if SUPABASE_URL and ideas_to_upsert and idea_upsert_failures:
-            error_text = f"Idea upsert failures: {', '.join(idea_upsert_failures[:8])}"
-        sb_patch("scraper_runs", f"id=eq.{run_id}", {
-            "status": run_status,
-            "posts_collected": len(all_posts),
-            "ideas_updated": ideas_updated,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": duration,
-            "error_text": error_text,
-        })
+    run_status = "completed" if not run_notes and not idea_upsert_failures else "completed_errors"
+    finalize_scraper_run_record(
+        run_id,
+        run_status,
+        start_time,
+        posts_collected=len(all_posts),
+        ideas_updated=ideas_updated,
+        notes=run_notes,
+    )
+    _ACTIVE_SCRAPER_CONTEXT.clear()
 
     if SUPABASE_URL:
         print("\n  Running database cleanup...")
         sb_rpc("cleanup_old_posts")
 
+    duration = round(time.time() - start_time, 1)
     print(f"\n{'=' * 60}")
     print(f"  Done! {len(all_posts)} posts -> {ideas_updated} ideas updated")
     print(f"  Duration: {duration}s")
@@ -1629,5 +2392,14 @@ if __name__ == "__main__":
             source_label=args.source,
         )
     except Exception as e:
+        run_id = _ACTIVE_SCRAPER_CONTEXT.get("run_id")
+        start_time = _ACTIVE_SCRAPER_CONTEXT.get("start_time", time.time())
+        finalize_scraper_run_record(
+            run_id,
+            "failed",
+            start_time,
+            notes=[f"Fatal error: {type(e).__name__}: {e}"],
+        )
+        _ACTIVE_SCRAPER_CONTEXT.clear()
         print(f"\n  [FATAL] {e}")
         traceback.print_exc()

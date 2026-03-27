@@ -3,6 +3,7 @@ import sys
 import time
 import types
 
+import scraper_job as market_scraper
 import validate_idea as pipeline
 from engine import keyword_scraper
 from engine.competition import analyze_competition, competition_summary
@@ -259,6 +260,505 @@ def test_primary_filter(generate_mock_posts):
     pass_rate = len(passed) / len(mock_posts)
     assert 0.15 < pass_rate < 0.70, f"Filter pass rate {pass_rate:.0%} - out of range"
     print(f"Filter: {len(passed)}/50 passed ({pass_rate:.0%})")
+
+
+def test_primary_filter_keeps_empty_when_no_relevant_signal():
+    mock_posts = [
+        {
+            "id": "irrelevant-1",
+            "external_id": "irrelevant-1",
+            "title": "Funny meme thread",
+            "selftext": "Nothing about buyer pain here.",
+            "body": "Nothing about buyer pain here.",
+            "full_text": "Funny meme thread. Nothing about buyer pain here.",
+            "score": 12,
+            "num_comments": 8,
+            "created_utc": "2026-03-20T00:00:00+00:00",
+            "subreddit": "funny",
+            "source": "reddit",
+            "permalink": "https://example.com/posts/irrelevant-1",
+            "url": "https://example.com/posts/irrelevant-1",
+            "matched_keywords": [],
+        },
+        {
+            "id": "irrelevant-2",
+            "external_id": "irrelevant-2",
+            "title": "Gaming news thread",
+            "selftext": "Totally unrelated discussion.",
+            "body": "Totally unrelated discussion.",
+            "full_text": "Gaming news thread. Totally unrelated discussion.",
+            "score": 14,
+            "num_comments": 12,
+            "created_utc": "2026-03-20T00:00:00+00:00",
+            "subreddit": "gaming",
+            "source": "reddit",
+            "permalink": "https://example.com/posts/irrelevant-2",
+            "url": "https://example.com/posts/irrelevant-2",
+            "matched_keywords": [],
+        },
+    ]
+    filtered, diagnostics = pipeline.apply_primary_filter(
+        mock_posts,
+        "invoice freelance",
+        return_diagnostics=True,
+    )
+    assert filtered == []
+    assert diagnostics["final_filtered_count"] == 0
+    assert diagnostics["fallback_mode"] == "no_relevant_posts"
+
+
+def test_data_quality_counts_direct_from_filtered_corpus():
+    direct_post = {
+        "id": "churn-1",
+        "external_id": "churn-1",
+        "title": "Usage dropped and churn spiked for my tiny SaaS",
+        "selftext": (
+            "I run a small B2B SaaS and need an early warning when customers go cold "
+            "before cancellation and renewal risk gets worse."
+        ),
+        "body": (
+            "I run a small B2B SaaS and need an early warning when customers go cold "
+            "before cancellation and renewal risk gets worse."
+        ),
+        "full_text": (
+            "Usage dropped and churn spiked for my tiny SaaS. "
+            "I need an early warning before cancellation and renewal risk gets worse."
+        ),
+        "score": 18,
+        "num_comments": 11,
+        "created_utc": "2026-03-20T00:00:00+00:00",
+        "subreddit": "microsaas",
+        "source": "reddit",
+        "permalink": "https://example.com/posts/churn-1",
+        "url": "https://example.com/posts/churn-1",
+        "matched_keywords": ["churn", "saas"],
+    }
+    data_quality = pipeline._check_data_quality(
+        posts=[direct_post],
+        source_counts={"reddit": 1},
+        pass1={"pain_validated": True, "evidence": []},
+        pass2={"pricing_strategy": {}},
+        pass3={"revenue_projections": {}},
+        idea_text="Churn prediction tool for B2B SaaS under $1M ARR",
+        keywords=["churn prediction", "saas churn analysis", "customer retention"],
+        target_audience="B2B SaaS founders under $1M ARR",
+        forced_subreddits=["saas", "microsaas", "customersuccess"],
+        filtered_posts=[direct_post],
+    )
+    assert data_quality["direct_evidence_count"] >= 1
+
+
+def test_compute_relevance_tier_demotes_show_hn_launch_posts():
+    tier = pipeline.compute_relevance_tier(
+        {
+            "title": "Show HN: Validating DefendChurn - Early warning system for SaaS customer churn",
+            "source": "hackernews",
+            "what_it_proves": "Founders are discovering churn after it's too late to prevent it.",
+            "body": "We are validating a churn startup for SaaS teams.",
+        },
+        "Early-warning retention alerts for tiny B2B SaaS teams",
+        ["customer churn prediction", "SaaS retention tools", "customer health score"],
+        "Solo founder or small team lead of a tiny B2B SaaS company",
+        ["saas", "microsaas", "customersuccess"],
+    )
+    assert tier == "ADJACENT"
+
+
+def test_compute_relevance_tier_demotes_generic_tooling_stack_posts():
+    tier = pipeline.compute_relevance_tier(
+        {
+            "title": "Automation stack for a 3-person team",
+            "source": "reddit",
+            "subreddit": "saas",
+            "what_it_proves": "Tiny B2B SaaS teams are actively seeking solutions to automate their processes.",
+            "body": "Here are the tools we use across marketing, ops, and billing.",
+        },
+        "Early-warning retention alerts for tiny B2B SaaS teams",
+        ["customer churn prediction", "SaaS retention tools", "customer health score"],
+        "Solo founder or small team lead of a tiny B2B SaaS company",
+        ["saas", "microsaas", "customersuccess"],
+    )
+    assert tier == "ADJACENT"
+
+
+def test_compute_relevance_tier_keeps_first_person_retention_pain_direct():
+    tier = pipeline.compute_relevance_tier(
+        {
+            "title": "Lost 3 customers to expired cards this month and I'm freaking out",
+            "source": "reddit",
+            "subreddit": "microsaas",
+            "body": (
+                "I run a tiny B2B SaaS and lost 3 customers after cards expired. "
+                "I need an early warning alert before more customers churn."
+            ),
+            "what_it_proves": "Tiny B2B SaaS founders are losing customers because they find out about churn too late.",
+        },
+        "Early-warning retention alerts for tiny B2B SaaS teams",
+        ["customer churn prediction", "SaaS retention tools", "customer health score"],
+        "Solo founder or small team lead of a tiny B2B SaaS company",
+        ["saas", "microsaas", "customersuccess"],
+    )
+    assert tier == "DIRECT"
+
+
+def test_compute_relevance_tier_demotes_meta_tool_critique_posts():
+    tier = pipeline.compute_relevance_tier(
+        {
+            "title": "Why Most Customer Health Scores Are Meaningless",
+            "source": "reddit",
+            "subreddit": "customersuccess",
+            "what_it_proves": "Critique of existing health score systems used by customer success teams.",
+            "body": "This post critiques the category, but it is not a first-person buyer pain report.",
+        },
+        "Early-warning retention alerts for tiny B2B SaaS teams",
+        ["customer churn prediction", "SaaS retention tools", "customer health score"],
+        "Solo founder or small team lead of a tiny B2B SaaS company",
+        ["saas", "microsaas", "customersuccess"],
+    )
+    assert tier == "ADJACENT"
+
+
+def test_market_top_posts_demote_launch_posts_below_buyer_pain():
+    top_posts = market_scraper.build_top_posts_for_topic([
+        {
+            "title": "Show HN: DefendChurn - Early warning system for SaaS customer churn",
+            "source": "hackernews",
+            "score": 140,
+            "num_comments": 36,
+            "permalink": "https://news.ycombinator.com/item?id=1",
+            "source_class": "community",
+            "voice_type": "founder",
+            "signal_kind": "launch_discussion",
+            "directness_tier": "supporting",
+        },
+        {
+            "title": "Lost 3 customers to expired cards this month and I'm freaking out",
+            "source": "reddit",
+            "subreddit": "microsaas",
+            "score": 18,
+            "num_comments": 9,
+            "permalink": "https://reddit.com/r/microsaas/comments/abc",
+            "source_class": "forum",
+            "voice_type": "buyer",
+            "signal_kind": "pain_point",
+            "directness_tier": "direct",
+        },
+    ])
+
+    assert top_posts[0]["title"] == "Lost 3 customers to expired cards this month and I'm freaking out"
+    assert top_posts[0]["market_support_level"] == "evidence_backed"
+    assert top_posts[1]["market_support_level"] == "hypothesis"
+
+
+def test_market_confidence_caps_hn_launch_heavy_hypotheses():
+    confidence = market_scraper.determine_confidence(
+        post_count=9,
+        source_count=1,
+        pain_count=1,
+        signal_contract={
+            "support_level": "hypothesis",
+            "buyer_native_direct_count": 0,
+            "single_source": True,
+            "hn_launch_heavy": True,
+        },
+    )
+    assert confidence == "INSUFFICIENT"
+
+
+def test_builder_launch_posts_need_stronger_topic_match():
+    topics = market_scraper.classify_post_to_topics({
+        "title": "Show HN: Refrax - my Arc Browser replacement I made from scratch",
+        "body": "A browser project built from scratch with Rust and AI help.",
+        "source": "hackernews",
+        "signal_kind": "launch_discussion",
+        "voice_type": "founder",
+        "directness_tier": "supporting",
+    })
+    assert "project-management" not in topics
+    assert "no-code-tools" not in topics
+
+
+def test_dynamic_market_topics_promote_recurring_unmatched_phrase_clusters():
+    unmatched_posts = [
+        {
+            "title": "Refund tracking between Stripe and Notion is a mess",
+            "body": "I am frustrated manually reconciling refunds and chargebacks every week.",
+            "source": "reddit",
+            "subreddit": "shopify",
+            "score": 18,
+            "num_comments": 7,
+            "permalink": "https://reddit.com/r/shopify/comments/refund-1",
+            "voice_type": "buyer",
+            "signal_kind": "complaint",
+            "directness_tier": "direct",
+        },
+        {
+            "title": "Anyone solved refund tracking for ops teams?",
+            "body": "Still doing refund tracking across Stripe exports and support tools manually.",
+            "source": "reddit",
+            "subreddit": "smallbusiness",
+            "score": 12,
+            "num_comments": 4,
+            "permalink": "https://reddit.com/r/smallbusiness/comments/refund-2",
+            "voice_type": "operator",
+            "signal_kind": "workaround",
+            "directness_tier": "adjacent",
+        },
+    ]
+
+    idea_posts, signal_posts, topic_meta, assigned_keys = market_scraper._discover_dynamic_market_topics(
+        unmatched_posts,
+        unmatched_posts,
+    )
+
+    assert len(idea_posts) == 1
+    slug = next(iter(idea_posts.keys()))
+    assert slug.startswith("dyn-refund-tracking")
+    assert topic_meta[slug]["topic"] == "Refund Tracking"
+    assert topic_meta[slug]["category"] in {"fintech", "ecommerce", "saas"}
+    assert len(signal_posts[slug]) == 2
+    assert len(assigned_keys) == 2
+
+
+def test_dynamic_market_topics_ignore_launch_only_clusters():
+    idea_posts, signal_posts, topic_meta, assigned_keys = market_scraper._discover_dynamic_market_topics(
+        [
+            {
+                "title": "Show HN: Browser workspace replacement built from scratch",
+                "body": "A launch thread for a new browser workspace project.",
+                "source": "hackernews",
+                "score": 40,
+                "num_comments": 11,
+                "permalink": "https://news.ycombinator.com/item?id=launch-1",
+                "voice_type": "founder",
+                "signal_kind": "launch_discussion",
+                "directness_tier": "supporting",
+            },
+            {
+                "title": "Show HN: Another browser workspace project from scratch",
+                "body": "Launching another tool for browser workspaces.",
+                "source": "hackernews",
+                "score": 28,
+                "num_comments": 6,
+                "permalink": "https://news.ycombinator.com/item?id=launch-2",
+                "voice_type": "founder",
+                "signal_kind": "launch_discussion",
+                "directness_tier": "supporting",
+            },
+        ],
+        [],
+    )
+
+    assert idea_posts == {}
+    assert signal_posts == {}
+    assert topic_meta == {}
+    assert assigned_keys == set()
+
+
+def test_quality_guardrails_force_insufficient_on_zero_direct():
+    verdict, confidence, notes = pipeline._apply_quality_verdict_guardrails(
+        "BUILD IT",
+        72,
+        {
+            "direct_evidence_count": 0,
+            "adjacent_evidence_count": 9,
+            "contradictions": [],
+        },
+        total_posts=12,
+        pain_validated=True,
+        adjacent_heavy=True,
+        test_mode=False,
+    )
+    assert verdict == "INSUFFICIENT DATA"
+    assert confidence == 25
+    assert any("Zero direct evidence" in note for note in notes)
+
+
+def test_problem_validity_labels_adjacent_heavy_runs_honestly():
+    validity = pipeline._build_problem_validity(
+        {"pain_validated": True},
+        {
+            "direct_evidence_count": 0,
+            "adjacent_evidence_count": 12,
+            "low_volume_context": False,
+        },
+        {
+            "reddit": 8,
+            "reddit_comment": 4,
+            "hackernews": 20,
+        },
+        {},
+        {
+            "pain_quotes": [
+                "We lost another customer.",
+                "Usage dropped and I missed it.",
+                "Retention is killing us.",
+            ]
+        },
+    )
+    assert validity["adjacent_heavy"] is True
+    assert "adjacent buyer conversations" in validity["summary"].lower()
+
+
+def test_quality_guardrails_soften_adjacent_heavy_dont_build():
+    verdict, confidence, notes = pipeline._apply_quality_verdict_guardrails(
+        "DON'T BUILD",
+        38,
+        {
+            "direct_evidence_count": 4,
+            "adjacent_evidence_count": 14,
+            "contradictions": [],
+        },
+        total_posts=24,
+        pain_validated=True,
+        adjacent_heavy=True,
+        test_mode=False,
+    )
+    assert verdict == "RISKY"
+    assert confidence == 38
+    assert any("softened from DON'T BUILD to RISKY" in note for note in notes)
+
+
+def test_claim_contract_marks_problem_as_evidence_backed_and_pricing_as_hypothesis_without_wtp():
+    report = {
+        "problem_validity": {
+            "label": "MODERATE",
+            "score": 72,
+            "summary": "Repeated buyer pain is visible across buyer-native sources.",
+            "buyer_source_count": 2,
+        },
+        "business_validity": {
+            "label": "MODERATE",
+            "score": 64,
+            "summary": "Business context is credible.",
+            "wtp_signals_found": 0,
+            "job_signals_found": 3,
+            "review_signals_found": 0,
+            "competitor_count": 2,
+        },
+        "pricing_strategy": {
+            "recommended_model": "subscription",
+            "price_range": "$50-$200/mo",
+        },
+        "ideal_customer_profile": {
+            "primary_persona": "Tiny B2B SaaS founder",
+            "budget_range": "$50-$200/mo",
+        },
+        "competition_landscape": {
+            "market_saturation": "COMPETITIVE",
+            "direct_competitors": [{"name": "ChurnZero"}, {"name": "Totango"}],
+        },
+    }
+    claim_contract = pipeline._build_claim_contract(
+        report,
+        pass1={"tam_estimate": "Tens of millions"},
+        pass2={},
+        intel={"trends": {"overall_trend": "GROWING"}},
+        data_quality={"direct_evidence_count": 6, "adjacent_evidence_count": 4},
+        source_counts={"reddit": 5, "job_posting": 3},
+        batch_signals={"pain_quotes": ["Lost 3 customers"], "wtp_signals": []},
+    )
+    entries = {entry["claim_id"]: entry for entry in claim_contract["entries"]}
+
+    assert entries["problem_validity"]["support_level"] == "evidence_backed"
+    assert entries["problem_validity"]["allowed_for_problem_validity"] is True
+    assert entries["pricing_strategy"]["support_level"] == "hypothesis"
+    assert entries["pricing_strategy"]["allowed_for_business_validity"] is False
+    assert entries["market_timing"]["allowed_for_problem_validity"] is False
+
+
+def test_claim_contract_marks_problem_as_supporting_context_when_adjacent_heavy():
+    report = {
+        "problem_validity": {
+            "label": "LOW",
+            "score": 36,
+            "summary": "Thin direct pain proof with stronger adjacent pain.",
+            "buyer_source_count": 1,
+            "adjacent_heavy": True,
+        },
+        "business_validity": {
+            "label": "LOW",
+            "score": 42,
+            "summary": "Some business signal exists.",
+            "wtp_signals_found": 0,
+            "job_signals_found": 0,
+            "review_signals_found": 0,
+            "competitor_count": 1,
+        },
+        "ideal_customer_profile": {
+            "primary_persona": "Tiny B2B SaaS founder",
+        },
+        "competition_landscape": {
+            "market_saturation": "EMERGING",
+            "direct_competitors": [{"name": "ChurnZero"}],
+        },
+    }
+    claim_contract = pipeline._build_claim_contract(
+        report,
+        pass1={"tam_estimate": ""},
+        pass2={},
+        intel={"trends": {"overall_trend": "GROWING"}},
+        data_quality={"direct_evidence_count": 2, "adjacent_evidence_count": 10},
+        source_counts={"reddit": 4},
+        batch_signals={"pain_quotes": ["Customers are going cold"], "wtp_signals": []},
+    )
+    entries = {entry["claim_id"]: entry for entry in claim_contract["entries"]}
+
+    assert entries["problem_validity"]["support_level"] == "supporting_context"
+    assert entries["ideal_customer_profile"]["support_level"] == "supporting_context"
+    assert entries["tam_estimate"]["support_level"] == "hypothesis"
+
+
+def test_live_reddit_comment_posts_from_seed_posts(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [
+                {"data": {"children": []}},
+                {
+                    "data": {
+                        "children": [
+                            {
+                                "kind": "t1",
+                                "data": {
+                                    "id": "comment-1",
+                                    "body": "We keep losing customers when usage drops and I would pay for an alert before churn spikes.",
+                                    "score": 14,
+                                    "created_utc": 1710892800,
+                                    "author": "founder1",
+                                    "permalink": "/r/microsaas/comments/post1/example/comment-1/",
+                                },
+                            }
+                        ]
+                    }
+                },
+            ]
+
+    monkeypatch.setattr(pipeline.requests, "get", lambda *args, **kwargs: FakeResponse())
+
+    comments = pipeline._fetch_live_reddit_comment_posts(
+        [
+            {
+                "id": "post-1",
+                "external_id": "post-1",
+                "source": "reddit",
+                "subreddit": "microsaas",
+                "title": "Usage dropped for my tiny SaaS",
+                "score": 28,
+                "num_comments": 22,
+                "permalink": "https://reddit.com/r/microsaas/comments/post1/example/",
+            }
+        ],
+        ["usage drop", "churn"],
+        timeout_seconds=5,
+        max_posts=5,
+    )
+    assert len(comments) == 1
+    assert comments[0]["source"] == "reddit_comment"
+    assert comments[0]["parent_external_id"] == "post-1"
+    assert "churn" in " ".join(comments[0]["matched_keywords"]).lower()
 
 
 def test_synthesis_pass1(get_sample_posts, load_user_configs):

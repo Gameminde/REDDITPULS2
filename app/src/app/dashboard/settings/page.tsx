@@ -6,6 +6,8 @@ import { Plus, Trash2, CheckCircle, XCircle, AlertTriangle, User, Mail, Key, Loa
 import { useUserPlan } from "@/lib/use-user-plan";
 import { PremiumGate } from "@/app/components/premium-gate";
 import { createClient } from "@/lib/supabase-browser";
+import Link from "next/link";
+import { FEATURE_FLAGS } from "@/lib/feature-flags";
 
 type ProviderConfig = {
     id?: string;
@@ -495,6 +497,55 @@ export default function SettingsPage() {
                                     <span className="font-mono text-white">{configs.length}</span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 pt-5" style={{ borderTop: "1px solid hsl(0 0% 100% / 0.05)" }}>
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Internal</p>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-3" style={{ background: "hsl(0 0% 100% / 0.02)", border: "1px solid hsl(0 0% 100% / 0.05)" }}>
+                                <div>
+                                    <p className="text-xs text-white">Engine status</p>
+                                    <p className="text-[11px] text-muted-foreground">Check scraper freshness before enabling cron-dependent pages.</p>
+                                </div>
+                                <Link
+                                    href="/dashboard/settings/engine-status"
+                                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-primary transition-all"
+                                    style={{ background: "hsl(var(--orange-dim))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                                >
+                                    Open
+                                </Link>
+                            </div>
+                            {FEATURE_FLAGS.OPPORTUNITY_LAB_ENABLED && (
+                                <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-3" style={{ background: "hsl(0 0% 100% / 0.02)", border: "1px solid hsl(0 0% 100% / 0.05)" }}>
+                                    <div>
+                                        <p className="text-xs text-white">Opportunity operating model lab</p>
+                                        <p className="text-[11px] text-muted-foreground">Experimental lane that separates themes, candidate opportunities, context, and noise without changing the main product.</p>
+                                    </div>
+                                    <Link
+                                        href="/dashboard/settings/opportunity-lab"
+                                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-primary transition-all"
+                                        style={{ background: "hsl(var(--orange-dim))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                                    >
+                                        Test lab
+                                    </Link>
+                                </div>
+                            )}
+                            {FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED && (
+                                <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-3" style={{ background: "hsl(0 0% 100% / 0.02)", border: "1px solid hsl(0 0% 100% / 0.05)" }}>
+                                    <div>
+                                        <p className="text-xs text-white">Reddit connection lab</p>
+                                        <p className="text-[11px] text-muted-foreground">Optional Reddit connect and source packs. Your normal validation flow uses this context automatically once connected.</p>
+                                    </div>
+                                    <Link
+                                        href="/dashboard/settings/reddit-lab"
+                                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-primary transition-all"
+                                        style={{ background: "hsl(var(--orange-dim))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                                    >
+                                        Open lab
+                                    </Link>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </motion.div>

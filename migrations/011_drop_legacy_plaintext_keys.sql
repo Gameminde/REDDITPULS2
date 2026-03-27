@@ -27,7 +27,7 @@ DROP TABLE IF EXISTS user_settings;
 DROP VIEW IF EXISTS user_ai_config_safe;
 CREATE VIEW user_ai_config_safe AS
 SELECT
-    id,
+    id, 
     user_id,
     provider,
     '••••••••' AS api_key_masked,
