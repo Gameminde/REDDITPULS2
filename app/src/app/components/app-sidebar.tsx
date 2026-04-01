@@ -9,7 +9,7 @@ import {
     Search, DollarSign, Radar,
     Bookmark, LogOut, Activity, Lock, ArrowRight, FileText,
     TrendingUp, Globe, Mail, Lightbulb, Settings,
-    BarChart3, BellRing, Compass,
+    BarChart3, BellRing, Compass, Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
@@ -18,6 +18,7 @@ import { useUserPlan } from "@/lib/use-user-plan";
 
 const marketItems = [
     { title: "Market", url: "/dashboard", icon: BarChart3 },
+    { title: "Opportunities", url: "/dashboard/opportunities", icon: Sparkles },
     { title: "Explore", url: "/dashboard/explore", icon: Compass },
     { title: "Trends", url: "/dashboard/trends", icon: TrendingUp, premium: true },
 ];

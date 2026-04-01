@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     const direction = searchParams.get("direction") || "desc";
     const category = searchParams.get("category") || "";
     const includeExploratory = searchParams.get("include_exploratory") === "1";
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10) || 50, 200);
+    const limit = Math.min(parseInt(searchParams.get("limit") || "120", 10) || 120, 250);
 
     let query = supabase
         .from("ideas")

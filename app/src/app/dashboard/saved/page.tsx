@@ -36,7 +36,7 @@ interface MonitorEvent {
 
 interface MonitorItem {
     id: string;
-    legacy_type: "watchlist" | "alert";
+    legacy_type: "watchlist" | "alert" | "opportunity";
     legacy_id: string;
     monitor_type: MonitorType;
     title: string;

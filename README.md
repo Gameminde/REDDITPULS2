@@ -534,17 +534,21 @@ python enrich_idea.py invoice-automation --keywords "invoice,billing"
 
 ## Deployment Notes
 
-- The Python engine runs as **child processes** spawned by Next.js API routes via `exec()`
-- The repo includes a GitHub Actions workflow at [`.github/workflows/scraper.yml`](./.github/workflows/scraper.yml)
-- The scraper now runs on both:
-  - the daily schedule (`0 5 * * *`)
-  - pushes to `main` that touch scraper-related files (`scraper_job.py`, `engine/**`, `migrations/**`, or the workflow itself)
-- The scraper is currently scheduled to run **every 24 hours** via GitHub Actions cron: `0 5 * * *`
+- The app can still launch Python child processes locally through Next.js route handlers, but the recommended home for the recurring market scraper is now a dedicated VPS worker.
+- The repo includes a VPS worker setup guide at [docs/vps_scraper_worker.md](./docs/vps_scraper_worker.md)
+- The VPS worker assets live in [scripts/vps](./scripts/vps):
+  - `install_market_scraper.sh`
+  - `run_market_scraper.sh`
+  - `redditpulse-scraper.service`
+  - `redditpulse-scraper.timer`
+  - `scraper.env.example`
+- The worker installs Python dependencies from [requirements-scraper.txt](./requirements-scraper.txt)
+- Recommended production schedule: **every 6 hours** via the `systemd` timer
+- The runner uses a lock file so overlapping scrapes do not stack up if one run is still active
+- The app keeps reading all market data from Supabase exactly the same way; only the worker and scheduler move to the VPS
+- The repo also still includes a GitHub Actions workflow at [`.github/workflows/scraper.yml`](./.github/workflows/scraper.yml) if you want a fallback scheduled runner
+- GitHub Actions currently runs on a **6-hour cron**: `0 */6 * * *`
 - On GitHub, add these Actions secrets before enabling the workflow: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PROXY_LIST`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `GH_TOKEN`
-- The workflow runs `python scraper_job.py --mode=full --source=github_actions`
-- Each scheduled run also stores posts, checks Pain Stream alerts, runs Competitor Deathwatch, updates `trend_signals`, updates Market Pulse scores, and calls `cleanup_old_posts()`
-- This repository is **public**, so standard GitHub-hosted Linux runner time is not constrained by the private-repo 2000-minute free allowance
-- Keep the workflow `timeout-minutes: 25` in mind when expanding sources or adding heavier enrichment steps
 - The `enrichment_cache` has a **7-day TTL** — stale data auto-expires via DB trigger
 - **Rate limits**: Reddit (2.5s delay), HN (0.5s), PH (1s per page), IH (0.5s), SO (monitored quota), GitHub (token recommended)
 - All Supabase tables have **RLS enabled** — the service role key bypasses RLS for backend writes

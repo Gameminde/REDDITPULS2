@@ -688,6 +688,37 @@ def test_dynamic_market_topics_ignore_launch_only_clusters():
     assert assigned_keys == set()
 
 
+def test_bulk_upsert_rows_falls_back_to_individual_writes(monkeypatch):
+    class FakeResponse:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+
+    calls = []
+
+    def fake_sb_upsert(table, rows, on_conflict=""):
+        calls.append((table, [row.get("slug") for row in rows], on_conflict))
+        if len(rows) > 1:
+            return FakeResponse(599, "timeout")
+        if rows[0]["slug"] == "second":
+            return FakeResponse(599, "still bad")
+        return FakeResponse(200, "ok")
+
+    monkeypatch.setattr(market_scraper, "sb_upsert", fake_sb_upsert)
+
+    success_count, failure_ids = market_scraper._bulk_upsert_rows(
+        "ideas",
+        [{"slug": "first"}, {"slug": "second"}],
+        on_conflict="slug",
+        chunk_size=25,
+        id_fn=lambda row: row["slug"],
+    )
+
+    assert success_count == 1
+    assert failure_ids == ["second"]
+    assert calls[0] == ("ideas", ["first", "second"], "slug")
+
+
 def test_quality_guardrails_force_insufficient_on_zero_direct():
     verdict, confidence, notes = pipeline._apply_quality_verdict_guardrails(
         "BUILD IT",
@@ -967,7 +998,79 @@ def test_debate_engine(monkeypatch, load_user_configs):
     assert result["verdict"] in ["BUILD_IT", "RISKY", "DONT_BUILD"]
     assert 0 < result["confidence"] <= 100
     assert len(result.get("models_used", [])) >= 1
+    transcript = result["debate_transcript"]
+    assert transcript["version"] == 2
+    assert transcript["room"]["mode"] == "structured_room"
+    assert transcript["room"]["moderated"] is True
+    assert transcript["room"]["moderator_hidden"] is True
+    assert transcript["evidence_board"]
+    assert transcript["debate_events"]
+    assert transcript["rounds"][0]["phase"] == "opening"
+    first_entry = transcript["rounds"][0]["entries"][0]
+    assert "stance_summary" in first_entry
+    assert "response_mode" in first_entry
+    assert "status" in first_entry
+    assert first_entry["response_mode"] == "claim"
+    assert first_entry["status"] == "ok"
+    round2 = next((round_ for round_ in transcript["rounds"] if round_["round"] == 2), None)
+    assert round2 is not None
+    round2_entry = round2["entries"][0]
+    assert "cited_evidence_ids" in round2_entry
+    assert "engaged_model_ids" in round2_entry
+    assert "response_mode" in round2_entry
+    assert "status" in round2_entry
+    assert "moderator_summary" in transcript["final"]
+    assert "key_disagreements" in transcript["final"]
     print(f"Debate: {result['verdict']} ({result['confidence']}%) - {len(result.get('models_used', []))} models")
+
+
+def test_debate_engine_consensus_emits_structured_transcript_without_round2(monkeypatch, load_user_configs):
+    from engine import multi_brain as multi_brain_module
+
+    def fake_consensus_provider(config, prompt, system_prompt):
+        role = "ANALYST"
+        system_upper = system_prompt.upper()
+        if "BULL" in system_upper:
+            role = "BULL"
+        elif "SKEPTIC" in system_upper:
+            role = "SKEPTIC"
+        elif "MARKET_ANALYST" in system_upper or "MARKET ANALYST" in system_upper:
+            role = "MARKET_ANALYST"
+
+        payload = {
+            "verdict": "BUILD_IT",
+            "confidence": 74,
+            "evidence": [f"{role} evidence point"],
+            "suggestions": [f"{role} suggestion"],
+            "risk_factors": [f"{role} risk"],
+            "action_plan": [f"{role} action"],
+            "top_posts": [{"title": f"{role} top post"}],
+            "top_unknowns": ["Unknown retention effect"],
+            "executive_summary": f"{role} sees repeated buyer pain.",
+            "summary": f"{role} sees repeated buyer pain.",
+        }
+
+        return config["provider"], config["selected_model"], json.dumps(payload)
+
+    monkeypatch.setattr(multi_brain_module, "call_provider", fake_consensus_provider)
+
+    brain = MultiBrain(load_user_configs())
+    result = brain.debate(
+        prompt="Strong demand signal for invoice chasing among freelancers.",
+        system_prompt="Return JSON with verdict, confidence, evidence, suggestions, action_plan, risk_factors, top_posts, top_unknowns, summary, debate_note.",
+        metadata={},
+    )
+
+    transcript = result["debate_transcript"]
+    assert transcript["version"] == 2
+    assert transcript["room"]["moderated"] is True
+    assert transcript["evidence_board"]
+    assert transcript["debate_events"]
+    assert len(transcript["rounds"]) == 1
+    assert transcript["rounds"][0]["round"] == 1
+    assert transcript["round2_summary"] == ""
+    assert transcript["final"]["moderator_summary"]
+    assert transcript["final"]["key_disagreements"]
 
 
 def test_competition_tier():

@@ -15,6 +15,8 @@ export interface MonitorMemoryHints {
     readiness_score: number | null;
     next_move_summary: string | null;
     anti_idea_verdict: string | null;
+    strongest_caution: string | null;
+    stale_reason: string | null;
 }
 
 export interface MonitorMemoryState {
@@ -33,6 +35,8 @@ export interface MonitorMemoryState {
     readiness_score: number | null;
     next_move_summary: string | null;
     anti_idea_verdict: string | null;
+    strongest_caution: string | null;
+    stale_reason: string | null;
     status: string;
     captured_at: string;
 }
@@ -51,6 +55,8 @@ export interface MonitorMemoryDelta {
     readiness_score_change: string | null;
     next_move_change_note: string | null;
     anti_idea_change_note: string | null;
+    caution_change_note: string | null;
+    stale_reason_change_note: string | null;
     direct_vs_inferred: {
         direct_evidence_count: number;
         inferred_markers: string[];
@@ -92,7 +98,8 @@ function summarizeState(state: MonitorMemoryState) {
     const timing = state.timing_category ? state.timing_category : null;
     const posture = state.productization_posture ? state.productization_posture : null;
     const evidence = `${state.evidence_count} evidence`;
-    return [primary, posture, timing, evidence].filter(Boolean).join(" | ");
+    const staleReason = state.stale_reason ? `stale: ${state.stale_reason}` : null;
+    return [primary, posture, timing, evidence, staleReason].filter(Boolean).join(" | ");
 }
 
 function hintsFromMonitor(monitor: MemoryMonitorLike): MonitorMemoryHints {
@@ -110,6 +117,8 @@ function hintsFromMonitor(monitor: MemoryMonitorLike): MonitorMemoryHints {
         readiness_score: numberOrNull(raw.readiness_score),
         next_move_summary: stringOrNull(raw.next_move_summary),
         anti_idea_verdict: stringOrNull(raw.anti_idea_verdict),
+        strongest_caution: stringOrNull(raw.strongest_caution),
+        stale_reason: stringOrNull(raw.stale_reason),
     };
 }
 
@@ -132,6 +141,8 @@ export function buildMonitorMemoryState(monitor: MemoryMonitorLike): MonitorMemo
         readiness_score: hints.readiness_score,
         next_move_summary: hints.next_move_summary,
         anti_idea_verdict: hints.anti_idea_verdict,
+        strongest_caution: hints.strongest_caution,
+        stale_reason: hints.stale_reason,
         status: String(monitor.status || "quiet"),
         captured_at: new Date().toISOString(),
     };
@@ -163,6 +174,8 @@ export function normalizeStoredState(raw: unknown): MonitorMemoryState | null {
         readiness_score: numberOrNull(raw.readiness_score),
         next_move_summary: stringOrNull(raw.next_move_summary),
         anti_idea_verdict: stringOrNull(raw.anti_idea_verdict),
+        strongest_caution: stringOrNull(raw.strongest_caution),
+        stale_reason: stringOrNull(raw.stale_reason),
         status: String(raw.status || "quiet"),
         captured_at: String(raw.captured_at || new Date().toISOString()),
     };
@@ -184,6 +197,8 @@ export function normalizeStoredDelta(raw: unknown): MonitorMemoryDelta | null {
         readiness_score_change: stringOrNull(raw.readiness_score_change),
         next_move_change_note: stringOrNull(raw.next_move_change_note),
         anti_idea_change_note: stringOrNull(raw.anti_idea_change_note),
+        caution_change_note: stringOrNull(raw.caution_change_note),
+        stale_reason_change_note: stringOrNull(raw.stale_reason_change_note),
         direct_vs_inferred: {
             direct_evidence_count: Number((isRecord(raw.direct_vs_inferred) ? raw.direct_vs_inferred.direct_evidence_count : 0) || 0),
             inferred_markers: isRecord(raw.direct_vs_inferred) && Array.isArray(raw.direct_vs_inferred.inferred_markers)
@@ -236,6 +251,8 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
         && Boolean(previous.next_move_summary)
         && current.next_move_summary !== previous.next_move_summary;
     const antiIdeaChanged = current.anti_idea_verdict !== previous.anti_idea_verdict;
+    const cautionChanged = current.strongest_caution !== previous.strongest_caution;
+    const staleReasonChanged = current.stale_reason !== previous.stale_reason;
 
     const changed =
         Math.abs(trustDelta) >= 5 ||
@@ -246,6 +263,8 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
         postureChanged ||
         nextMoveChanged ||
         antiIdeaChanged ||
+        cautionChanged ||
+        staleReasonChanged ||
         timingChanged ||
         statusChanged;
 
@@ -258,6 +277,9 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
         direction = "strengthening";
     } else if (trustDelta < 0 || primaryDelta < 0 || readinessDelta < 0 || postureDelta < 0 || antiIdeaDelta < 0 || current.status === "quiet") {
         direction = "weakening";
+    }
+    if (staleReasonChanged) {
+        direction = current.stale_reason ? "weakening" : "strengthening";
     }
 
     const confidenceChange = Math.abs(trustDelta) >= 5
@@ -292,6 +314,16 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
         ? `Anti-idea risk changed from ${previous.anti_idea_verdict || "unknown"} to ${current.anti_idea_verdict || "unknown"}.`
         : null;
 
+    const cautionChangeNote = cautionChanged
+        ? `Strongest caution shifted from "${previous.strongest_caution || "unknown"}" to "${current.strongest_caution || "unknown"}".`
+        : null;
+
+    const staleReasonChangeNote = staleReasonChanged
+        ? current.stale_reason
+            ? `Board stale reason appeared: ${current.stale_reason}.`
+            : `Board stale reason cleared from ${previous.stale_reason || "previous state"}.`
+        : null;
+
     const primaryMetricChange =
         current.primary_metric_label &&
         current.primary_metric_value != null &&
@@ -302,6 +334,8 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
 
     const deltaSummary = [
         postureChangeNote,
+        staleReasonChangeNote,
+        cautionChangeNote,
         readinessScoreChange,
         antiIdeaChangeNote,
         nextMoveChangeNote,
@@ -327,6 +361,8 @@ export function buildMonitorMemoryDelta(previous: MonitorMemoryState | null, cur
         readiness_score_change: readinessScoreChange,
         next_move_change_note: nextMoveChangeNote,
         anti_idea_change_note: antiIdeaChangeNote,
+        caution_change_note: cautionChangeNote,
+        stale_reason_change_note: staleReasonChangeNote,
         direct_vs_inferred: {
             direct_evidence_count: directEvidenceCount,
             inferred_markers: [

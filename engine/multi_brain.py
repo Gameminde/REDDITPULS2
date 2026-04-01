@@ -637,6 +637,361 @@ def generate_round2_summary(r1_entries, r2_entries) -> str:
     return " ".join(parts).strip()
 
 
+def _meaningful_tokens(text: str) -> set[str]:
+    words = re.findall(r"[A-Za-z0-9']+", str(text or "").lower())
+    stopwords = {
+        "about", "after", "again", "also", "among", "around", "because", "being",
+        "build", "built", "could", "does", "from", "have", "held", "into", "just",
+        "more", "need", "only", "other", "position", "risk", "risky", "same",
+        "should", "still", "that", "their", "them", "there", "they", "this",
+        "through", "using", "very", "were", "what", "when", "with", "would",
+    }
+    return {
+        word for word in words
+        if len(word) >= 4 and word not in stopwords
+    }
+
+
+def build_stance_summary(argument_text: str, verdict: Optional[str] = None, max_words: int = 16) -> str:
+    sentence = extract_first_substantive_sentence(argument_text)
+    base = sentence or re.sub(r"\s+", " ", str(argument_text or "")).strip().strip('"')
+    if not base:
+        fallback = normalize_verdict_text(verdict, "RISKY").replace("_", " ")
+        return f"{fallback.title()} position held."
+
+    summary = re.sub(r"\s+", " ", base).strip().strip('"')
+    summary = _truncate_words(summary, max_words)
+    summary = summary.rstrip(" ,;:")
+    if not summary.endswith("."):
+        summary += "."
+    return summary
+
+
+def collect_engaged_model_ids(response_text: str, other_models: list[dict]) -> list[str]:
+    normalized_text = str(response_text or "").upper()
+    engaged = []
+    for model in other_models:
+        role = str(model.get("role") or "").upper()
+        model_id = model.get("config_id") or model.get("id")
+        if not role or not model_id:
+            continue
+        if f"[{role}]" in normalized_text or role in normalized_text:
+            engaged.append(str(model_id))
+    return list(dict.fromkeys(engaged))
+
+
+def determine_response_mode(round_number: int, held: bool, engagement_score: int) -> str:
+    if round_number <= 1:
+        return "claim"
+    if not held:
+        return "change"
+    if engagement_score > 0:
+        return "rebuttal"
+    return "hold"
+
+
+def _coerce_tier_label(raw_value, default="SUPPORTING") -> str:
+    value = str(raw_value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if not value:
+        return default
+    if value in {"DIRECT", "DIRECT_BUYER", "BUYER_NATIVE_DIRECT", "DIRECT_SIGNAL"}:
+        return "DIRECT"
+    if value in {"ADJACENT", "SUPPORTING", "SUPPORTING_CONTEXT", "CONTEXT"}:
+        return "SUPPORTING" if value != "CONTEXT" else "CONTEXT"
+    if value in {"RISK", "UNKNOWN"}:
+        return value
+    return value
+
+
+def _extract_board_text(item) -> str:
+    if isinstance(item, dict):
+        for key in ("title", "what_it_proves", "summary", "text", "body", "quote"):
+            value = str(item.get(key, "")).strip()
+            if value:
+                return value
+        return json.dumps(item, sort_keys=True)[:220]
+    return str(item or "").strip()
+
+
+def _extract_board_source_type(item) -> str:
+    if isinstance(item, dict):
+        source_type = (
+            item.get("source_type")
+            or item.get("source")
+            or item.get("platform")
+            or item.get("channel")
+            or "model_evidence"
+        )
+        return str(source_type).strip() or "model_evidence"
+    return "model_evidence"
+
+
+def _extract_board_source_ref(item) -> str:
+    if isinstance(item, dict):
+        for key in ("url", "permalink", "id", "title"):
+            value = str(item.get(key, "")).strip()
+            if value:
+                return value[:160]
+    return _extract_board_text(item)[:160]
+
+
+def _extract_board_why(item) -> str:
+    if isinstance(item, dict):
+        for key in ("why_it_matters", "what_it_proves", "summary", "note"):
+            value = str(item.get(key, "")).strip()
+            if value:
+                return _truncate_words(value, 24)
+    return "Referenced by the debate as supporting evidence."
+
+
+def build_evidence_board(
+    evidence_items,
+    metadata=None,
+    top_unknowns=None,
+    risk_factors=None,
+    max_items: int = 8,
+) -> list[dict]:
+    metadata = metadata or {}
+    board = []
+    seen = set()
+
+    def _push(entry: dict):
+        if len(board) >= max_items:
+            return
+        text_key = str(entry.get("text", "")).lower().strip()[:220]
+        if not text_key or text_key in seen:
+            return
+        seen.add(text_key)
+        board.append(entry)
+
+    for item in evidence_items or []:
+        text = _truncate_words(_extract_board_text(item), 28)
+        if not text:
+            continue
+        tier = "DIRECT"
+        if isinstance(item, dict):
+            tier = _coerce_tier_label(
+                item.get("tier")
+                or item.get("evidence_tier")
+                or item.get("directness_tier")
+                or item.get("signal_kind"),
+                default="SUPPORTING",
+            )
+        _push({
+            "id": f"E{len(board) + 1}",
+            "text": text,
+            "tier": tier,
+            "source_type": _extract_board_source_type(item),
+            "source_ref": _extract_board_source_ref(item),
+            "why_it_matters": _extract_board_why(item),
+        })
+
+    trends = metadata.get("trends_data", {}) if isinstance(metadata.get("trends_data"), dict) else {}
+    competition = metadata.get("competition_data", {}) if isinstance(metadata.get("competition_data"), dict) else {}
+
+    if trends:
+        trend_direction = trends.get("trend_direction") or trends.get("overall_trend") or "unknown"
+        growth_rate = trends.get("growth_rate")
+        trend_text = f"Google Trends is {trend_direction}"
+        if growth_rate not in (None, ""):
+            trend_text += f" ({growth_rate}% change over 90 days)"
+        _push({
+            "id": f"E{len(board) + 1}",
+            "text": trend_text,
+            "tier": "CONTEXT",
+            "source_type": "trend_metadata",
+            "source_ref": "trends_data",
+            "why_it_matters": "Independent timing context from non-LLM market data.",
+        })
+
+    if competition:
+        comp_text = (
+            f"Competition density is {competition.get('saturation_tier', 'unknown')}; "
+            f"strongest competitor is {competition.get('top_competitor', 'unknown')}."
+        )
+        _push({
+            "id": f"E{len(board) + 1}",
+            "text": comp_text,
+            "tier": "CONTEXT",
+            "source_type": "competition_metadata",
+            "source_ref": "competition_data",
+            "why_it_matters": "Independent market structure context used to test defensibility.",
+        })
+
+    for unknown in top_unknowns or []:
+        unknown_text = _truncate_words(str(unknown or "").strip(), 24)
+        if not unknown_text:
+            continue
+        _push({
+            "id": f"E{len(board) + 1}",
+            "text": unknown_text,
+            "tier": "UNKNOWN",
+            "source_type": "model_unknown",
+            "source_ref": "top_unknowns",
+            "why_it_matters": "Open question the moderator wants the room to keep in view.",
+        })
+
+    for risk in risk_factors or []:
+        risk_text = _truncate_words(str(risk or "").strip(), 24)
+        if not risk_text:
+            continue
+        _push({
+            "id": f"E{len(board) + 1}",
+            "text": risk_text,
+            "tier": "RISK",
+            "source_type": "model_risk",
+            "source_ref": "risk_factors",
+            "why_it_matters": "Named downside that can invalidate an otherwise attractive thesis.",
+        })
+
+    return board
+
+
+def render_evidence_board_for_prompt(evidence_board: list[dict]) -> str:
+    if not evidence_board:
+        return "No shared evidence board available."
+
+    lines = []
+    for item in evidence_board:
+        lines.append(
+            f"- [{item['id']}] ({item['tier']}/{item['source_type']}) {item['text']} "
+            f"| Why it matters: {item['why_it_matters']}"
+        )
+    return "\n".join(lines)
+
+
+def extract_cited_evidence_ids(argument_text: str, evidence_board: list[dict]) -> list[str]:
+    if not argument_text or not evidence_board:
+        return []
+
+    board_ids = {str(item.get("id")) for item in evidence_board if item.get("id")}
+    explicit = re.findall(r"\bE\d+\b", str(argument_text).upper())
+    cited = [item_id for item_id in explicit if item_id in board_ids]
+    if cited:
+        return list(dict.fromkeys(cited))
+
+    argument_tokens = _meaningful_tokens(argument_text)
+    ranked = []
+    for item in evidence_board:
+        evidence_id = str(item.get("id", ""))
+        text = f"{item.get('text', '')} {item.get('why_it_matters', '')}"
+        overlap = len(argument_tokens & _meaningful_tokens(text))
+        if overlap >= 2 and evidence_id:
+            ranked.append((overlap, evidence_id))
+    ranked.sort(reverse=True)
+    return [evidence_id for _, evidence_id in ranked[:2]]
+
+
+def build_key_disagreements(final_verdict: str, round1_entries, round2_entries, dissent) -> list[str]:
+    disagreements = []
+    round1_verdicts = sorted({entry.get("verdict") for entry in (round1_entries or []) if entry.get("verdict")})
+    if len(round1_verdicts) > 1:
+        disagreements.append(
+            f"Opening positions split across {', '.join(v.replace('_', ' ') for v in round1_verdicts)}."
+        )
+
+    for entry in round2_entries or []:
+        if not entry.get("held", True):
+            disagreements.append(
+                f"{entry.get('role', 'ANALYST')} changed to {str(entry.get('verdict', '')).replace('_', ' ')} after rebuttal."
+            )
+
+    for item in dissent or []:
+        role = item.get("role", "ANALYST")
+        verdict = str(item.get("verdict", "RISKY")).replace("_", " ")
+        reason = build_stance_summary(item.get("reasoning", ""), item.get("verdict"))
+        disagreements.append(f"{role} stayed {verdict}: {reason}")
+
+    if not disagreements:
+        disagreements.append(
+            f"The room aligned on {str(final_verdict).replace('_', ' ')} without a lasting split."
+        )
+
+    return disagreements[:3]
+
+
+def build_moderator_summary(final_verdict: str, confidence: int, round2_entries, key_disagreements: list[str]) -> str:
+    changed_count = sum(1 for entry in (round2_entries or []) if not entry.get("held", True))
+    parts = [
+        f"Moderator synthesis favored {str(final_verdict).replace('_', ' ')} at {confidence}% confidence."
+    ]
+    if round2_entries:
+        parts.append(f"One rebuttal round completed with {changed_count} model(s) changing verdict.")
+    else:
+        parts.append("The room reached a consensus before a rebuttal round was needed.")
+    if key_disagreements:
+        parts.append(f"Main remaining disagreement: {key_disagreements[0]}")
+    return " ".join(parts).strip()
+
+
+def build_debate_events(
+    round1_entries,
+    round2_entries,
+    final_weights,
+    final_verdict: str,
+    final_confidence: int,
+    moderator_summary: str,
+) -> list[dict]:
+    events = []
+    round1_by_model = {
+        entry.get("model_id"): entry
+        for entry in (round1_entries or [])
+        if entry.get("model_id")
+    }
+    round2_by_model = {
+        entry.get("model_id"): entry
+        for entry in (round2_entries or [])
+        if entry.get("model_id")
+    }
+
+    for entry in round1_entries or []:
+        events.append({
+            "type": "claim",
+            "round": 1,
+            "from": entry.get("model_id"),
+            "text": entry.get("stance_summary") or entry.get("argument_text") or "",
+            "confidence": entry.get("confidence"),
+            "refs": entry.get("cited_evidence_ids") or [],
+        })
+
+    for entry in round2_entries or []:
+        event = {
+            "type": "rebuttal",
+            "round": 2,
+            "from": entry.get("model_id"),
+            "text": entry.get("stance_summary") or entry.get("argument_text") or "",
+            "confidence": entry.get("confidence"),
+            "refs": entry.get("cited_evidence_ids") or [],
+        }
+        engaged = entry.get("engaged_model_ids") or []
+        if len(engaged) == 1:
+            event["to"] = engaged[0]
+        events.append(event)
+
+    final_round = 3 if round2_entries else 2
+    for weight in final_weights or []:
+        model_id = weight.get("model_id")
+        source_entry = round2_by_model.get(model_id) or round1_by_model.get(model_id) or {}
+        events.append({
+            "type": "final_position",
+            "round": final_round,
+            "from": model_id,
+            "text": source_entry.get("stance_summary") or source_entry.get("argument_text") or "",
+            "confidence": source_entry.get("confidence") or 0,
+            "refs": source_entry.get("cited_evidence_ids") or [],
+        })
+
+    events.append({
+        "type": "verdict",
+        "round": final_round,
+        "from": "moderator",
+        "text": moderator_summary,
+        "confidence": final_confidence,
+        "refs": [],
+    })
+    return events
+
+
 # ═══════════════════════════════════════════════════════
 # FIX 4 — BASE RATE CONTEXT BUILDER
 # ═══════════════════════════════════════════════════════
@@ -1031,6 +1386,11 @@ class AIBrain:
                         "confidence_delta": 0,
                         "held": True,
                         "argument_text": round1_argument,
+                        "stance_summary": build_stance_summary(round1_argument, round1_verdict),
+                        "cited_evidence_ids": [],
+                        "engaged_model_ids": [],
+                        "response_mode": "claim",
+                        "status": "ok",
                         "engagement_score": 0,
                         "engagement_label": "Initial position",
                     })
@@ -1083,6 +1443,7 @@ class AIBrain:
                 round1_entries=round1_entries,
                 round2_entries=[],
                 round2_summary="",
+                metadata=metadata,
             )
 
         # ── Check for disagreements ──
@@ -1099,6 +1460,7 @@ class AIBrain:
                 round1_entries=round1_entries,
                 round2_entries=[],
                 round2_summary="",
+                metadata=metadata,
             )
 
         # ══ ROUND 2: Debate with Sanitized Reasoning + Non-LLM Data ══
@@ -1121,6 +1483,40 @@ Stack Overflow activity: {trends.get('so_unanswered', 'unknown')} unanswered que
 GitHub interest: {trends.get('gh_reactions', 'unknown')} issue reactions
 """
 
+        preliminary_evidence = []
+        preliminary_risks = []
+        preliminary_unknowns = []
+        seen_preliminary = {
+            "evidence": set(),
+            "risks": set(),
+            "unknowns": set(),
+        }
+        for analysis in valid:
+            for ev in analysis["result"].get("evidence", []):
+                ev_text = _extract_board_text(ev).lower().strip()[:220]
+                if ev_text and ev_text not in seen_preliminary["evidence"]:
+                    seen_preliminary["evidence"].add(ev_text)
+                    preliminary_evidence.append(ev)
+            for risk in analysis["result"].get("risk_factors", []):
+                risk_text = str(risk or "").lower().strip()[:220]
+                if risk_text and risk_text not in seen_preliminary["risks"]:
+                    seen_preliminary["risks"].add(risk_text)
+                    preliminary_risks.append(risk)
+            for unknown in analysis["result"].get("top_unknowns", []):
+                unknown_text = str(unknown or "").lower().strip()[:220]
+                if unknown_text and unknown_text not in seen_preliminary["unknowns"]:
+                    seen_preliminary["unknowns"].add(unknown_text)
+                    preliminary_unknowns.append(unknown)
+
+        shared_evidence_board = build_evidence_board(
+            preliminary_evidence,
+            metadata=metadata,
+            top_unknowns=preliminary_unknowns[:2],
+            risk_factors=preliminary_risks[:1],
+            max_items=8,
+        )
+        evidence_board_block = render_evidence_board_for_prompt(shared_evidence_board)
+
         debate_prompt_template = """Multiple AI models analyzed the SAME data independently and reached DIFFERENT conclusions.
 
 YOUR ORIGINAL ANALYSIS (for your reference only):
@@ -1129,6 +1525,15 @@ YOUR ORIGINAL ANALYSIS (for your reference only):
 OTHER MODELS' REASONING (scores and verdicts HIDDEN to prevent anchoring):
 {other_reasoning}
 {non_llm_data}
+SHARED EVIDENCE BOARD (neutral moderator summary — cite IDs like [E1] when relevant):
+{evidence_board}
+
+HIDDEN MODERATOR INSTRUCTION:
+- Explicitly state whether you HOLD or CHANGE your verdict.
+- In your debate_note, mention any opposing role you engaged with, e.g. [SKEPTIC].
+- Cite evidence board IDs like [E1] or [E2] when they support your case.
+- Do not free-chat. Deliver one disciplined rebuttal only.
+
 Given this disagreement and the non-LLM data above, re-evaluate your position:
 1. HOLD your position if your evidence is stronger
 2. CHANGE your verdict if a colleague raised a point you genuinely missed
@@ -1161,6 +1566,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                 own_analysis=own_analysis_text,
                 other_reasoning=others_text,
                 non_llm_data=non_llm_block,
+                evidence_board=evidence_board_block,
             )
 
             model_label = f"{a['provider']}/{a['model']}".lower()
@@ -1177,6 +1583,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                     own_analysis=summarized_own,
                     other_reasoning=summarized_others,
                     non_llm_data=non_llm_block,
+                    evidence_board=evidence_board_block,
                 )
                 trimmed_r2_tokens = estimate_tokens(debate_prompt)
                 print(
@@ -1198,6 +1605,8 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                 current_confidence = clamp_confidence(result.get("confidence", previous_confidence), default=previous_confidence)
                 argument_text = extract_argument_text(result)
                 engagement_score, engagement_label = calculate_engagement(argument_text, [other["role"] for other in others])
+                engaged_model_ids = collect_engaged_model_ids(argument_text, others)
+                cited_evidence_ids = extract_cited_evidence_ids(argument_text, shared_evidence_board)
                 held = current_verdict == previous_verdict
                 if held:
                     current_confidence = max(previous_confidence - 10, min(previous_confidence + 10, current_confidence))
@@ -1215,6 +1624,11 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                     {"model_id": a["config_id"], "role": a["role"], "verdict": current_verdict,
                      "confidence": current_confidence, "confidence_delta": confidence_delta,
                      "held": held, "argument_text": argument_text,
+                     "stance_summary": build_stance_summary(argument_text, current_verdict),
+                     "cited_evidence_ids": cited_evidence_ids,
+                     "engaged_model_ids": engaged_model_ids,
+                     "response_mode": determine_response_mode(2, held, engagement_score),
+                     "status": "ok",
                      "engagement_score": engagement_score, "engagement_label": engagement_label},
                     {"model": f"{a['provider']}/{a['model']}", "role": a["role"], "round": 2,
                      "verdict": current_verdict, "confidence": current_confidence,
@@ -1238,6 +1652,11 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                     {"model_id": a["config_id"], "role": a["role"], "verdict": previous_verdict,
                      "confidence": previous_confidence, "confidence_delta": 0,
                      "held": True, "argument_text": fallback_argument,
+                     "stance_summary": build_stance_summary(fallback_argument, previous_verdict),
+                     "cited_evidence_ids": extract_cited_evidence_ids(fallback_argument, shared_evidence_board),
+                     "engaged_model_ids": [],
+                     "response_mode": "hold",
+                     "status": "fallback_to_round1",
                      "engagement_score": 0, "engagement_label": "Restated position - round 2 failed"},
                     {"model": f"{a['provider']}/{a['model']}", "role": a["role"], "round": 2,
                      "verdict": previous_verdict, "confidence": previous_confidence,
@@ -1276,9 +1695,10 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             round1_entries=round1_entries,
             round2_entries=round2_entries,
             round2_summary=round2_summary,
+            metadata=metadata,
         )
 
-    def _weighted_merge(self, analyses, debate_log=None, transcript_models=None, round1_entries=None, round2_entries=None, round2_summary=""):
+    def _weighted_merge(self, analyses, debate_log=None, transcript_models=None, round1_entries=None, round2_entries=None, round2_summary="", metadata=None):
         """
         FIX 5 — Uncertainty-Weighted Consensus.
         Models that admitted more unknowns get LESS weight.
@@ -1465,9 +1885,42 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             }
             for entry in weighted_entries
         ]
+        evidence_board = build_evidence_board(
+            all_evidence,
+            metadata=metadata,
+            top_unknowns=all_unknowns[:2],
+            risk_factors=all_risks[:1],
+            max_items=8,
+        )
+        round1_entries_normalized = []
+        for entry in round1_entries or []:
+            argument_text = entry.get("argument_text", "")
+            normalized_entry = {
+                **entry,
+                "stance_summary": entry.get("stance_summary") or build_stance_summary(argument_text, entry.get("verdict")),
+                "cited_evidence_ids": entry.get("cited_evidence_ids") or extract_cited_evidence_ids(argument_text, evidence_board),
+                "engaged_model_ids": entry.get("engaged_model_ids") or [],
+                "response_mode": entry.get("response_mode") or "claim",
+                "status": entry.get("status") or "ok",
+            }
+            round1_entries_normalized.append(normalized_entry)
+        round2_entries_normalized = []
+        for entry in round2_entries or []:
+            argument_text = entry.get("argument_text", "")
+            engagement_score = int(entry.get("engagement_score", 0) or 0)
+            held = bool(entry.get("held", True))
+            normalized_entry = {
+                **entry,
+                "stance_summary": entry.get("stance_summary") or build_stance_summary(argument_text, entry.get("verdict")),
+                "cited_evidence_ids": entry.get("cited_evidence_ids") or extract_cited_evidence_ids(argument_text, evidence_board),
+                "engaged_model_ids": entry.get("engaged_model_ids") or [],
+                "response_mode": entry.get("response_mode") or determine_response_mode(2, held, engagement_score),
+                "status": entry.get("status") or "ok",
+            }
+            round2_entries_normalized.append(normalized_entry)
         round2_by_model_id = {
             entry["model_id"]: entry
-            for entry in (round2_entries or [])
+            for entry in round2_entries_normalized
             if entry.get("model_id")
         }
         dissent_reason = None
@@ -1475,14 +1928,50 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             dissent_round2 = round2_by_model_id.get(dissent_entry["model_id"])
             dissent_argument = dissent_round2.get("argument_text", "") if dissent_round2 else extract_argument_text(dissent_entry["result"])
             dissent_reason = build_dissent_reason(dissent_argument, dissent_entry["verdict"])
+        key_disagreements = build_key_disagreements(
+            final_verdict,
+            round1_entries_normalized,
+            round2_entries_normalized,
+            dissent,
+        )
+        moderator_summary = build_moderator_summary(
+            final_verdict,
+            avg_confidence,
+            round2_entries_normalized,
+            key_disagreements,
+        )
+        debate_events = build_debate_events(
+            round1_entries_normalized,
+            round2_entries_normalized,
+            final_weights,
+            final_verdict,
+            avg_confidence,
+            moderator_summary,
+        )
 
         transcript_rounds = []
-        if round1_entries:
-            transcript_rounds.append({"round": 1, "entries": round1_entries})
-        if round2_entries:
-            transcript_rounds.append({"round": 2, "entries": round2_entries})
+        if round1_entries_normalized:
+            transcript_rounds.append({
+                "round": 1,
+                "phase": "opening",
+                "moderator_instruction": "State your initial position independently before engaging other models.",
+                "entries": round1_entries_normalized,
+            })
+        if round2_entries_normalized:
+            transcript_rounds.append({
+                "round": 2,
+                "phase": "rebuttal",
+                "moderator_instruction": "Hold or change your verdict, explicitly engage opposing reasoning, and cite evidence board IDs when possible.",
+                "entries": round2_entries_normalized,
+            })
 
         debate_transcript = {
+            "version": 2,
+            "room": {
+                "mode": "structured_room",
+                "moderated": True,
+                "moderator_hidden": True,
+            },
             "models": transcript_models or [
                 {
                     "id": entry["model_id"],
@@ -1493,12 +1982,16 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
                 }
                 for entry in weighted_entries
             ],
+            "evidence_board": evidence_board,
+            "debate_events": debate_events,
             "rounds": transcript_rounds,
-            "round2_summary": round2_summary if round2_entries else "",
+            "round2_summary": round2_summary if round2_entries_normalized else "",
             "final": {
                 "verdict": final_verdict,
                 "confidence": avg_confidence,
                 "weights": final_weights,
+                "moderator_summary": moderator_summary,
+                "key_disagreements": key_disagreements,
                 "dissent": {
                     "exists": dissent_entry is not None,
                     "dissenting_model_id": dissent_entry["model_id"] if dissent_entry is not None else None,

@@ -1,0 +1,17 @@
+[Unit]
+Description=RedditPulse Market Scraper
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{APP_USER}}
+Group={{APP_GROUP}}
+WorkingDirectory={{REPO_DIR}}
+EnvironmentFile=/etc/redditpulse/scraper.env
+ExecStart={{REPO_DIR}}/scripts/vps/run_market_scraper.sh
+Nice=10
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

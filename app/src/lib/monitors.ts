@@ -1,11 +1,13 @@
 import { buildAlertEvidence, buildCompetitorComplaintEvidence, buildEvidenceBackedTrust, buildEvidenceSummary, buildOpportunityEvidence } from "@/lib/evidence";
+import { buildBoardIntelligence } from "@/lib/opportunity-actionability";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { buildWhyNowFromOpportunity } from "@/lib/why-now";
 import { formatFreshnessLabel, getFreshnessHours, type TrustMetadata } from "@/lib/trust";
 import { safeParseJson } from "@/lib/watchlist-data";
+import type { MarketHydratedIdea } from "@/lib/market-feed";
 
 export type MonitorType = "opportunity" | "validation" | "pain_theme";
-export type LegacyMonitorType = "watchlist" | "alert";
+export type LegacyMonitorType = "watchlist" | "alert" | "opportunity";
 export type MonitorEventType = "score_change" | "confidence_change" | "pain_match" | "competitor_weakness" | "memory_change";
 export type MonitorEventDirection = "up" | "down" | "new" | "neutral";
 export type MonitorImpact = "HIGH" | "MEDIUM" | "LOW";
@@ -126,6 +128,12 @@ function toneFromDelta(value: number): "build" | "dont" | "default" {
     if (value > 0) return "build";
     if (value < 0) return "dont";
     return "default";
+}
+
+function toneFromReadiness(value: number): "build" | "risky" | "dont" {
+    if (value >= 65) return "build";
+    if (value >= 35) return "risky";
+    return "dont";
 }
 
 function parseIso(value: unknown) {
@@ -534,6 +542,97 @@ export function buildAlertMonitor(alert: Record<string, unknown>, matches: Array
         strategy: null,
         memory: null,
     } satisfies MonitorItem;
+}
+
+export function buildOpportunityWatchMonitor(input: {
+    opportunity: Record<string, unknown>;
+    primaryIdea: MarketHydratedIdea;
+}): MonitorItem {
+    const { opportunity, primaryIdea } = input;
+    const opportunityId = String(opportunity.id || "");
+    const boardIntelligence = buildBoardIntelligence(primaryIdea);
+    const readinessScore = Number(boardIntelligence.readiness.score || primaryIdea.strategy_preview?.readiness_score || 0);
+    const delta = Number(primaryIdea.change_24h || 0);
+    const changedAt = parseIso(primaryIdea.last_updated || primaryIdea.updated_at || opportunity.updated_at);
+    const title = String(opportunity.label || primaryIdea.suggested_wedge_label || primaryIdea.topic || "Opportunity watch");
+    const events: MonitorEvent[] = [];
+
+    if (Math.abs(delta) >= 2 && changedAt) {
+        events.push({
+            id: buildId(["opportunity", opportunityId || String(primaryIdea.slug || ""), "score", changedAt]),
+            monitor_id: buildId(["opportunity", opportunityId || String(primaryIdea.slug || "")]),
+            event_type: "score_change",
+            direction: delta > 0 ? "up" : "down",
+            impact_level: eventImpactFromValue(delta),
+            summary: `Primary market signal ${delta > 0 ? "rose" : "fell"} ${Math.abs(delta).toFixed(1)} points in the last 24 hours.`,
+            observed_at: changedAt,
+            href: `/dashboard/opportunities#opportunity-${opportunityId}`,
+            source_label: "Opportunity Board",
+            seen: false,
+            metadata: { delta },
+        });
+    }
+
+    const sortedEvents = sortEvents(events).slice(0, 4);
+    const directEvidenceCount = Number(boardIntelligence.evidence_snapshot.direct_evidence_count || 0);
+    const evidenceCount = Number(primaryIdea.trust?.evidence_count || boardIntelligence.evidence_snapshot.evidence_count || 0);
+    const strategyPreview = primaryIdea.strategy_preview;
+    const boardStaleReason = primaryIdea.board_stale_reason || null;
+
+    return {
+        id: buildId(["opportunity", opportunityId || String(primaryIdea.slug || "")]),
+        legacy_type: "opportunity",
+        legacy_id: opportunityId,
+        monitor_type: "opportunity",
+        title,
+        subtitle: "Opportunity watch",
+        summary: truncate(
+            boardIntelligence.summary_line
+            || String(opportunity.icp_summary || "")
+            || `Track whether ${title} is strengthening or weakening before you commit more.`,
+            180,
+        ),
+        created_at: String(opportunity.created_at || new Date().toISOString()),
+        last_checked_at: changedAt || new Date().toISOString(),
+        last_changed_at: sortedEvents[0]?.observed_at || changedAt || String(opportunity.updated_at || opportunity.created_at || new Date().toISOString()),
+        status: primaryIdea.board_eligible ? "active" : "quiet",
+        trust: primaryIdea.trust,
+        target_href: `/dashboard/opportunities#opportunity-${opportunityId}`,
+        tags: [String(opportunity.category || primaryIdea.category || ""), primaryIdea.market_status === "needs_wedge" ? "Needs wedge" : ""].filter(Boolean),
+        metrics: [
+            { label: "Score", value: `${Math.round(Number(primaryIdea.current_score || 0))}`, tone: "default" },
+            { label: "Readiness", value: `${Math.round(readinessScore)}`, tone: toneFromReadiness(readinessScore) },
+            { label: "Direct proof", value: `${directEvidenceCount}`, tone: "default" },
+        ],
+        recent_events: sortedEvents,
+        unread_count: sortedEvents.length,
+        data: {
+            opportunity_id: opportunityId,
+            primary_idea_slug: String(opportunity.primary_idea_slug || primaryIdea.slug || ""),
+            source_idea_slugs: Array.isArray(opportunity.source_idea_slugs) ? opportunity.source_idea_slugs : [],
+            board_stale_reason: boardStaleReason,
+            board_intelligence: boardIntelligence,
+            strategy_preview: strategyPreview,
+            memory_hints: {
+                primary_metric_label: "Readiness",
+                primary_metric_value: readinessScore,
+                secondary_metric_label: "Trust",
+                secondary_metric_value: Number(primaryIdea.trust?.score || 0),
+                evidence_count: evidenceCount,
+                timing_category: strategyPreview?.why_now_category || null,
+                timing_momentum: strategyPreview?.why_now_momentum || null,
+                weakness_signal_count: boardStaleReason ? 1 : 0,
+                productization_posture: strategyPreview?.posture || null,
+                readiness_score: readinessScore,
+                next_move_summary: boardIntelligence.recommended_action,
+                anti_idea_verdict: strategyPreview?.anti_idea_verdict || null,
+                strongest_caution: boardIntelligence.strongest_caution,
+                stale_reason: boardStaleReason,
+            },
+        },
+        strategy: strategyPreview,
+        memory: null,
+    };
 }
 
 export function toNativeMonitorRow(userId: string, monitor: MonitorItem) {

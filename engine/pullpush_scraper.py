@@ -229,6 +229,7 @@ def scrape_historical_comments(
 def scrape_historical_comments_multi(
     subreddits: list[str] | None = None,
     keyword: str | list[str] = "",
+    keywords: list[str] | tuple[str, ...] | set[str] | None = None,
     days_back: int = 30,
     size_per_sub: int = 25,
     delay: float = 0.5,
@@ -241,10 +242,11 @@ def scrape_historical_comments_multi(
     so we keep this helper lightweight and capped.
     """
     subs = subreddits or TARGET_SUBREDDITS
-    if isinstance(keyword, (list, tuple, set)):
-        query_terms = [str(item).strip() for item in keyword if str(item).strip()]
+    keyword_values = keywords if keywords is not None else keyword
+    if isinstance(keyword_values, (list, tuple, set)):
+        query_terms = [str(item).strip() for item in keyword_values if str(item).strip()]
     else:
-        query_terms = [str(keyword).strip()] if str(keyword).strip() else [""]
+        query_terms = [str(keyword_values).strip()] if str(keyword_values).strip() else [""]
     seen = set()
     comments = []
 

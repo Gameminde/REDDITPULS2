@@ -72,6 +72,36 @@ def _headers():
     }
 
 
+def _error_response(status_code, message, url=""):
+    resp = requests.Response()
+    resp.status_code = status_code
+    resp._content = str(message).encode("utf-8", errors="ignore")
+    resp.encoding = "utf-8"
+    resp.url = url
+    return resp
+
+
+def _supabase_request(method, url, *, timeout=30, max_attempts=3, retry_backoff=2.0, **kwargs):
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.request(method, url, timeout=timeout, **kwargs)
+            if resp.status_code in {408, 425, 429, 500, 502, 503, 504} and attempt < max_attempts - 1:
+                wait_seconds = retry_backoff * (attempt + 1)
+                print(f"    [Supabase] {method.upper()} retry {attempt + 1}/{max_attempts - 1} after HTTP {resp.status_code} ({wait_seconds:.1f}s)")
+                time.sleep(wait_seconds)
+                continue
+            return resp
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            if attempt < max_attempts - 1:
+                wait_seconds = retry_backoff * (attempt + 1)
+                print(f"    [Supabase] {method.upper()} retry {attempt + 1}/{max_attempts - 1} after {type(e).__name__}: {e} ({wait_seconds:.1f}s)")
+                time.sleep(wait_seconds)
+                continue
+    return _error_response(599, f"{type(last_error).__name__}: {last_error}", url=url)
+
+
 def sb_upsert(table, rows, on_conflict=""):
     """Upsert rows to Supabase. Returns response."""
     h = _headers()
@@ -79,7 +109,7 @@ def sb_upsert(table, rows, on_conflict=""):
     if on_conflict:
         h["Prefer"] = "resolution=merge-duplicates,return=representation"
         url = f"{url}?on_conflict={quote(on_conflict, safe=',')}"
-    r = requests.post(url, json=rows, headers=h, timeout=30)
+    r = _supabase_request("post", url, json=rows, headers=h, timeout=45)
     if r.status_code >= 400:
         print(f"    [!] Supabase {table} error {r.status_code}: {r.text[:200]}")
     return r
@@ -88,9 +118,11 @@ def sb_upsert(table, rows, on_conflict=""):
 def sb_select(table, query=""):
     """Select from Supabase."""
     url = f"{SUPABASE_URL}/rest/v1/{table}?{query}"
-    r = requests.get(url, headers=_headers(), timeout=15)
+    r = _supabase_request("get", url, headers=_headers(), timeout=20)
     if r.status_code == 200:
         return r.json()
+    if r.status_code >= 400:
+        print(f"    [!] Supabase {table} select error {r.status_code}: {r.text[:200]}")
     return []
 
 
@@ -99,17 +131,50 @@ def sb_patch(table, match_query, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}?{match_query}"
     h = _headers()
     h["Prefer"] = "return=minimal"
-    r = requests.patch(url, json=data, headers=h, timeout=15)
+    r = _supabase_request("patch", url, json=data, headers=h, timeout=20)
+    if r.status_code >= 400:
+        print(f"    [!] Supabase {table} patch error {r.status_code}: {r.text[:200]}")
     return r
 
 
 def sb_rpc(fn_name, params=None):
     """Invoke a Supabase RPC function."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}"
-    r = requests.post(url, json=params or {}, headers=_headers(), timeout=30)
+    r = _supabase_request("post", url, json=params or {}, headers=_headers(), timeout=45)
     if r.status_code >= 400:
         print(f"    [!] Supabase RPC {fn_name} error {r.status_code}: {r.text[:200]}")
     return r
+
+
+def _chunk_rows(rows, chunk_size):
+    for index in range(0, len(rows), chunk_size):
+        yield rows[index:index + chunk_size]
+
+
+def _bulk_upsert_rows(table, rows, *, on_conflict="", chunk_size=25, id_fn=None):
+    if not rows:
+        return 0, []
+
+    success_count = 0
+    failure_ids = []
+    identify = id_fn or (lambda row: str(row.get("slug") or row.get("id") or "unknown"))
+
+    for chunk in _chunk_rows(rows, chunk_size):
+        response = sb_upsert(table, chunk, on_conflict=on_conflict)
+        if response.status_code < 400:
+            success_count += len(chunk)
+            continue
+
+        # Fall back to row-by-row writes so one bad write or transient timeout
+        # does not throw away a whole scan batch.
+        for row in chunk:
+            single = sb_upsert(table, [row], on_conflict=on_conflict)
+            if single.status_code < 400:
+                success_count += 1
+            else:
+                failure_ids.append(identify(row))
+
+    return success_count, failure_ids
 
 
 def table_has_column(table, column):
@@ -218,6 +283,12 @@ def _reddit_health_summary(subreddits, live_posts, async_stats=None, pullpush_po
         "warnings": warnings,
         "summary": summary,
     }
+
+
+def _format_source_health_note(healthy_sources, degraded_sources):
+    healthy = ",".join(sorted(set(filter(None, healthy_sources)))) or "none"
+    degraded = ",".join(sorted(set(filter(None, degraded_sources)))) or "none"
+    return f"Source health: healthy={healthy}; degraded={degraded}"
 
 
 def finalize_scraper_run_record(run_id, status, start_time, posts_collected=0, ideas_updated=0, notes=None):
@@ -1585,18 +1656,115 @@ DYNAMIC_TOPIC_NOISE_TOKENS = {
     "producthunt", "project", "projects", "reddit", "saas", "show", "software", "startup",
     "startups", "thread", "threads", "tool", "tools",
 }
+DYNAMIC_TOPIC_GENERIC_TOKENS = {
+    "all", "another", "anymore", "anything", "business", "day", "days", "don", "dont", "everybody",
+    "everyone", "few", "first", "folks", "guys", "hey", "hours", "know", "knowing", "long", "lot",
+    "lots", "many", "media", "month", "months", "nothing", "not", "other", "people", "person",
+    "question", "questions", "second", "share", "sharing", "small", "someone", "somebody", "something",
+    "stuff", "sure", "take", "team", "teams", "thing", "things", "third", "time", "times", "user",
+    "users", "week", "weeks", "year", "years",
+}
+DYNAMIC_TOPIC_WEAK_EDGE_TOKENS = {
+    "all", "another", "don", "dont", "everybody", "everyone", "few", "first", "folks", "guys", "hey",
+    "long", "lot", "lots", "many", "not", "other", "small", "someone", "somebody", "sure",
+}
 DYNAMIC_TOPIC_EXACT_BLOCKLIST = {
     "ask hn",
+    "don know",
+    "hey all",
+    "hey everyone",
+    "hey guys",
+    "not sure",
     "show hn",
     "show ih",
     "show ph",
     "open source",
+    "first users",
     "from scratch",
+}
+INVALID_MARKET_TOPIC_EXACT_BLOCKLIST = {
+    "don know",
+    "few years",
+    "first users",
+    "hey all",
+    "hey everyone",
+    "hey guys",
+    "https www",
+    "long take",
+    "lot people",
+    "not sure",
+    "other people",
+    "quarter achieve",
+    "years marketing",
+}
+INVALID_MARKET_TOPIC_PREFIXES = (
+    "anyone else ",
+    "does anyone ",
+    "don know",
+    "help ",
+    "hey ",
+    "how do i ",
+    "looking for ",
+    "manual ",
+    "not sure",
+)
+INVALID_MARKET_TOPIC_GENERIC_TOKENS = {
+    "alternative",
+    "alternatives",
+    "anyone",
+    "does",
+    "don",
+    "else",
+    "everyone",
+    "few",
+    "first",
+    "for",
+    "guys",
+    "help",
+    "how",
+    "i",
+    "issue",
+    "issues",
+    "know",
+    "long",
+    "lot",
+    "looking",
+    "manual",
+    "month",
+    "months",
+    "not",
+    "other",
+    "people",
+    "problem",
+    "problems",
+    "quarter",
+    "recommendation",
+    "recommendations",
+    "sure",
+    "year",
+    "years",
 }
 
 
 def _normalize_dynamic_phrase(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+
+
+def _is_invalid_market_topic_name(value):
+    normalized = _normalize_dynamic_phrase(value)
+    if not normalized:
+        return True
+    if normalized in INVALID_MARKET_TOPIC_EXACT_BLOCKLIST:
+        return True
+    if any(normalized.startswith(prefix) for prefix in INVALID_MARKET_TOPIC_PREFIXES):
+        return True
+    if "http" in normalized or "www" in normalized:
+        return True
+    meaningful_tokens = [
+        token for token in normalized.split()
+        if token not in INVALID_MARKET_TOPIC_GENERIC_TOKENS and len(token) > 2
+    ]
+    return len(meaningful_tokens) < 2
 
 
 DYNAMIC_TOPIC_TRACKED_PHRASES = set()
@@ -1668,6 +1836,14 @@ def _is_valid_dynamic_phrase(tokens):
     if sum(1 for token in tokens if token in DYNAMIC_TOPIC_NOISE_TOKENS) >= 2:
         return False
     if len({token for token in tokens}) < len(tokens):
+        return False
+    if tokens[0] in DYNAMIC_TOPIC_WEAK_EDGE_TOKENS or tokens[-1] in DYNAMIC_TOPIC_WEAK_EDGE_TOKENS:
+        return False
+    meaningful_tokens = [
+        token for token in tokens
+        if token not in DYNAMIC_TOPIC_GENERIC_TOKENS
+    ]
+    if len(meaningful_tokens) < 2:
         return False
     if all(token in DYNAMIC_TOPIC_STOPWORDS or token in DYNAMIC_TOPIC_NOISE_TOKENS for token in tokens):
         return False
@@ -1772,6 +1948,8 @@ def _discover_dynamic_market_topics(unmatched_posts, unmatched_signal_posts):
             continue
         if signal_count == 0:
             continue
+        if len(post_keys) == 2 and support_count < 2:
+            continue
         if signal_count < 2 and support_count == 0 and source_count < 2:
             continue
         if support_count == 0 and pain_count == 0:
@@ -1833,7 +2011,13 @@ def _discover_dynamic_market_topics(unmatched_posts, unmatched_signal_posts):
 
         if not signal_bucket:
             continue
-        if len(signal_bucket) < 2 and support_count == 0 and source_count < 2:
+        if len(deduped_posts) == 2 and support_count < 2:
+            continue
+        if len(signal_bucket) < 2 and (support_count < 2 or source_count < 2):
+            continue
+
+        topic_name = _humanize_dynamic_topic_name(phrase)
+        if _is_invalid_market_topic_name(topic_name):
             continue
 
         slug_base = f"dyn-{_slugify_market_topic(phrase)}"
@@ -1846,7 +2030,7 @@ def _discover_dynamic_market_topics(unmatched_posts, unmatched_signal_posts):
         dynamic_idea_posts[slug] = deduped_posts
         dynamic_signal_posts[slug] = signal_bucket
         dynamic_topic_meta[slug] = {
-            "topic": _humanize_dynamic_topic_name(phrase),
+            "topic": topic_name,
             "category": _infer_dynamic_topic_category(phrase, deduped_posts),
             "keywords": [phrase],
         }
@@ -2151,6 +2335,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
                 _ACTIVE_SCRAPER_CONTEXT.update({
                     "run_id": run_id,
                     "start_time": start_time,
+                    "posts_collected": 0,
+                    "ideas_updated": 0,
                 })
 
     # ── 1. Scrape (4-Layer Architecture) ──
@@ -2192,6 +2378,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     comment_added = 0
     sitemap_added = 0
     praw_added = 0
+    healthy_sources = []
+    degraded_sources = []
 
     if "reddit" in sources:
         # ── Layer 1: Async Reddit JSON API (~15s for 42 subs) ──
@@ -2286,24 +2474,52 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         print(f"  [Reddit health] {reddit_health['summary']}")
         if reddit_health["is_degraded"]:
             run_notes.append(f"Reddit degraded: {', '.join(reddit_health['warnings'])}")
+            degraded_sources.append("reddit")
+        else:
+            healthy_sources.append("reddit")
 
     if "hackernews" in sources:
         print("\n  [4/6] Scraping Hacker News...")
-        hn_posts = scrape_hn()
-        _merge(hn_posts, bucket="live")
-        print(f"  [OK] HN: {len(hn_posts)} posts")
+        try:
+            hn_posts = scrape_hn()
+            _merge(hn_posts, bucket="live")
+            healthy_sources.append("hackernews")
+            print(f"  [OK] HN: {len(hn_posts)} posts")
+        except Exception as e:
+            note = f"Hacker News skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("hackernews")
+            print(f"  [!] {note}")
 
     if "producthunt" in sources:
         print("\n  [5/6] Scraping ProductHunt...")
-        ph_posts = scrape_ph()
-        _merge(ph_posts, bucket="live")
-        print(f"  [OK] PH: {len(ph_posts)} posts")
+        try:
+            ph_posts = scrape_ph()
+            _merge(ph_posts, bucket="live")
+            healthy_sources.append("producthunt")
+            print(f"  [OK] PH: {len(ph_posts)} posts")
+        except Exception as e:
+            note = f"ProductHunt skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("producthunt")
+            print(f"  [!] {note}")
 
     if "indiehackers" in sources:
         print("\n  [6/6] Scraping IndieHackers...")
-        ih_posts = scrape_ih()
-        _merge(ih_posts, bucket="live")
-        print(f"  [OK] IH: {len(ih_posts)} posts")
+        try:
+            ih_posts = scrape_ih()
+            _merge(ih_posts, bucket="live")
+            healthy_sources.append("indiehackers")
+            print(f"  [OK] IH: {len(ih_posts)} posts")
+        except Exception as e:
+            note = f"IndieHackers skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("indiehackers")
+            print(f"  [!] {note}")
+
+    source_health_note = _format_source_health_note(healthy_sources, degraded_sources)
+    if source_health_note not in run_notes:
+        run_notes.append(source_health_note)
 
     source_counts = Counter(_normalized_market_source(post) for post in all_posts)
     all_posts = _normalize_market_posts_with_taxonomy(all_posts)
@@ -2321,6 +2537,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         finalize_scraper_run_record(run_id, "failed", start_time, posts_collected=0, ideas_updated=0, notes=run_notes)
         _ACTIVE_SCRAPER_CONTEXT.clear()
         return
+
+    _ACTIVE_SCRAPER_CONTEXT["posts_collected"] = len(all_posts)
 
     if SUPABASE_URL:
         try:
@@ -2411,10 +2629,10 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             unmatched_by_sub[sub].append(post)
 
     # ── Pain-gated dynamic topics from unmatched subreddit posts ──
-    # Only create a topic if ≥3 pain posts exist — no more raw subreddit dumps
+    # Only create a topic if ≥6 pain posts exist — keep subreddit buckets as high-signal context only
     dynamic_created = 0
     for sub, pain_posts in unmatched_by_sub.items():
-        if len(pain_posts) < 3:
+        if len(pain_posts) < 6:
             continue
         dyn_slug = f"sub-{sub.lower()}"
         idea_posts[dyn_slug].extend(pain_posts)
@@ -2423,7 +2641,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         dynamic_created += 1
 
     if dynamic_created:
-        print(f"  [Pain Gate] {dynamic_created} dynamic topics qualified (>=3 pain posts each)")
+        print(f"  [Pain Gate] {dynamic_created} dynamic topics qualified (>=6 pain posts each)")
 
     # Filter by topic if specified
     if topic_filter:
@@ -2471,22 +2689,14 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         elif slug.startswith("sub-"):
             subreddit_name = slug[4:]
             category = SUBREDDIT_CATEGORIES.get(subreddit_name, "general")
-            # Extract dominant pain theme for the topic name
-            pain_phrases_found = Counter()
-            for p in posts:
-                text_lower = _compose_post_text(p).lower()
-                for phrase in MARKET_PAIN_KEYWORDS:
-                    if phrase in text_lower:
-                        pain_phrases_found[phrase] += 1
-            top_pain = pain_phrases_found.most_common(2)
-            if top_pain:
-                theme = " & ".join(w.title() for w, _ in top_pain[:2])
-                topic_name = f"{theme} in {subreddit_name.replace('_', ' ').title()}"
-            else:
-                topic_name = f"{subreddit_name.replace('_', ' ').title()} Pain Signals"
+            topic_name = f"Pain signals from {subreddit_name.replace('_', ' ').title()}"
             topic_info = {"category": category, "keywords": [subreddit_name]}
         else:
             topic_name = slug.replace("-", " ").title()
+
+        if _is_invalid_market_topic_name(topic_name):
+            print(f"  [Skip] Rejected invalid market topic name: {topic_name}")
+            continue
 
         score, breakdown = calculate_idea_score(
             slug,
@@ -2517,7 +2727,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         )
 
         # Skip obviously weak launch-heavy hypotheses for brand-new topics.
-        min_new_posts = 2 if slug in dynamic_topic_meta else 3
+        min_new_posts = 4 if slug in dynamic_topic_meta else (6 if slug.startswith("sub-") else 3)
         if not existing and (
             len(posts) < min_new_posts
             or (
@@ -2581,6 +2791,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
         ideas_to_upsert.append(idea_row)
         ideas_updated += 1
+        _ACTIVE_SCRAPER_CONTEXT["ideas_updated"] = ideas_updated
 
         # History record
         history_to_insert.append({
@@ -2598,34 +2809,39 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     if SUPABASE_URL and ideas_to_upsert:
         print(f"\n  Uploading {len(ideas_to_upsert)} ideas to Supabase...")
 
-        # Upsert ideas (use slug as conflict key)
-        idea_upsert_successes = 0
-        idea_upsert_failures = []
-        for idea in ideas_to_upsert:
-            resp = sb_upsert("ideas", [idea], on_conflict="slug")
-            if resp.status_code < 400:
-                idea_upsert_successes += 1
-            else:
-                idea_upsert_failures.append(idea["slug"])
+        # Upsert ideas in chunks first to cut down the number of round-trips.
+        idea_upsert_successes, idea_upsert_failures = _bulk_upsert_rows(
+            "ideas",
+            ideas_to_upsert,
+            on_conflict="slug",
+            chunk_size=25,
+            id_fn=lambda row: row.get("slug", "unknown"),
+        )
 
         # Insert history (need idea_ids)
         updated_ideas = sb_select("ideas", "select=id,slug")
         slug_to_id = {r["slug"]: r["id"] for r in updated_ideas}
 
-        history_successes = 0
+        history_rows = []
         history_failures = []
         for i, hist in enumerate(history_to_insert):
             slug = ideas_to_upsert[i]["slug"]
             idea_id = slug_to_id.get(slug)
             if idea_id:
-                hist["idea_id"] = idea_id
-                history_resp = sb_upsert("idea_history", [hist])
-                if history_resp.status_code < 400:
-                    history_successes += 1
-                else:
-                    history_failures.append(slug)
+                history_rows.append({
+                    **hist,
+                    "idea_id": idea_id,
+                })
             else:
                 history_failures.append(slug)
+
+        history_successes, batched_history_failures = _bulk_upsert_rows(
+            "idea_history",
+            history_rows,
+            chunk_size=50,
+            id_fn=lambda row: row.get("idea_id", "unknown"),
+        )
+        history_failures.extend(batched_history_failures)
 
         if idea_upsert_failures:
             print(f"  [!] Idea upsert failures: {', '.join(idea_upsert_failures[:8])}")
@@ -2640,7 +2856,16 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         )
 
     # ── 6. Update run log ──
-    run_status = "completed" if not run_notes and not idea_upsert_failures else "completed_errors"
+    non_health_notes = [
+        note for note in run_notes
+        if not str(note or "").startswith("Source health:")
+    ]
+    if degraded_sources:
+        run_status = "degraded"
+    elif not non_health_notes and not idea_upsert_failures:
+        run_status = "completed"
+    else:
+        run_status = "completed_errors"
     finalize_scraper_run_record(
         run_id,
         run_status,
@@ -2687,10 +2912,14 @@ if __name__ == "__main__":
     except Exception as e:
         run_id = _ACTIVE_SCRAPER_CONTEXT.get("run_id")
         start_time = _ACTIVE_SCRAPER_CONTEXT.get("start_time", time.time())
+        posts_collected = int(_ACTIVE_SCRAPER_CONTEXT.get("posts_collected", 0) or 0)
+        ideas_updated = int(_ACTIVE_SCRAPER_CONTEXT.get("ideas_updated", 0) or 0)
         finalize_scraper_run_record(
             run_id,
             "failed",
             start_time,
+            posts_collected=posts_collected,
+            ideas_updated=ideas_updated,
             notes=[f"Fatal error: {type(e).__name__}: {e}"],
         )
         _ACTIVE_SCRAPER_CONTEXT.clear()

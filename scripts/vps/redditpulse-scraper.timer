@@ -1,0 +1,12 @@
+[Unit]
+Description=Run RedditPulse Market Scraper every 6 hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+AccuracySec=1min
+Persistent=true
+Unit={{SERVICE_NAME}}.service
+
+[Install]
+WantedBy=timers.target

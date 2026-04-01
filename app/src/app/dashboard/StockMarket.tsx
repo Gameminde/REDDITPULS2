@@ -8,6 +8,7 @@ import {
     TrendingUp, TrendingDown, Minus, Plus,
     ArrowUpRight, ArrowDownRight, Activity, BarChart3,
     Eye, Zap, Clock, ExternalLink, Flame, Skull, Sparkles, AlertTriangle,
+    Target, Lightbulb, Radar, ShieldAlert,
 } from "lucide-react";
 import ScoreBreakdownTooltip, { type ScoreBreakdown } from "./ScoreBreakdownTooltip";
 import {
@@ -38,11 +39,91 @@ interface Idea {
     competition_data?: Record<string, unknown> | null;
     cross_platform_multiplier: number;
     pain_count?: number;
+    keywords?: string[];
     score_breakdown?: Partial<ScoreBreakdown> | null;
     signal_contract?: OpportunitySignalContract | null;
     top_posts: OpportunityTopPost[];
     first_seen: string;
     last_updated: string;
+    suggested_wedge_label?: string | null;
+    market_hint?: {
+        suggested_wedge_label: string | null;
+        why_it_matters_now: string;
+        missing_proof: string;
+        promotion_readiness: "ready" | "needs_wedge" | "needs_more_proof";
+        recommended_board_action: string;
+    } | null;
+    market_kind?: "tracked_theme" | "dynamic_theme" | "subreddit_bucket" | "entity" | "malformed";
+    market_status?: "visible" | "needs_wedge" | "suppressed";
+    suppression_reason?: string | null;
+    fresh_candidate?: boolean;
+    board_eligible?: boolean;
+    board_stale_reason?: string | null;
+}
+
+interface MarketIntelligenceSummary {
+    generated_at: string;
+    run_health: "healthy" | "degraded" | "failed";
+    healthy_sources: string[];
+    degraded_sources: string[];
+    raw_idea_count: number;
+    feed_visible_count: number;
+    new_72h_count: number;
+    emerging_wedge_count: number;
+}
+
+interface EmergingWedgeCard {
+    topic: string;
+    slug: string;
+    category: string;
+    current_score: number;
+    source_count: number;
+    post_count_total: number;
+    post_count_7d: number;
+    freshness_hours: number | null;
+    suggested_wedge_label: string | null;
+    why_it_matters_now: string;
+    missing_proof: string;
+    promotion_readiness: "ready" | "needs_wedge" | "needs_more_proof";
+    buyer_native_direct_count: number;
+    supporting_signal_count: number;
+    board_eligible: boolean;
+    board_stale_reason: string | null;
+    validation_bias: "positive" | "neutral" | "caution";
+    validation_note: string;
+}
+
+interface ThemeToShapeCard {
+    topic: string;
+    slug: string;
+    category: string;
+    current_score: number;
+    source_count: number;
+    post_count_total: number;
+    suggested_wedge_label: string | null;
+    missing_proof: string;
+    recommended_shape_direction: string;
+}
+
+interface CompetitorPressureCard {
+    competitor: string;
+    weakness_category: string;
+    complaint_count: number;
+    latest_seen_at: string | null;
+    confidence: {
+        level: "HIGH" | "MEDIUM" | "LOW";
+        score: number;
+        label: string;
+    };
+    why_now: string;
+    recommended_angle: string;
+}
+
+interface MarketIntelligencePayload {
+    summary: MarketIntelligenceSummary;
+    emerging_wedges: EmergingWedgeCard[];
+    themes_to_shape: ThemeToShapeCard[];
+    competitor_pressure: CompetitorPressureCard[];
 }
 
 function decodeHtml(str?: string | null) {
@@ -52,6 +133,49 @@ function decodeHtml(str?: string | null) {
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">");
+}
+
+function cleanText(value?: string | null) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function getIdeaDisplayTopic(idea: Pick<Idea, "topic">) {
+    return decodeHtml(idea.topic);
+}
+
+function getIdeaSuggestedWedge(idea: Pick<Idea, "suggested_wedge_label" | "topic">) {
+    const suggestion = decodeHtml(idea.suggested_wedge_label || "");
+    return suggestion && suggestion !== decodeHtml(idea.topic) ? suggestion : "";
+}
+
+function buildIdeaHref(slug: string) {
+    return `/dashboard/idea/${encodeURIComponent(slug)}`;
+}
+
+async function promoteIdeaToBoard(payload: {
+    primary_idea_slug: string;
+    label?: string;
+    category?: string;
+}) {
+    const res = await fetch("/api/opportunities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        throw new Error(String(data.error || "Could not promote this signal to the board."));
+    }
+
+    return data;
+}
+
+function formatFreshnessHours(hours: number | null | undefined) {
+    if (hours == null || !Number.isFinite(hours)) return "Freshness unknown";
+    if (hours < 1) return "seen within the last hour";
+    if (hours < 24) return `seen ${Math.round(hours)}h ago`;
+    return `seen ${Math.round(hours / 24)}d ago`;
 }
 
 type TabType = "top" | "trending" | "dying" | "new";
@@ -262,13 +386,6 @@ function normalizeScoreBreakdown(idea: Idea): ScoreBreakdown | null {
     return hasAnyRaw || hasVisibleSignal ? breakdown : null;
 }
 
-function shouldShowIdeaOnBoard(idea: Idea, showEarlySignals: boolean) {
-    if (showEarlySignals) return true;
-    const confidence = String(idea.confidence_level || "").toUpperCase();
-    const supportLevel = idea.signal_contract?.support_level || "hypothesis";
-    return !["LOW", "INSUFFICIENT"].includes(confidence) && supportLevel !== "hypothesis";
-}
-
 function buildMarketValidationHref(
     idea: Idea,
     representativePosts: OpportunityTopPost[],
@@ -276,7 +393,7 @@ function buildMarketValidationHref(
     dominantPlatform?: string | null,
 ) {
     const params = new URLSearchParams();
-    const cleanTopic = decodeHtml(idea.topic).trim();
+    const cleanTopic = getIdeaDisplayTopic(idea).trim();
     const uniqueCommunities = Array.from(new Set(
         representativePosts
             .map((post) => {
@@ -363,9 +480,14 @@ function BreakdownMeter({ label, value, color }: { label: string; value: number;
 }
 
 function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
+    const displayTopic = getIdeaDisplayTopic(idea);
+    const suggestedWedge = getIdeaSuggestedWedge(idea);
+    const marketHint = idea.market_hint || null;
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
     const [expanded, setExpanded] = useState(false);
+    const [promoteState, setPromoteState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+    const [promoteMessage, setPromoteMessage] = useState("");
     const signalContract = idea.signal_contract || null;
     const signalTone = signalContract
         ? SIGNAL_LEVEL_MAP[signalContract.support_level]
@@ -425,6 +547,25 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
         setExpanded((current) => !current);
     };
 
+    const handlePromote = async (event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (promoteState === "saving" || promoteState === "saved") return;
+
+        setPromoteState("saving");
+        setPromoteMessage("");
+        try {
+            await promoteIdeaToBoard({
+                primary_idea_slug: idea.slug,
+            });
+            setPromoteState("saved");
+            setPromoteMessage("Saved to Opportunities.");
+        } catch (error) {
+            setPromoteState("error");
+            setPromoteMessage(error instanceof Error ? error.message : "Could not promote this signal to the board.");
+        }
+    };
+
     return (
         <div>
             <motion.div
@@ -456,7 +597,7 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <TrendIcon direction={idea.trend_direction} />
                         <span style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>
-                            {decodeHtml(idea.topic)}
+                            {displayTopic}
                         </span>
                         <span style={{
                             fontSize: 10, padding: "1px 6px", borderRadius: 4,
@@ -465,6 +606,38 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                         }}>
                             {idea.category}
                         </span>
+                        {idea.market_status === "needs_wedge" && (
+                            <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 10,
+                                padding: "2px 7px",
+                                borderRadius: 999,
+                                background: "rgba(59,130,246,0.12)",
+                                border: "1px solid rgba(59,130,246,0.18)",
+                                color: "#93c5fd",
+                                fontWeight: 700,
+                            }}>
+                                Needs wedge
+                            </span>
+                        )}
+                        {idea.fresh_candidate && (
+                            <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 10,
+                                padding: "2px 7px",
+                                borderRadius: 999,
+                                background: "rgba(34,197,94,0.12)",
+                                border: "1px solid rgba(34,197,94,0.18)",
+                                color: "#86efac",
+                                fontWeight: 700,
+                            }}>
+                                Fresh
+                            </span>
+                        )}
                         {hasThinDataWarning && (
                             <span style={{
                                 display: "inline-flex",
@@ -679,7 +852,97 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                             Send this market signal into the Validate flow with topic, audience hint, and pain context prefilled.
                                         </div>
                                     </Link>
+                                    <button
+                                        onClick={handlePromote}
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            padding: "12px 14px",
+                                            borderRadius: 10,
+                                            textAlign: "left",
+                                            background: promoteState === "saved"
+                                                ? "linear-gradient(135deg, rgba(34,197,94,0.14), rgba(22,163,74,0.08))"
+                                                : "linear-gradient(135deg, rgba(59,130,246,0.14), rgba(37,99,235,0.06))",
+                                            border: promoteState === "saved"
+                                                ? "1px solid rgba(34,197,94,0.18)"
+                                                : "1px solid rgba(59,130,246,0.18)",
+                                            color: "#f8fafc",
+                                            cursor: promoteState === "saving" ? "wait" : "pointer",
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ fontSize: 10, color: promoteState === "saved" ? "#bbf7d0" : "#bfdbfe", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                                                Opportunity board
+                                            </div>
+                                            <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
+                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : "Promote to board"}
+                                            </div>
+                                        </div>
+                                        <div style={{ fontSize: 10, color: promoteState === "saved" ? "#dcfce7" : "#dbeafe", lineHeight: 1.5 }}>
+                                            {promoteMessage || "Create a curated opportunity row without rewriting the live market feed."}
+                                        </div>
+                                    </button>
                                 </div>
+
+                                {marketHint && (
+                                    <div style={{
+                                        padding: "12px 14px",
+                                        borderRadius: 12,
+                                        background: "rgba(59,130,246,0.06)",
+                                        border: "1px solid rgba(59,130,246,0.12)",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 10,
+                                    }}>
+                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#93c5fd" }}>
+                                                Board readiness
+                                            </div>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4,
+                                                padding: "3px 8px",
+                                                borderRadius: 999,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                color: marketHint.promotion_readiness === "ready" ? "#86efac" : marketHint.promotion_readiness === "needs_wedge" ? "#93c5fd" : "#fbbf24",
+                                                background: marketHint.promotion_readiness === "ready"
+                                                    ? "rgba(34,197,94,0.12)"
+                                                    : marketHint.promotion_readiness === "needs_wedge"
+                                                        ? "rgba(59,130,246,0.12)"
+                                                        : "rgba(245,158,11,0.12)",
+                                                border: marketHint.promotion_readiness === "ready"
+                                                    ? "1px solid rgba(34,197,94,0.18)"
+                                                    : marketHint.promotion_readiness === "needs_wedge"
+                                                        ? "1px solid rgba(59,130,246,0.18)"
+                                                        : "1px solid rgba(245,158,11,0.18)",
+                                            }}>
+                                                {marketHint.promotion_readiness === "ready"
+                                                    ? "Ready for board"
+                                                    : marketHint.promotion_readiness === "needs_wedge"
+                                                        ? "Needs wedge"
+                                                        : "Needs more proof"}
+                                            </span>
+                                        </div>
+                                        {suggestedWedge && (
+                                            <div style={{ fontSize: 12, color: "#dbeafe", lineHeight: 1.55 }}>
+                                                Suggested wedge: {suggestedWedge}
+                                            </div>
+                                        )}
+                                        <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                                            {marketHint.why_it_matters_now}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                                            Missing proof: {marketHint.missing_proof}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: "#bfdbfe", lineHeight: 1.55 }}>
+                                            Recommended action: {marketHint.recommended_board_action}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {!hasStructuredEvidence && (
                                     <div style={{
@@ -1057,8 +1320,488 @@ function StatCard({ label, value, icon: Icon, color, subtitle }: {
     );
 }
 
+type IntelligenceTab = "emerging" | "themes" | "competitors";
+
+function IntelligenceBadge({
+    label,
+    color,
+    background,
+}: {
+    label: string;
+    color: string;
+    background: string;
+}) {
+    return (
+        <span style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "3px 8px",
+            borderRadius: 999,
+            fontSize: 10,
+            fontWeight: 700,
+            color,
+            background,
+            border: `1px solid ${background.replace("0.12", "0.18")}`,
+        }}>
+            {label}
+        </span>
+    );
+}
+
+function IntelligencePromoteButton({
+    slug,
+    topic,
+    category,
+    suggestedLabel,
+}: {
+    slug: string;
+    topic: string;
+    category: string;
+    suggestedLabel?: string | null;
+}) {
+    const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+    const [message, setMessage] = useState("");
+
+    const handlePromote = async () => {
+        if (state === "saving" || state === "saved") return;
+
+        let label = cleanText(suggestedLabel || "");
+        if (!label && typeof window !== "undefined") {
+            const entered = window.prompt("Shape the board title before promoting this signal.", topic);
+            label = cleanText(entered || "");
+            if (!label) return;
+        }
+
+        setState("saving");
+        setMessage("");
+        try {
+            await promoteIdeaToBoard({
+                primary_idea_slug: slug,
+                label,
+                category,
+            });
+            setState("saved");
+            setMessage("Saved to Opportunities.");
+        } catch (error) {
+            setState("error");
+            setMessage(error instanceof Error ? error.message : "Could not promote this signal to the board.");
+        }
+    };
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <button
+                onClick={handlePromote}
+                style={{
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: state === "saved"
+                        ? "1px solid rgba(34,197,94,0.2)"
+                        : "1px solid rgba(59,130,246,0.18)",
+                    background: state === "saved"
+                        ? "rgba(34,197,94,0.12)"
+                        : "rgba(59,130,246,0.12)",
+                    color: "#f8fafc",
+                    cursor: state === "saving" ? "wait" : "pointer",
+                    fontSize: 12,
+                    fontWeight: 700,
+                }}
+            >
+                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : "Promote to board"}
+            </button>
+            {message && (
+                <div style={{ fontSize: 10, color: state === "error" ? "#fca5a5" : "#bfdbfe", lineHeight: 1.5 }}>
+                    {message}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function EmergingWedgeTile({ card }: { card: EmergingWedgeCard }) {
+    const suggestedLabel = cleanText(card.suggested_wedge_label || "");
+    const readinessColor = card.promotion_readiness === "ready"
+        ? "#86efac"
+        : card.promotion_readiness === "needs_wedge"
+            ? "#93c5fd"
+            : "#fbbf24";
+    const readinessBg = card.promotion_readiness === "ready"
+        ? "rgba(34,197,94,0.12)"
+        : card.promotion_readiness === "needs_wedge"
+            ? "rgba(59,130,246,0.12)"
+            : "rgba(245,158,11,0.12)";
+
+    return (
+        <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.topic}</span>
+                        <span style={{
+                            fontSize: 10,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            background: "rgba(249,115,22,0.1)",
+                            color: "#f97316",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                        }}>
+                            {card.category}
+                        </span>
+                        <IntelligenceBadge
+                            label={card.promotion_readiness === "ready" ? "Ready" : card.promotion_readiness === "needs_wedge" ? "Needs wedge" : "Needs proof"}
+                            color={readinessColor}
+                            background={readinessBg}
+                        />
+                        {card.validation_bias === "positive" && (
+                            <IntelligenceBadge label="Validation tailwind" color="#86efac" background="rgba(34,197,94,0.12)" />
+                        )}
+                        {card.validation_bias === "caution" && (
+                            <IntelligenceBadge label="Validation caution" color="#fca5a5" background="rgba(239,68,68,0.12)" />
+                        )}
+                    </div>
+                    {suggestedLabel && (
+                        <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
+                            Suggested wedge: {suggestedLabel}
+                        </div>
+                    )}
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-mono)", color: "#f97316" }}>
+                    {card.current_score.toFixed(0)}
+                </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+                <DetailMetric label="Sources" value={card.source_count} accent={card.source_count > 1 ? "#93c5fd" : "#fbbf24"} />
+                <DetailMetric label="Posts" value={card.post_count_total} accent="#e2e8f0" />
+                <DetailMetric label="7d Posts" value={card.post_count_7d} accent="#c4b5fd" />
+                <DetailMetric label="Freshness" value={formatFreshnessHours(card.freshness_hours)} accent="#86efac" />
+            </div>
+
+            <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.65 }}>
+                {card.why_it_matters_now}
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                Missing proof: {card.missing_proof}
+            </div>
+            {card.validation_note && (
+                <div style={{ fontSize: 11, color: card.validation_bias === "caution" ? "#fca5a5" : "#86efac", lineHeight: 1.55 }}>
+                    {card.validation_note}
+                </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <Link
+                    href={buildIdeaHref(card.slug)}
+                    style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                        color: "#e2e8f0",
+                        textDecoration: "none",
+                        fontSize: 12,
+                        fontWeight: 700,
+                    }}
+                >
+                    <ExternalLink style={{ width: 13, height: 13 }} />
+                    Open signal
+                </Link>
+                <IntelligencePromoteButton
+                    slug={card.slug}
+                    topic={card.topic}
+                    category={card.category}
+                    suggestedLabel={card.suggested_wedge_label}
+                />
+            </div>
+        </div>
+    );
+}
+
+function ThemeToShapeTile({ card }: { card: ThemeToShapeCard }) {
+    return (
+        <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.topic}</span>
+                        <span style={{
+                            fontSize: 10,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            background: "rgba(59,130,246,0.12)",
+                            color: "#93c5fd",
+                            fontWeight: 700,
+                        }}>
+                            Needs wedge
+                        </span>
+                        <span style={{
+                            fontSize: 10,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            background: "rgba(249,115,22,0.1)",
+                            color: "#f97316",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                        }}>
+                            {card.category}
+                        </span>
+                    </div>
+                    {card.suggested_wedge_label && (
+                        <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
+                            Wedge direction: {card.suggested_wedge_label}
+                        </div>
+                    )}
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-mono)", color: "#3b82f6" }}>
+                    {card.current_score.toFixed(0)}
+                </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+                <DetailMetric label="Sources" value={card.source_count} accent={card.source_count > 1 ? "#93c5fd" : "#fbbf24"} />
+                <DetailMetric label="Posts" value={card.post_count_total} accent="#e2e8f0" />
+            </div>
+
+            <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                {card.recommended_shape_direction}
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                Missing proof: {card.missing_proof}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <Link
+                    href={buildIdeaHref(card.slug)}
+                    style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                        color: "#e2e8f0",
+                        textDecoration: "none",
+                        fontSize: 12,
+                        fontWeight: 700,
+                    }}
+                >
+                    <ExternalLink style={{ width: 13, height: 13 }} />
+                    Open signal
+                </Link>
+                <IntelligencePromoteButton
+                    slug={card.slug}
+                    topic={card.topic}
+                    category={card.category}
+                    suggestedLabel={card.suggested_wedge_label}
+                />
+            </div>
+        </div>
+    );
+}
+
+function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
+    const confidenceColor = card.confidence.level === "HIGH"
+        ? "#86efac"
+        : card.confidence.level === "MEDIUM"
+            ? "#93c5fd"
+            : "#fbbf24";
+    const confidenceBg = card.confidence.level === "HIGH"
+        ? "rgba(34,197,94,0.12)"
+        : card.confidence.level === "MEDIUM"
+            ? "rgba(59,130,246,0.12)"
+            : "rgba(245,158,11,0.12)";
+
+    return (
+        <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.competitor}</span>
+                        <span style={{
+                            fontSize: 10,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            background: "rgba(239,68,68,0.12)",
+                            color: "#fca5a5",
+                            fontWeight: 700,
+                        }}>
+                            {card.weakness_category}
+                        </span>
+                        <IntelligenceBadge label={card.confidence.label} color={confidenceColor} background={confidenceBg} />
+                    </div>
+                    <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                        {card.why_now}
+                    </div>
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-mono)", color: "#ef4444" }}>
+                    {card.complaint_count}
+                </div>
+            </div>
+
+            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                Recommended angle: {card.recommended_angle}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#64748b" }}>
+                    Latest signal: {card.latest_seen_at ? new Date(card.latest_seen_at).toLocaleString() : "Unknown"}
+                </span>
+                <Link
+                    href="/dashboard/competitors"
+                    style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                        color: "#e2e8f0",
+                        textDecoration: "none",
+                        fontSize: 12,
+                        fontWeight: 700,
+                    }}
+                >
+                    <ExternalLink style={{ width: 13, height: 13 }} />
+                    Open radar
+                </Link>
+            </div>
+        </div>
+    );
+}
+
+function MarketIntelligenceSection({
+    intelligence,
+    loading,
+    tab,
+    onTabChange,
+}: {
+    intelligence: MarketIntelligencePayload | null;
+    loading: boolean;
+    tab: IntelligenceTab;
+    onTabChange: (tab: IntelligenceTab) => void;
+}) {
+    const tabs: Array<{ key: IntelligenceTab; label: string; icon: LucideIcon; color: string }> = [
+        { key: "emerging", label: "Emerging Wedges", icon: Target, color: "#f97316" },
+        { key: "themes", label: "Themes to Shape", icon: Lightbulb, color: "#3b82f6" },
+        { key: "competitors", label: "Competitor Pressure", icon: ShieldAlert, color: "#ef4444" },
+    ];
+
+    const currentRows = tab === "emerging"
+        ? intelligence?.emerging_wedges || []
+        : tab === "themes"
+            ? intelligence?.themes_to_shape || []
+            : intelligence?.competitor_pressure || [];
+
+    return (
+        <div style={{ marginBottom: 24 }}>
+            <div className="glass-card" style={{ padding: 20, borderRadius: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 16 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 10,
+                                background: "rgba(249,115,22,0.12)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                            }}>
+                                <Radar style={{ width: 16, height: 16, color: "#f97316" }} />
+                            </div>
+                            <div>
+                                <div style={{ fontSize: 13, color: "#f8fafc", fontWeight: 800 }}>Market Intelligence</div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                                    Analyst-assist view on top of the raw market feed. It highlights sharper wedges without rewriting the feed itself.
+                                </div>
+                            </div>
+                        </div>
+                        {intelligence?.summary && (
+                            <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55 }}>
+                                {intelligence.summary.emerging_wedge_count} emerging wedge{intelligence.summary.emerging_wedge_count === 1 ? "" : "s"} from {intelligence.summary.new_72h_count} new signal{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        {tabs.map((entry) => {
+                            const Icon = entry.icon;
+                            return (
+                                <button
+                                    key={entry.key}
+                                    onClick={() => onTabChange(entry.key)}
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "8px 12px",
+                                        borderRadius: 999,
+                                        border: "none",
+                                        background: tab === entry.key ? `${entry.color}18` : "rgba(255,255,255,0.03)",
+                                        color: tab === entry.key ? entry.color : "#94a3b8",
+                                        cursor: "pointer",
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                    }}
+                                >
+                                    <Icon style={{ width: 13, height: 13 }} />
+                                    {entry.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {intelligence?.summary && (
+                    <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                        gap: 10,
+                        marginBottom: 16,
+                    }}>
+                        <DetailMetric label="Raw ideas" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
+                        <DetailMetric label="Feed visible" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
+                        <DetailMetric label="New 72h" value={intelligence.summary.new_72h_count} accent="#fbbf24" />
+                        <DetailMetric label="Run health" value={intelligence.summary.run_health.toUpperCase()} accent={intelligence.summary.run_health === "healthy" ? "#86efac" : intelligence.summary.run_health === "degraded" ? "#fbbf24" : "#fca5a5"} />
+                    </div>
+                )}
+
+                {loading ? (
+                    <div style={{ fontSize: 12, color: "#94a3b8" }}>Loading market intelligence...</div>
+                ) : currentRows.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
+                        No derived signals are ready in this lane right now. The raw market feed below is still live.
+                    </div>
+                ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                        {tab === "emerging" && (currentRows as EmergingWedgeCard[]).map((card) => (
+                            <EmergingWedgeTile key={card.slug} card={card} />
+                        ))}
+                        {tab === "themes" && (currentRows as ThemeToShapeCard[]).map((card) => (
+                            <ThemeToShapeTile key={card.slug} card={card} />
+                        ))}
+                        {tab === "competitors" && (currentRows as CompetitorPressureCard[]).map((card) => (
+                            <CompetitorPressureTile key={`${card.competitor}-${card.weakness_category}`} card={card} />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function StockMarketDashboard() {
     const [ideas, setIdeas] = useState<Idea[]>([]);
+    const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligencePayload | null>(null);
+    const [intelligenceLoading, setIntelligenceLoading] = useState(true);
+    const [intelligenceTab, setIntelligenceTab] = useState<IntelligenceTab>("emerging");
     const [tab, setTab] = useState<TabType>("top");
     const [category, setCategory] = useState("");
     const [showEarlySignals, setShowEarlySignals] = useState(false);
@@ -1071,6 +1814,10 @@ export default function StockMarketDashboard() {
         trackedPostCount: number;
         archiveIdeaCount: number;
         archivePostCount: number;
+        executionMode?: "local" | "external";
+        healthy_sources: string[];
+        degraded_sources: string[];
+        run_health: "healthy" | "degraded" | "failed";
     } | null>(null);
     const [scanError, setScanError] = useState("");
     const [trendCounts, setTrendCounts] = useState({ rising: 0, falling: 0 });
@@ -1082,7 +1829,8 @@ export default function StockMarketDashboard() {
             const sortMap: Record<TabType, string> = {
                 top: "score", trending: "trending", dying: "dying", new: "new",
             };
-            const res = await fetch(`/api/ideas?sort=${sortMap[tab]}&category=${category}&limit=120&include_exploratory=1`);
+            const exploratoryParam = showEarlySignals ? "&include_exploratory=1" : "";
+            const res = await fetch(`/api/market?sort=${sortMap[tab]}&category=${category}&limit=120${exploratoryParam}`);
             const data = await res.json();
             setIdeas(data.ideas || []);
             setLastUpdated(new Date().toLocaleTimeString());
@@ -1091,13 +1839,31 @@ export default function StockMarketDashboard() {
         } finally {
             setLoading(false);
         }
-    }, [tab, category]);
+    }, [tab, category, showEarlySignals]);
+
+    const fetchMarketIntelligence = useCallback(async () => {
+        setIntelligenceLoading(true);
+        try {
+            const categoryParam = category ? `?category=${encodeURIComponent(category)}` : "";
+            const res = await fetch(`/api/market/intelligence${categoryParam}`);
+            if (!res.ok) {
+                throw new Error("Failed to fetch market intelligence");
+            }
+            const data = await res.json();
+            setMarketIntelligence(data);
+        } catch {
+            console.error("Failed to fetch market intelligence");
+        } finally {
+            setIntelligenceLoading(false);
+        }
+    }, [category]);
 
     const fetchTrendCounts = useCallback(async () => {
         try {
+            const exploratoryParam = showEarlySignals ? "&include_exploratory=1" : "";
             const [risingRes, fallingRes] = await Promise.all([
-                fetch(`/api/ideas?sort=trending&category=${category}&limit=200&include_exploratory=1`),
-                fetch(`/api/ideas?sort=dying&category=${category}&limit=200&include_exploratory=1`),
+                fetch(`/api/market?sort=trending&category=${category}&limit=200${exploratoryParam}`),
+                fetch(`/api/market?sort=dying&category=${category}&limit=200${exploratoryParam}`),
             ]);
 
             const [risingData, fallingData] = await Promise.all([
@@ -1105,8 +1871,8 @@ export default function StockMarketDashboard() {
                 fallingRes.ok ? fallingRes.json() : Promise.resolve({ ideas: [] }),
             ]);
 
-            const risingIdeas = Array.isArray(risingData.ideas) ? risingData.ideas.filter((idea: Idea) => shouldShowIdeaOnBoard(idea, showEarlySignals)) : [];
-            const fallingIdeas = Array.isArray(fallingData.ideas) ? fallingData.ideas.filter((idea: Idea) => shouldShowIdeaOnBoard(idea, showEarlySignals)) : [];
+            const risingIdeas = Array.isArray(risingData.ideas) ? risingData.ideas : [];
+            const fallingIdeas = Array.isArray(fallingData.ideas) ? fallingData.ideas : [];
 
             setTrendCounts({
                 rising: risingIdeas.length,
@@ -1132,10 +1898,11 @@ export default function StockMarketDashboard() {
                     setScanning(false);
                     fetchIdeas();
                     fetchTrendCounts();
+                    fetchMarketIntelligence();
                 }
             }
         } catch { /* silent */ }
-    }, [scanning, fetchIdeas, fetchTrendCounts]);
+    }, [scanning, fetchIdeas, fetchTrendCounts, fetchMarketIntelligence]);
 
     const launchScan = async () => {
         if (scanning) return;
@@ -1162,12 +1929,16 @@ export default function StockMarketDashboard() {
     useEffect(() => {
         fetchIdeas();
         fetchTrendCounts();
+        fetchMarketIntelligence();
         if (isDocumentVisible()) {
             fetchScanStatus();
         }
-        const interval = setInterval(fetchIdeas, 60000);
+        const interval = setInterval(() => {
+            void fetchIdeas();
+            void fetchMarketIntelligence();
+        }, 60000);
         return () => clearInterval(interval);
-    }, [fetchIdeas, fetchScanStatus, fetchTrendCounts]);
+    }, [fetchIdeas, fetchScanStatus, fetchTrendCounts, fetchMarketIntelligence]);
 
     // Poll scan status while scanning
     useEffect(() => {
@@ -1190,22 +1961,35 @@ export default function StockMarketDashboard() {
         };
     }, [scanning, fetchScanStatus]);
 
-    const filteredIdeas = useMemo(() => ideas.filter((idea) => shouldShowIdeaOnBoard(idea, showEarlySignals)), [ideas, showEarlySignals]);
+    const filteredIdeas = useMemo(() => ideas, [ideas]);
 
-    const usingFallbackMarketFeed = !showEarlySignals && filteredIdeas.length === 0 && ideas.length > 0;
-    const visibleIdeas = usingFallbackMarketFeed ? ideas : filteredIdeas;
-    const hiddenEarlyCount = usingFallbackMarketFeed ? 0 : Math.max(0, ideas.length - visibleIdeas.length);
-    const activeIdeaCount = Math.max(scanStatus?.ideaCount || 0, ideas.length);
-    const archiveIdeaCount = Math.max(scanStatus?.archiveIdeaCount || 0, activeIdeaCount);
-    const snapshotIdeaCount = ideas.length;
+    const visibleIdeas = filteredIdeas;
+    const liveIdeaCount = Math.max(scanStatus?.ideaCount || 0, visibleIdeas.length);
+    const archiveIdeaCount = Math.max(scanStatus?.archiveIdeaCount || 0, liveIdeaCount);
     const visibleIdeaCount = visibleIdeas.length;
     const avgScore = visibleIdeas.length > 0 ? visibleIdeas.reduce((a, b) => a + b.current_score, 0) / visibleIdeas.length : 0;
-    const snapshotPostCount = ideas.reduce((a, b) => a + b.post_count_total, 0);
-    const visiblePostCount = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
-    const activePostCount = Math.max(scanStatus?.trackedPostCount || 0, snapshotPostCount);
+    const postsInFeed = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
+    const activePostCount = Math.max(scanStatus?.trackedPostCount || 0, postsInFeed);
     const archivePostCount = Math.max(scanStatus?.archivePostCount || 0, activePostCount);
-    const ideasTrackedSubtitle = `${activeIdeaCount} active in the current market`;
-    const postsTrackedSubtitle = `${activePostCount.toLocaleString()} active posts in the current market`;
+    const runHealth = scanStatus?.run_health || "healthy";
+    const executionMode = scanStatus?.executionMode || "local";
+    const usingExternalWorker = executionMode === "external";
+    const degradedSources = scanStatus?.degraded_sources || [];
+    const healthySources = scanStatus?.healthy_sources || [];
+    const marketIndicatorColor = scanning
+        ? "#f97316"
+        : runHealth === "failed"
+            ? "#ef4444"
+            : runHealth === "degraded"
+                ? "#f59e0b"
+                : "#22c55e";
+    const marketIndicatorLabel = scanning
+        ? "SCANNING"
+        : runHealth === "failed"
+            ? "FAILED"
+            : runHealth === "degraded"
+                ? "DEGRADED"
+                : "LIVE";
 
     return (
         <div style={{ padding: "24px 32px", maxWidth: 1400, margin: "0 auto" }}>
@@ -1216,14 +2000,13 @@ export default function StockMarketDashboard() {
                         fontSize: 24, fontWeight: 800, color: "#f1f5f9",
                         fontFamily: "var(--font-display)", marginBottom: 4, letterSpacing: "-0.02em",
                     }}>
-                        Idea Stock Market
+                        Market Feed
                     </h1>
                     <p style={{ fontSize: 13, color: "#64748b" }}>
-                        Live opportunity scores from Reddit, HN, ProductHunt & IndieHackers
+                        Live market signals from Reddit, HN, ProductHunt and IndieHackers
                     </p>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    {/* Scan Status Badge */}
                     {scanStatus && (scanStatus.archiveIdeaCount > 0 || scanStatus.ideaCount > 0) && (
                         <span style={{
                             fontSize: 11, color: "#64748b", display: "flex",
@@ -1231,30 +2014,39 @@ export default function StockMarketDashboard() {
                             padding: "4px 10px", borderRadius: 6,
                         }}>
                             <Activity style={{ width: 11, height: 11 }} />
-                            {(scanStatus.archiveIdeaCount || scanStatus.ideaCount).toLocaleString()} ideas discovered
+                            {liveIdeaCount.toLocaleString()} live signals
                         </span>
                     )}
 
                     {/* Scan Button */}
                     <motion.button
                         onClick={launchScan}
-                        disabled={scanning}
-                        whileHover={scanning ? {} : { scale: 1.03 }}
-                        whileTap={scanning ? {} : { scale: 0.97 }}
+                        disabled={scanning || usingExternalWorker}
+                        whileHover={scanning || usingExternalWorker ? {} : { scale: 1.03 }}
+                        whileTap={scanning || usingExternalWorker ? {} : { scale: 0.97 }}
                         style={{
                             display: "flex", alignItems: "center", gap: 6,
                             padding: "8px 16px", borderRadius: 8,
-                            border: "1px solid rgba(249,115,22,0.3)",
-                            background: scanning
+                            border: usingExternalWorker
+                                ? "1px solid rgba(148,163,184,0.24)"
+                                : "1px solid rgba(249,115,22,0.3)",
+                            background: usingExternalWorker
+                                ? "rgba(148,163,184,0.08)"
+                                : scanning
                                 ? "rgba(249,115,22,0.08)"
                                 : "linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.1))",
-                            color: scanning ? "#f97316" : "#fb923c",
-                            cursor: scanning ? "wait" : "pointer",
+                            color: usingExternalWorker ? "#cbd5e1" : scanning ? "#f97316" : "#fb923c",
+                            cursor: scanning ? "wait" : usingExternalWorker ? "not-allowed" : "pointer",
                             fontSize: 13, fontWeight: 600,
                             transition: "all 0.2s ease",
                         }}
                     >
-                        {scanning ? (
+                        {usingExternalWorker ? (
+                            <>
+                                <ShieldAlert style={{ width: 14, height: 14 }} />
+                                Managed by VPS worker
+                            </>
+                        ) : scanning ? (
                             <>
                                 <motion.div
                                     animate={{ rotate: 360 }}
@@ -1282,12 +2074,12 @@ export default function StockMarketDashboard() {
                         transition={{ duration: 2, repeat: Infinity }}
                         style={{
                             width: 8, height: 8, borderRadius: "50%",
-                            background: scanning ? "#f97316" : "#22c55e",
-                            boxShadow: scanning ? "0 0 8px rgba(249,115,22,0.5)" : "0 0 8px rgba(34,197,94,0.5)",
+                            background: marketIndicatorColor,
+                            boxShadow: `0 0 8px ${marketIndicatorColor}88`,
                         }}
                     />
-                    <span style={{ fontSize: 11, color: scanning ? "#f97316" : "#22c55e", fontWeight: 600 }}>
-                        {scanning ? "SCANNING" : "LIVE"}
+                    <span style={{ fontSize: 11, color: marketIndicatorColor, fontWeight: 600 }}>
+                        {marketIndicatorLabel}
                     </span>
                 </div>
             </div>
@@ -1314,10 +2106,12 @@ export default function StockMarketDashboard() {
                         </motion.div>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#f97316" }}>
-                                Scanning 4 platforms for opportunities...
+                                {usingExternalWorker ? "VPS worker is scanning market sources..." : "Scanning 4 platforms for opportunities..."}
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                                Reddit (42 subreddits) • Hacker News • ProductHunt • IndieHackers — this takes 3-8 minutes
+                                {usingExternalWorker
+                                    ? "This host is read-only for scraping. Watch the live run status here while the VPS worker pushes fresh data into Supabase."
+                                    : "Reddit (42 subreddits) • Hacker News • ProductHunt • IndieHackers — this takes 3-8 minutes"}
                             </div>
                         </div>
                     </motion.div>
@@ -1359,27 +2153,82 @@ export default function StockMarketDashboard() {
                 )}
             </AnimatePresence>
 
+            {usingExternalWorker && !scanError && (
+                <div style={{
+                    padding: "12px 18px",
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    background: "rgba(148,163,184,0.08)",
+                    border: "1px solid rgba(148,163,184,0.18)",
+                    color: "#cbd5e1",
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                }}>
+                    Scraper execution is managed by the VPS worker for this environment. This host reads market data from Supabase and shows run health, but local scan launches are intentionally disabled here.
+                </div>
+            )}
+
+            {!scanning && runHealth === "failed" && (
+                <div style={{
+                    padding: "12px 18px",
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    background: "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.18)",
+                    color: "#fecaca",
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                }}>
+                    Latest market refresh failed. The feed below is showing older stored signals and may be stale or incomplete.
+                    {healthySources.length > 0 && ` Healthy sources from the last recorded run: ${healthySources.join(", ")}.`}
+                    {degradedSources.length > 0 && ` Degraded sources: ${degradedSources.join(", ")}.`}
+                </div>
+            )}
+
+            {!scanning && runHealth === "degraded" && degradedSources.length > 0 && (
+                <div style={{
+                    padding: "12px 18px",
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    background: "rgba(245,158,11,0.08)",
+                    border: "1px solid rgba(245,158,11,0.18)",
+                    color: "#fde68a",
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                }}>
+                    Latest scan completed in a degraded state. Healthy sources: {healthySources.length > 0 ? healthySources.join(", ") : "none"}.
+                    Degraded sources: {degradedSources.join(", ")}.
+                </div>
+            )}
+
+            <MarketIntelligenceSection
+                intelligence={marketIntelligence}
+                loading={intelligenceLoading}
+                tab={intelligenceTab}
+                onTabChange={setIntelligenceTab}
+            />
+
             {/* Stats Row */}
             <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
-                <StatCard label="Ideas Discovered" value={archiveIdeaCount} icon={Eye} color="#f97316" subtitle={ideasTrackedSubtitle} />
+                <StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" />
                 <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
                 <StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
-                <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible card${visibleIdeaCount === 1 ? "" : "s"} on the board`} />
-                <StatCard label="Posts Archived" value={archivePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle={postsTrackedSubtitle} />
+                <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible signal${visibleIdeaCount === 1 ? "" : "s"} in this view`} />
+                <StatCard label="Posts In Feed" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="live evidence attached to visible signals" />
             </div>
 
             <div style={{
                 marginBottom: 18,
                 padding: "10px 14px",
                 borderRadius: 10,
-                background: "rgba(59,130,246,0.07)",
-                border: "1px solid rgba(59,130,246,0.14)",
-                color: "#bfdbfe",
+                background: "rgba(148,163,184,0.07)",
+                border: "1px solid rgba(148,163,184,0.14)",
+                color: "#cbd5e1",
                 fontSize: 12,
                 lineHeight: 1.55,
             }}>
-                The market page now shows both archive scale and live market evidence.
-                "Ideas discovered" and "Posts archived" are cumulative archive totals, while the board score still reflects current evidence strength plus momentum.
+                Archive memory: {archiveIdeaCount.toLocaleString()} non-junk signals discovered over time and {archivePostCount.toLocaleString()} posts archived.
+                The cards below are the live market feed, not a curated board.
             </div>
 
             {/* Tabs + Category Filter */}
@@ -1442,28 +2291,13 @@ export default function StockMarketDashboard() {
                             fontWeight: 600,
                             transition: "all 0.2s ease",
                         }}
-                        title={showEarlySignals ? "Hide lower-confidence market signals" : "Show lower-confidence market signals too"}
+                        title={showEarlySignals ? "Hide exploratory market signals" : "Show exploratory market signals too"}
                     >
                         <AlertTriangle style={{ width: 11, height: 11 }} />
-                        {showEarlySignals ? "Hide lower-confidence signals" : "Show all market signals"}
+                        {showEarlySignals ? "Hide exploratory signals" : "Show exploratory signals"}
                     </button>
                 </div>
             </div>
-
-            {!showEarlySignals && hiddenEarlyCount > 0 && (
-                <div style={{
-                    marginBottom: 14,
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    background: "rgba(34,197,94,0.07)",
-                    border: "1px solid rgba(34,197,94,0.14)",
-                    color: "#bbf7d0",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                }}>
-                    Showing {visibleIdeaCount} of {snapshotIdeaCount} ideas in this view. {hiddenEarlyCount} lower-confidence or context-only idea{hiddenEarlyCount === 1 ? "" : "s"} hidden until you reveal the full market feed.
-                </div>
-            )}
 
             {/* Table Header */}
             <div style={{
@@ -1474,7 +2308,7 @@ export default function StockMarketDashboard() {
                 borderBottom: "1px solid rgba(255,255,255,0.06)",
             }}>
                 <div style={{ textAlign: "center" }}>#</div>
-                <div>Opportunity</div>
+                <div>Market Signal</div>
                 <div style={{ textAlign: "center" }}>Score</div>
                 <div style={{ textAlign: "center" }}>24h</div>
                 <div style={{ textAlign: "center" }}>7d</div>
@@ -1521,7 +2355,17 @@ export default function StockMarketDashboard() {
                                     Scans Reddit, HN, ProductHunt & IndieHackers for opportunities
                                 </div>
                             </>
-                        ) : null}
+                        ) : (
+                            <>
+                                <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
+                                <div style={{ marginBottom: 8, color: "#94a3b8", fontWeight: 600 }}>
+                                    No live signals match this filter
+                                </div>
+                                <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
+                                    Try another category or reveal exploratory signals to widen the live market feed.
+                                </div>
+                            </>
+                        )}
                     </div>
                 ) : (
                     <AnimatePresence>

@@ -54,6 +54,8 @@ export async function DELETE(req: NextRequest) {
             .eq("user_id", user.id);
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    } else if (legacyType === "opportunity") {
+        // Opportunity watches are native monitors only, so deleting the monitor row is enough.
     } else {
         return NextResponse.json({ error: "Unsupported monitor type" }, { status: 400 });
     }

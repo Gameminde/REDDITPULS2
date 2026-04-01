@@ -1,30 +1,93 @@
 import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import path from "path";
 import { checkProcessLimit, trackProcess, releaseProcess } from "@/lib/process-limiter";
 import { checkPremium } from "@/lib/check-premium";
+import { buildMarketIdeas } from "@/lib/market-feed";
 
-// ── Rate Limiting ──
 const discoverTimestamps = new Map<string, number[]>();
 const MAX_DISCOVERS_PER_HOUR = 3;
+const DISCOVERY_TIMEOUT_MS = 30 * 60 * 1000;
+
+function getScraperExecutionMode() {
+    return String(process.env.SCRAPER_EXECUTION_MODE || "local").toLowerCase() === "external"
+        ? "external"
+        : "local";
+}
 
 function checkRateLimit(userId: string): boolean {
     const now = Date.now();
     const hourAgo = now - 3600_000;
-    const stamps = (discoverTimestamps.get(userId) || []).filter(t => t > hourAgo);
+    const stamps = (discoverTimestamps.get(userId) || []).filter((timestamp) => timestamp > hourAgo);
     if (stamps.length >= MAX_DISCOVERS_PER_HOUR) return false;
     stamps.push(now);
     discoverTimestamps.set(userId, stamps);
     return true;
 }
 
-// POST — launch opportunity discovery scan (no specific idea needed)
+function parseSourceList(value: unknown) {
+    return String(value || "")
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean);
+}
+
+function parseNamedList(value: string) {
+    return value
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter((item) => item && item !== "none");
+}
+
+function extractSourceHealth(latestRun: Record<string, unknown> | null) {
+    const rawSources = parseSourceList(latestRun?.source);
+    const errorText = String(latestRun?.error_text || "");
+    const structuredMatch = errorText.match(/Source health:\s*healthy=([^;|]+);\s*degraded=([^|]+)/i);
+
+    let healthySources = structuredMatch ? parseNamedList(structuredMatch[1] || "") : [];
+    let degradedSources = structuredMatch ? parseNamedList(structuredMatch[2] || "") : [];
+
+    if (!structuredMatch) {
+        const degradedHints = [
+            { source: "reddit", pattern: /reddit degraded|layer 1 async degraded|layer 1 async failed|layer 2b/i },
+            { source: "hackernews", pattern: /hacker news skipped/i },
+            { source: "producthunt", pattern: /producthunt skipped/i },
+            { source: "indiehackers", pattern: /indiehackers skipped/i },
+        ];
+
+        degradedSources = degradedHints
+            .filter((hint) => hint.pattern.test(errorText))
+            .map((hint) => hint.source);
+        healthySources = rawSources.filter((source) => !degradedSources.includes(source));
+    }
+
+    const runHealth = String(latestRun?.status || "").toLowerCase() === "failed"
+        ? "failed"
+        : degradedSources.length > 0 || String(latestRun?.status || "").toLowerCase() === "degraded"
+            ? "degraded"
+            : "healthy";
+
+    return {
+        healthy_sources: healthySources,
+        degraded_sources: degradedSources,
+        run_health: runHealth,
+    };
+}
+
 export async function POST(req: NextRequest) {
     try {
+        const executionMode = getScraperExecutionMode();
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+        if (executionMode === "external") {
+            return NextResponse.json({
+                error: "External scraper worker mode is enabled on this host. Start the scraper from the VPS worker instead.",
+                executionMode,
+            }, { status: 409 });
+        }
 
         if (!checkRateLimit(user.id)) {
             return NextResponse.json({ error: "Rate limit exceeded — max 3 discovery scans per hour" }, { status: 429 });
@@ -35,11 +98,10 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
         }
 
-        // Optional: filter sources
         const body = await req.json().catch(() => ({}));
         const sources = body.sources || ["reddit", "hackernews", "producthunt", "indiehackers"];
-        const validSources = sources.filter((s: string) =>
-            ["reddit", "hackernews", "producthunt", "indiehackers"].includes(s)
+        const validSources = sources.filter((source: string) =>
+            ["reddit", "hackernews", "producthunt", "indiehackers"].includes(source),
         );
 
         if (!checkProcessLimit(user.id)) {
@@ -49,8 +111,6 @@ export async function POST(req: NextRequest) {
         trackProcess(user.id);
 
         const projectRoot = path.resolve(process.cwd(), "..");
-        const sourcesArg = validSources.join(" ");
-        const cmd = `python scraper_job.py --sources ${sourcesArg}`;
 
         const env = {
             ...process.env,
@@ -60,57 +120,84 @@ export async function POST(req: NextRequest) {
             SUPABASE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
         };
 
-        exec(cmd, { cwd: projectRoot, env, timeout: 600_000 }, (error, stdout, stderr) => {
+        const child = spawn("python", ["scraper_job.py", "--sources", ...validSources], {
+            cwd: projectRoot,
+            env,
+            windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        let stdoutBuffer = "";
+        let stderrBuffer = "";
+        const timeout = setTimeout(() => {
+            stderrBuffer += `\nDiscovery scan exceeded ${DISCOVERY_TIMEOUT_MS / 60000} minutes and was terminated.`;
+            child.kill();
+        }, DISCOVERY_TIMEOUT_MS);
+
+        child.stdout.on("data", (chunk) => {
+            stdoutBuffer = `${stdoutBuffer}${chunk.toString()}`.slice(-4000);
+        });
+
+        child.stderr.on("data", (chunk) => {
+            stderrBuffer = `${stderrBuffer}${chunk.toString()}`.slice(-4000);
+        });
+
+        child.on("error", (error) => {
+            clearTimeout(timeout);
             releaseProcess(user.id);
-            if (error) {
-                console.error(`Discovery scan error:`, error.message);
-                console.error(stderr);
+            console.error("Discovery scan spawn error:", error.message);
+        });
+
+        child.on("close", (code, signal) => {
+            clearTimeout(timeout);
+            releaseProcess(user.id);
+            if (code !== 0) {
+                console.error("Discovery scan error:", `code=${code} signal=${signal}`);
+                if (stderrBuffer) {
+                    console.error(stderrBuffer);
+                }
             }
-            console.log(`Discovery scan output:`, stdout?.slice(0, 2000));
+            if (stdoutBuffer) {
+                console.log("Discovery scan output:", stdoutBuffer);
+            }
         });
 
         return NextResponse.json({ status: "started", sources: validSources });
-    } catch (err) {
-        console.error("Discover POST error:", err);
+    } catch (error) {
+        console.error("Discover POST error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
 
-// GET — check latest scraper run status
 export async function GET() {
     try {
+        const executionMode = getScraperExecutionMode();
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // Get the latest scraper run
         const { data: runs } = await supabase
             .from("scraper_runs")
             .select("*")
             .order("started_at", { ascending: false })
             .limit(1);
 
-        const latestRun = runs?.[0] || null;
-
-        // Current active market ideas used by the board.
-        const { count } = await supabase
-            .from("ideas")
-            .select("*", { count: "exact", head: true })
-            .neq("confidence_level", "INSUFFICIENT");
+        const latestRun = (runs?.[0] || null) as Record<string, unknown> | null;
 
         const { data: ideaRows } = await supabase
             .from("ideas")
-            .select("post_count_total")
+            .select("*")
             .neq("confidence_level", "INSUFFICIENT");
 
-        const trackedPostCount = Array.isArray(ideaRows)
-            ? ideaRows.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0)
-            : 0;
+        const visibleIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
+            includeExploratory: false,
+        });
+        const archiveIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
+            includeExploratory: true,
+        });
 
-        // Archive counters prove how much unique evidence has been collected over time.
-        const { count: archiveIdeaCount } = await supabase
-            .from("ideas")
-            .select("*", { count: "exact", head: true });
+        const trackedPostCount = visibleIdeas.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0);
+        const archiveIdeaCount = archiveIdeas.length;
 
         const { count: archivePostCount } = await supabase
             .from("posts")
@@ -118,10 +205,12 @@ export async function GET() {
 
         return NextResponse.json({
             latestRun,
-            ideaCount: count || 0,
+            ideaCount: visibleIdeas.length,
             trackedPostCount,
-            archiveIdeaCount: archiveIdeaCount || 0,
+            archiveIdeaCount,
             archivePostCount: archivePostCount || 0,
+            executionMode,
+            ...extractSourceHealth(latestRun),
         });
     } catch {
         return NextResponse.json({
@@ -130,6 +219,10 @@ export async function GET() {
             trackedPostCount: 0,
             archiveIdeaCount: 0,
             archivePostCount: 0,
+            executionMode: getScraperExecutionMode(),
+            healthy_sources: [],
+            degraded_sources: [],
+            run_health: "failed",
         });
     }
 }

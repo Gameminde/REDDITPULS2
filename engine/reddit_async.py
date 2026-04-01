@@ -192,6 +192,90 @@ async def _fetch_subreddit(
     return result
 
 
+async def _fetch_subreddit_with_direct_fallback(
+    session: aiohttp.ClientSession,
+    limiter: RateLimiter,
+    subreddit: str,
+    sort: str = "new",
+    limit: int = 100,
+) -> dict:
+    """Retry a failed proxy-backed request directly before giving up."""
+    proxied = await _fetch_subreddit(session, limiter, subreddit, sort, limit)
+    if proxied.get("posts") or not _rotator.has_proxies():
+        return proxied
+
+    # Only retry direct when the proxy-backed request failed or returned no posts.
+    url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
+    params = {"limit": limit, "raw_json": 1}
+    result = {
+        "subreddit": subreddit,
+        "sort": sort,
+        "status": proxied.get("status"),
+        "posts": [],
+        "error": proxied.get("error"),
+        "attempts": proxied.get("attempts", 0),
+    }
+
+    for attempt in range(RETRY_LIMIT + 1):
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "application/json",
+        }
+        result["attempts"] = proxied.get("attempts", 0) + attempt + 1
+        await limiter.acquire()
+        try:
+            async with session.get(
+                url,
+                headers=headers,
+                params=params,
+                proxy=None,
+                timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
+            ) as resp:
+                result["status"] = resp.status
+                if resp.status == 429:
+                    wait = 5 * (attempt + 1)
+                    result["error"] = "HTTP 429 direct"
+                    print(f"    [ASYNC] r/{subreddit} direct retry rate limited, waiting {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+
+                if resp.status != 200:
+                    body = (await resp.text())[:160].replace("\n", " ").strip()
+                    result["error"] = f"HTTP {resp.status}: {body}" if body else f"HTTP {resp.status}"
+                    if attempt < RETRY_LIMIT:
+                        await asyncio.sleep(2 * (attempt + 1))
+                        continue
+                    print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback returned {resp.status}")
+                    return result
+
+                data = await resp.json()
+                posts = []
+                for child in data.get("data", {}).get("children", []):
+                    if child.get("kind") != "t3":
+                        continue
+                    post = _parse_post(child["data"])
+                    if post:
+                        posts.append(post)
+                result["posts"] = posts
+                result["error"] = None
+                return result
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            result["error"] = f"{type(e).__name__}: {e}"
+            if attempt < RETRY_LIMIT:
+                await asyncio.sleep(2 * (attempt + 1))
+            else:
+                print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback failed after {RETRY_LIMIT + 1} attempts: {e}")
+                return result
+        except Exception as e:
+            result["error"] = f"{type(e).__name__}: {e}"
+            print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback unexpected error: {e}")
+            return result
+        finally:
+            limiter.release()
+
+    return result
+
+
 async def scrape_all_async(
     subreddits: list[str] | None = None,
     sorts: list[str] | None = None,
@@ -235,7 +319,7 @@ async def scrape_all_async(
     async with aiohttp.ClientSession() as session:
         # Create all tasks
         async def _task(sub, sort):
-            return await _fetch_subreddit(session, limiter, sub, sort, limit)
+            return await _fetch_subreddit_with_direct_fallback(session, limiter, sub, sort, limit)
 
         # Run all concurrently
         results = await asyncio.gather(
