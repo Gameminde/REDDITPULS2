@@ -30,10 +30,11 @@ mkdir -p /etc/redditpulse /var/log/redditpulse
 chmod 755 "$REPO_DIR/scripts/vps/install_market_scraper.sh" "$REPO_DIR/scripts/vps/run_market_scraper.sh"
 
 "$PYTHON_BIN" -m venv "$REPO_DIR/.venv"
+mkdir -p "$REPO_DIR/.venv/nltk_data"
 chown -R "$APP_USER:$APP_GROUP" "$REPO_DIR/.venv" /var/log/redditpulse
 sudo -u "$APP_USER" "$REPO_DIR/.venv/bin/pip" install --upgrade pip
 sudo -u "$APP_USER" "$REPO_DIR/.venv/bin/pip" install -r "$REPO_DIR/requirements-scraper.txt"
-sudo -u "$APP_USER" "$REPO_DIR/.venv/bin/python" -c "import nltk; nltk.download('vader_lexicon', quiet=True)"
+sudo -u "$APP_USER" env NLTK_DATA="$REPO_DIR/.venv/nltk_data" "$REPO_DIR/.venv/bin/python" -c "import nltk; nltk.download('vader_lexicon', quiet=True)"
 
 if [[ ! -f /etc/redditpulse/scraper.env ]]; then
   install -m 640 "$REPO_DIR/scripts/vps/scraper.env.example" /etc/redditpulse/scraper.env
