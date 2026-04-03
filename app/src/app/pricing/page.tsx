@@ -1,7 +1,8 @@
 import Link from "next/link";
 
+import { BrandLogo } from "@/app/components/brand-logo";
 import { PricingContent } from "@/app/components/pricing-content";
-import { APP_NAME, APP_NAME_UPPER } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
 
 export default function PublicPricingPage() {
     return (
@@ -22,9 +23,8 @@ export default function PublicPricingPage() {
                 style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.07)", background: "hsla(0,0%,4%,0.7)", backdropFilter: "blur(20px)" }}
             >
                 <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-                    <Link href="/" className="font-mono text-[13px] font-semibold tracking-wider">
-                        <span className="text-muted-foreground">⬡</span>{" "}
-                        <span className="text-foreground">{APP_NAME_UPPER}</span>
+                    <Link href="/">
+                        <BrandLogo compact uppercase />
                     </Link>
                     <div className="flex items-center gap-5 text-xs font-semibold">
                         <Link href="/how-it-works" className="text-muted-foreground hover:text-white transition-colors">

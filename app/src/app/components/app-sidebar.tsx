@@ -7,14 +7,14 @@ import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import {
     Search, DollarSign, Radar,
-    Bookmark, LogOut, Activity, Lock, ArrowRight, FileText,
+    Bookmark, LogOut, Lock, ArrowRight, FileText,
     TrendingUp, Globe, Mail, Lightbulb, Settings,
-    BarChart3, BellRing, Compass, Sparkles,
+    BarChart3, BellRing, Compass, Sparkles, BadgeDollarSign, Waypoints,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
 import { PRICING } from "@/lib/pricing-plans";
-import { APP_NAME } from "@/lib/brand";
+import { BrandLogo } from "@/app/components/brand-logo";
 
 /* ─── Nav Groups ──────────────────────────────────────────── */
 
@@ -41,6 +41,11 @@ const intelligenceItems = [
     { title: "Scans", url: "/dashboard/scans", icon: Search },
     { title: "Sources", url: "/dashboard/sources", icon: Globe, premium: true },
     { title: "WTP Detection", url: "/dashboard/wtp", icon: DollarSign, premium: true },
+];
+
+const learnItems = [
+    { title: "Pricing", url: "/dashboard/pricing", icon: BadgeDollarSign },
+    { title: "How it works", url: "/dashboard/how-it-works", icon: Waypoints },
 ];
 
 const labelVariants = {
@@ -116,25 +121,18 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
             <div style={{ padding: "20px 18px 12px" }}>
                 <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
                     <motion.div
-                        style={{
-                            width: 28, height: 28, borderRadius: 8,
-                            background: "#f97316", display: "flex",
-                            alignItems: "center", justifyContent: "center",
-                        }}
                         animate={{
-                            boxShadow: [
-                                "0 0 8px rgba(249,115,22,0.3)",
-                                "0 0 16px rgba(249,115,22,0.5)",
-                                "0 0 8px rgba(249,115,22,0.3)",
+                            y: [0, -1.5, 0],
+                            filter: [
+                                "drop-shadow(0 0 10px rgba(249,115,22,0.16))",
+                                "drop-shadow(0 0 18px rgba(249,115,22,0.28))",
+                                "drop-shadow(0 0 10px rgba(249,115,22,0.16))",
                             ],
                         }}
-                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                        transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
                     >
-                        <Activity style={{ width: 14, height: 14, color: "#fff" }} />
+                        <BrandLogo compact />
                     </motion.div>
-                    <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#f1f5f9" }}>
-                        {APP_NAME}
-                    </span>
                 </Link>
             </div>
 
@@ -144,6 +142,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                 <NavGroup label="Validate"     items={validateItems}     index={1} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Monitor"      items={monitorItems}      index={2} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Intelligence" items={intelligenceItems} index={3} pathname={pathname} isPremium={isPremium} />
+                <NavGroup label="Learn"        items={learnItems}        index={4} pathname={pathname} isPremium={isPremium} />
 
                 {/* Upgrade CTA */}
                 {!isPremium && (

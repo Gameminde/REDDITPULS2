@@ -5,7 +5,8 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Zap, ArrowRight, Activity, Search, TrendingUp, Shield } from "lucide-react";
 
-import { APP_NAME, APP_NAME_UPPER, APP_TAGLINE } from "@/lib/brand";
+import { BrandLogo } from "@/app/components/brand-logo";
+import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 
 const features = [
   { icon: Search, title: "Live market feed", desc: "Raw signal stays inspectable so you can judge the evidence yourself." },
@@ -35,10 +36,7 @@ export default function LandingPage() {
         style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.07)", background: "hsla(0,0%,4%,0.7)", backdropFilter: "blur(20px)" }}
       >
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <span className="font-mono text-[13px] font-semibold tracking-wider">
-            <span className="text-muted-foreground">⬡</span>{" "}
-            <span className="text-foreground">{APP_NAME_UPPER}</span>
-          </span>
+          <BrandLogo compact uppercase />
           <div className="flex items-center gap-5">
             <Link href="/how-it-works" className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
               How it works

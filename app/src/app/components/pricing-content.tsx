@@ -138,7 +138,7 @@ function PlanCard({
     href,
     featured = false,
     badge,
-    accent = "#22c55e",
+    accent = "#f97316",
 }: {
     title: string;
     price: string;
@@ -156,9 +156,9 @@ function PlanCard({
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             style={{
-                background: featured ? "linear-gradient(180deg, rgba(10,31,20,0.96), rgba(10,18,16,0.95))" : "rgba(12,15,20,0.92)",
+                background: featured ? "linear-gradient(180deg, rgba(33,14,7,0.98), rgba(14,10,9,0.95))" : "rgba(12,15,20,0.92)",
                 borderColor: featured ? `${accent}` : "rgba(255,255,255,0.08)",
-                boxShadow: featured ? "0 0 0 1px rgba(34,197,94,0.18), 0 20px 70px rgba(0,0,0,0.35)" : "0 20px 60px rgba(0,0,0,0.2)",
+                boxShadow: featured ? "0 0 0 1px rgba(249,115,22,0.18), 0 20px 70px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)" : "0 20px 60px rgba(0,0,0,0.2)",
             }}
         >
             {badge ? (
@@ -166,8 +166,8 @@ function PlanCard({
                     className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full px-4 py-1 text-[11px] font-bold uppercase tracking-[0.16em]"
                     style={{
                         background: accent,
-                        color: "#04130a",
-                        boxShadow: "0 10px 24px rgba(34,197,94,0.22)",
+                        color: "#2b0d03",
+                        boxShadow: "0 10px 24px rgba(249,115,22,0.24)",
                     }}
                 >
                     {badge}
@@ -197,9 +197,9 @@ function PlanCard({
                 href={href}
                 className="group inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all"
                 style={{
-                    background: featured ? "linear-gradient(135deg, rgba(34,197,94,0.18), rgba(34,197,94,0.12))" : "rgba(255,255,255,0.05)",
-                    border: `1px solid ${featured ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.08)"}`,
-                    color: featured ? "#86efac" : "#f8fafc",
+                    background: featured ? "linear-gradient(135deg, rgba(249,115,22,0.22), rgba(234,88,12,0.12))" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${featured ? "rgba(249,115,22,0.28)" : "rgba(255,255,255,0.08)"}`,
+                    color: featured ? "#fed7aa" : "#f8fafc",
                 }}
             >
                 {cta}
@@ -255,6 +255,7 @@ export function PricingContent() {
                     href="/login?mode=signup"
                     featured
                     badge="Most Popular"
+                    accent="#f97316"
                 />
             </div>
 
