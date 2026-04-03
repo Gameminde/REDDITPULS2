@@ -1347,6 +1347,34 @@ def _fetch_live_reddit_comment_posts(seed_posts, keywords, timeout_seconds=12, m
         "Accept": "application/json",
     }
 
+    try:
+        from engine.reddit_scrapecreators import is_available as provider_available, fetch_top_comments
+    except Exception:
+        provider_available = lambda: False
+        fetch_top_comments = None
+
+    if provider_available() and fetch_top_comments:
+        try:
+            provider_comments = fetch_top_comments(
+                candidate_posts,
+                keywords,
+                max_posts=max_posts,
+                per_post_limit=comment_limit,
+            )
+        except Exception:
+            provider_comments = []
+
+        for comment in provider_comments:
+            external_id = str(comment.get("external_id") or comment.get("id") or "").strip()
+            if not external_id or external_id in seen:
+                continue
+            seen.add(external_id)
+            results.append(comment)
+
+        if results and len(results) >= max_posts:
+            print(f"  [Comments] {len(results)} provider Reddit comments found from seed posts")
+            return results[:max_posts]
+
     for post in candidate_posts:
         if time.time() - start >= timeout_seconds or len(results) >= max_posts:
             break
@@ -1771,7 +1799,11 @@ def phase2_scrape(
             async_result = async_future.result()
             if isinstance(async_result, dict):
                 reddit_posts.extend(async_result.get("posts", []))
-                scrape_audit["discovered_subreddits"] = async_result.get("selected_subreddits", []) or []
+                scrape_audit["discovered_subreddits"] = (
+                    async_result.get("discovered_subreddits", [])
+                    or async_result.get("selected_subreddits", [])
+                    or []
+                )
             else:
                 reddit_posts.extend(async_result)
             
@@ -1814,7 +1846,11 @@ def phase2_scrape(
         )
         if isinstance(reddit_result, dict):
             reddit_posts = reddit_result.get("posts", [])
-            scrape_audit["discovered_subreddits"] = reddit_result.get("selected_subreddits", []) or []
+            scrape_audit["discovered_subreddits"] = (
+                reddit_result.get("discovered_subreddits", [])
+                or reddit_result.get("selected_subreddits", [])
+                or []
+            )
         else:
             reddit_posts = reddit_result
     if mode in ("deep", "investigation"):

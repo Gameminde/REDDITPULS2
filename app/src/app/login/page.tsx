@@ -1,31 +1,55 @@
 "use client";
 
-import { useState } from "react";
-import { createClient } from "@/lib/supabase-browser";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+
+import { createClient } from "@/lib/supabase-browser";
+
+type AuthMode = "login" | "signup";
 
 function LoginForm() {
     const searchParams = useSearchParams();
-    const isSignup = searchParams.get("mode") === "signup";
+    const modeParam = searchParams.get("mode");
+    const messageParam = searchParams.get("message");
 
-    const [mode, setMode] = useState<"login" | "signup">(isSignup ? "signup" : "login");
+    const initialMode: AuthMode = modeParam === "signup" ? "signup" : "login";
+    const supabase = useMemo(() => createClient(), []);
+
+    const [mode, setMode] = useState<AuthMode>(initialMode);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
-    const [message, setMessage] = useState("");
+    const [message, setMessage] = useState(messageParam || "");
+    const [messageTone, setMessageTone] = useState<"error" | "success">(
+        messageParam ? "success" : "error"
+    );
 
-    const supabase = createClient();
+    useEffect(() => {
+        setMode(initialMode);
+    }, [initialMode]);
+
+    useEffect(() => {
+        if (messageParam) {
+            setMessage(messageParam);
+            setMessageTone("success");
+        }
+    }, [messageParam]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
         setLoading(true);
         setMessage("");
 
-        if (mode === "signup") {
-            // Use server-side signup route (creates user + profile with service_role)
-            try {
+        try {
+            if (mode === "signup") {
+                if (password !== confirmPassword) {
+                    setMessageTone("error");
+                    setMessage("Passwords do not match.");
+                    return;
+                }
+
                 const resp = await fetch("/api/auth/signup", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -33,37 +57,82 @@ function LoginForm() {
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
+                    setMessageTone("error");
                     setMessage(data.error || "Signup failed");
                 } else if (data.needsLogin) {
-                    setMessage(data.message || "Account created! Please log in.");
+                    setMessageTone("success");
+                    setMessage(data.message || "Account created. Please log in.");
                     setMode("login");
+                    setPassword("");
+                    setConfirmPassword("");
                 } else {
-                    setMessage("Account created! Redirecting...");
                     window.location.href = "/dashboard";
                 }
-            } catch {
-                setMessage("Network error — please try again");
+                return;
             }
-        } else {
+
             const { error } = await supabase.auth.signInWithPassword({
                 email,
                 password,
             });
-            if (error) {
-                setMessage(error.message);
-            } else {
-                window.location.href = "/dashboard";
-            }
-        }
 
-        setLoading(false);
+            if (error) {
+                setMessageTone("error");
+                setMessage(error.message);
+                return;
+            }
+
+            window.location.href = "/dashboard";
+        } catch {
+            setMessageTone("error");
+            setMessage("Network error - please try again.");
+        } finally {
+            setLoading(false);
+        }
     }
 
     async function handleGoogle() {
-        await supabase.auth.signInWithOAuth({
+        setLoading(true);
+        setMessage("");
+
+        const { error } = await supabase.auth.signInWithOAuth({
             provider: "google",
-            options: { redirectTo: `${window.location.origin}/dashboard` },
+            options: {
+                redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+            },
         });
+
+        if (error) {
+            setLoading(false);
+            setMessageTone("error");
+            setMessage(error.message || "Google login failed.");
+        }
+    }
+
+    async function handleForgotPassword() {
+        if (!email.trim()) {
+            setMessageTone("error");
+            setMessage("Enter your email first, then click Forgot password.");
+            return;
+        }
+
+        setLoading(true);
+        setMessage("");
+
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+            redirectTo: `${window.location.origin}/reset-password`,
+        });
+
+        setLoading(false);
+
+        if (error) {
+            setMessageTone("error");
+            setMessage(error.message || "Could not send reset email.");
+            return;
+        }
+
+        setMessageTone("success");
+        setMessage("Password reset email sent. Open the link in your inbox to choose a new password.");
     }
 
     return (
@@ -81,18 +150,18 @@ function LoginForm() {
                     <p className="text-zinc-400 text-sm text-center mb-6">
                         {mode === "login"
                             ? "Log in to your dashboard"
-                            : "Start scanning Reddit for opportunities"}
+                            : "Create your account and start scanning Reddit for opportunities"}
                     </p>
 
-                    {/* Google OAuth */}
                     <button
                         onClick={handleGoogle}
-                        className="w-full flex items-center justify-center gap-3 border border-zinc-700 hover:border-zinc-500 rounded-lg py-3 mb-4 transition text-sm"
+                        disabled={loading}
+                        className="w-full flex items-center justify-center gap-3 border border-zinc-700 hover:border-zinc-500 rounded-lg py-3 mb-4 transition text-sm disabled:opacity-50"
                     >
                         <svg className="w-5 h-5" viewBox="0 0 24 24">
                             <path
                                 fill="#4285F4"
-                                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+                                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
                             />
                             <path
                                 fill="#34A853"
@@ -116,7 +185,6 @@ function LoginForm() {
                         <div className="flex-1 h-px bg-zinc-800" />
                     </div>
 
-                    {/* Email form */}
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <input
                             type="email"
@@ -128,13 +196,26 @@ function LoginForm() {
                         />
                         <input
                             type="password"
-                            placeholder="Password"
+                            placeholder={mode === "login" ? "Password" : "Create a password"}
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
-                            minLength={6}
+                            minLength={8}
                             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-orange-500 transition"
                         />
+
+                        {mode === "signup" && (
+                            <input
+                                type="password"
+                                placeholder="Confirm password"
+                                value={confirmPassword}
+                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                required
+                                minLength={8}
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-orange-500 transition"
+                            />
+                        )}
+
                         <button
                             type="submit"
                             disabled={loading}
@@ -144,8 +225,25 @@ function LoginForm() {
                         </button>
                     </form>
 
+                    {mode === "login" && (
+                        <button
+                            type="button"
+                            onClick={handleForgotPassword}
+                            disabled={loading}
+                            className="w-full mt-3 text-sm text-orange-400 hover:underline disabled:opacity-50"
+                        >
+                            Forgot password?
+                        </button>
+                    )}
+
                     {message && (
-                        <p className="text-sm text-center mt-4 text-orange-400">{message}</p>
+                        <p
+                            className={`text-sm text-center mt-4 ${
+                                messageTone === "success" ? "text-emerald-400" : "text-orange-400"
+                            }`}
+                        >
+                            {message}
+                        </p>
                     )}
 
                     <p className="text-sm text-center text-zinc-500 mt-6">
@@ -153,7 +251,10 @@ function LoginForm() {
                             <>
                                 No account?{" "}
                                 <button
-                                    onClick={() => setMode("signup")}
+                                    onClick={() => {
+                                        setMode("signup");
+                                        setMessage("");
+                                    }}
                                     className="text-orange-400 hover:underline"
                                 >
                                     Sign up
@@ -163,7 +264,10 @@ function LoginForm() {
                             <>
                                 Already have one?{" "}
                                 <button
-                                    onClick={() => setMode("login")}
+                                    onClick={() => {
+                                        setMode("login");
+                                        setMessage("");
+                                    }}
                                     className="text-orange-400 hover:underline"
                                 >
                                     Log in
@@ -179,7 +283,13 @@ function LoginForm() {
 
 export default function LoginPage() {
     return (
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><span className="text-xl">Loading...</span></div>}>
+        <Suspense
+            fallback={
+                <div className="min-h-screen flex items-center justify-center">
+                    <span className="text-xl">Loading...</span>
+                </div>
+            }
+        >
             <LoginForm />
         </Suspense>
     );

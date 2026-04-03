@@ -5,6 +5,7 @@ import path from "path";
 import { checkProcessLimit, trackProcess, releaseProcess } from "@/lib/process-limiter";
 import { checkPremium } from "@/lib/check-premium";
 import { buildMarketIdeas } from "@/lib/market-feed";
+import { extractScraperRunHealth } from "@/lib/scraper-run-health";
 
 const discoverTimestamps = new Map<string, number[]>();
 const MAX_DISCOVERS_PER_HOUR = 3;
@@ -24,55 +25,6 @@ function checkRateLimit(userId: string): boolean {
     stamps.push(now);
     discoverTimestamps.set(userId, stamps);
     return true;
-}
-
-function parseSourceList(value: unknown) {
-    return String(value || "")
-        .split(",")
-        .map((item) => item.trim().toLowerCase())
-        .filter(Boolean);
-}
-
-function parseNamedList(value: string) {
-    return value
-        .split(",")
-        .map((item) => item.trim().toLowerCase())
-        .filter((item) => item && item !== "none");
-}
-
-function extractSourceHealth(latestRun: Record<string, unknown> | null) {
-    const rawSources = parseSourceList(latestRun?.source);
-    const errorText = String(latestRun?.error_text || "");
-    const structuredMatch = errorText.match(/Source health:\s*healthy=([^;|]+);\s*degraded=([^|]+)/i);
-
-    let healthySources = structuredMatch ? parseNamedList(structuredMatch[1] || "") : [];
-    let degradedSources = structuredMatch ? parseNamedList(structuredMatch[2] || "") : [];
-
-    if (!structuredMatch) {
-        const degradedHints = [
-            { source: "reddit", pattern: /reddit degraded|layer 1 async degraded|layer 1 async failed|layer 2b/i },
-            { source: "hackernews", pattern: /hacker news skipped/i },
-            { source: "producthunt", pattern: /producthunt skipped/i },
-            { source: "indiehackers", pattern: /indiehackers skipped/i },
-        ];
-
-        degradedSources = degradedHints
-            .filter((hint) => hint.pattern.test(errorText))
-            .map((hint) => hint.source);
-        healthySources = rawSources.filter((source) => !degradedSources.includes(source));
-    }
-
-    const runHealth = String(latestRun?.status || "").toLowerCase() === "failed"
-        ? "failed"
-        : degradedSources.length > 0 || String(latestRun?.status || "").toLowerCase() === "degraded"
-            ? "degraded"
-            : "healthy";
-
-    return {
-        healthy_sources: healthySources,
-        degraded_sources: degradedSources,
-        run_health: runHealth,
-    };
 }
 
 export async function POST(req: NextRequest) {
@@ -210,7 +162,7 @@ export async function GET() {
             archiveIdeaCount,
             archivePostCount: archivePostCount || 0,
             executionMode,
-            ...extractSourceHealth(latestRun),
+            ...extractScraperRunHealth(latestRun),
         });
     } catch {
         return NextResponse.json({
@@ -223,6 +175,12 @@ export async function GET() {
             healthy_sources: [],
             degraded_sources: [],
             run_health: "failed",
+            runner_label: null,
+            reddit_access_mode: "unknown",
+            reddit_post_count: 0,
+            reddit_successful_requests: 0,
+            reddit_failed_requests: 0,
+            reddit_degraded_reason: null,
         });
     }
 }

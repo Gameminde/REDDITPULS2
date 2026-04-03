@@ -191,7 +191,7 @@ export default function RedditLabPage() {
                                         <div>
                                             <div className="font-semibold text-white">Reddit OAuth is not configured locally yet.</div>
                                             <div className="mt-1 text-xs text-amber-100/90">
-                                                Add <code>REDDIT_OAUTH_CLIENT_ID</code> and <code>REDDIT_OAUTH_CLIENT_SECRET</code> in <code>app/.env.local</code>, then try connect again.
+                                                Add <code>REDDIT_CLIENT_ID</code> and <code>REDDIT_CLIENT_SECRET</code> in <code>app/.env.local</code> or your deployed app environment, or use the explicit <code>REDDIT_OAUTH_*</code> equivalents, then try connect again.
                                             </div>
                                         </div>
                                     </div>

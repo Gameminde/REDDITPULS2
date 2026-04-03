@@ -1818,6 +1818,12 @@ export default function StockMarketDashboard() {
         healthy_sources: string[];
         degraded_sources: string[];
         run_health: "healthy" | "degraded" | "failed";
+        runner_label?: string | null;
+        reddit_access_mode?: "provider_api" | "authenticated_app" | "anonymous_public" | "connected_user" | "unknown";
+        reddit_post_count?: number;
+        reddit_successful_requests?: number;
+        reddit_failed_requests?: number;
+        reddit_degraded_reason?: string | null;
     } | null>(null);
     const [scanError, setScanError] = useState("");
     const [trendCounts, setTrendCounts] = useState({ rising: 0, falling: 0 });
@@ -1976,6 +1982,22 @@ export default function StockMarketDashboard() {
     const usingExternalWorker = executionMode === "external";
     const degradedSources = scanStatus?.degraded_sources || [];
     const healthySources = scanStatus?.healthy_sources || [];
+    const runnerLabel = scanStatus?.runner_label || null;
+    const redditAccessMode = scanStatus?.reddit_access_mode || "unknown";
+    const redditAccessModeLabel = redditAccessMode === "provider_api"
+        ? "provider API"
+        : redditAccessMode === "authenticated_app"
+            ? "authenticated app"
+            : redditAccessMode === "anonymous_public"
+                ? "anonymous public"
+                : redditAccessMode === "connected_user"
+                    ? "connected user"
+                    : "unknown";
+    const redditPostCount = scanStatus?.reddit_post_count || 0;
+    const redditSuccessfulRequests = scanStatus?.reddit_successful_requests || 0;
+    const redditFailedRequests = scanStatus?.reddit_failed_requests || 0;
+    const redditDegradedReason = scanStatus?.reddit_degraded_reason || "";
+    const redditSourceDegraded = degradedSources.includes("reddit");
     const marketIndicatorColor = scanning
         ? "#f97316"
         : runHealth === "failed"
@@ -2165,6 +2187,8 @@ export default function StockMarketDashboard() {
                     lineHeight: 1.55,
                 }}>
                     Scraper execution is managed by the VPS worker for this environment. This host reads market data from Supabase and shows run health, but local scan launches are intentionally disabled here.
+                    {runnerLabel && ` Latest runner: ${runnerLabel}.`}
+                    {redditAccessMode !== "unknown" && ` Reddit lane: ${redditAccessModeLabel}.`}
                 </div>
             )}
 
@@ -2182,6 +2206,8 @@ export default function StockMarketDashboard() {
                     Latest market refresh failed. The feed below is showing older stored signals and may be stale or incomplete.
                     {healthySources.length > 0 && ` Healthy sources from the last recorded run: ${healthySources.join(", ")}.`}
                     {degradedSources.length > 0 && ` Degraded sources: ${degradedSources.join(", ")}.`}
+                    {redditSourceDegraded && ` Reddit lane: ${redditAccessModeLabel}, ${redditPostCount} posts, ${redditSuccessfulRequests} successful requests, ${redditFailedRequests} failed requests.`}
+                    {redditDegradedReason && ` Reddit issue: ${redditDegradedReason}.`}
                 </div>
             )}
 
@@ -2198,6 +2224,10 @@ export default function StockMarketDashboard() {
                 }}>
                     Latest scan completed in a degraded state. Healthy sources: {healthySources.length > 0 ? healthySources.join(", ") : "none"}.
                     Degraded sources: {degradedSources.join(", ")}.
+                    {redditSourceDegraded && (
+                        <> Reddit lane: {redditAccessModeLabel}, {redditPostCount} posts, {redditSuccessfulRequests} successful requests, {redditFailedRequests} failed requests.</>
+                    )}
+                    {redditDegradedReason && <> Reddit issue: {redditDegradedReason}.</>}
                 </div>
             )}
 

@@ -69,9 +69,13 @@ Recommended:
 
 - `REDDIT_CLIENT_ID`
 - `REDDIT_CLIENT_SECRET`
+- `SCRAPECREATORS_API_KEY` if you want provider-backed Reddit as the first lane
+- `REDDIT_OAUTH_REDIRECT_URI` if the same server also hosts the app and Reddit Connection Lab
 
 Optional:
 
+- `REDDIT_OAUTH_CLIENT_ID`
+- `REDDIT_OAUTH_CLIENT_SECRET`
 - `PROXY_LIST`
 - `PRODUCTHUNT_API_KEY`
 - `PRODUCTHUNT_API_SECRET`
@@ -107,5 +111,6 @@ If you install with a non-default service name, replace `redditpulse-scraper` in
 
 - The runner uses a lock file at `/tmp/redditpulse-market-scraper.lock`, so the timer skips if a previous run is still active.
 - The scraper already loads repo-local `.env` files through `engine/env_loader.py`, but the VPS service should use `/etc/redditpulse/scraper.env` as the main secret source.
+- The Reddit Connection Lab can reuse `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`; separate `REDDIT_OAUTH_*` envs are optional.
 - The app keeps reading market data from Supabase as usual. The VPS only replaces the scheduler and worker side.
 - The installer renders the `systemd` unit files with your chosen repo path, user, group, and service name. If you stick with defaults, the service is `redditpulse-scraper`.

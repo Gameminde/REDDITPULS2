@@ -291,11 +291,37 @@ def _format_source_health_note(healthy_sources, degraded_sources):
     return f"Source health: healthy={healthy}; degraded={degraded}"
 
 
+def _clean_run_note_value(value):
+    text = str(value or "").replace("|", "/").replace("\n", " ").replace("\r", " ")
+    text = text.replace(";", ",").strip()
+    return text or "none"
+
+
+def _format_runner_note(source_label):
+    return f"Run metadata: caller={_clean_run_note_value(source_label)}"
+
+
+def _format_reddit_health_note(access_mode, post_count, successful_requests, failed_requests, degraded_reason=""):
+    return (
+        "Reddit health: "
+        f"mode={_clean_run_note_value(access_mode)}; "
+        f"posts={int(post_count or 0)}; "
+        f"success={int(successful_requests or 0)}; "
+        f"failed={int(failed_requests or 0)}; "
+        f"reason={_clean_run_note_value(degraded_reason or 'none')}"
+    )
+
+
 def finalize_scraper_run_record(run_id, status, start_time, posts_collected=0, ideas_updated=0, notes=None):
     if not run_id or not SUPABASE_URL:
         return
 
-    error_text = " | ".join((notes or [])[:8]) if notes else None
+    structured_prefixes = ("Source health:", "Run metadata:", "Reddit health:")
+    structured_notes = [note for note in (notes or []) if str(note or "").startswith(structured_prefixes)]
+    regular_notes = [note for note in (notes or []) if not str(note or "").startswith(structured_prefixes)]
+    budget = max(0, 8 - len(structured_notes))
+    persisted_notes = regular_notes[:budget] + structured_notes[:8]
+    error_text = " | ".join(persisted_notes[:8]) if persisted_notes else None
     sb_patch("scraper_runs", f"id=eq.{run_id}", {
         "status": status,
         "posts_collected": posts_collected,
@@ -1157,16 +1183,34 @@ def update_validation_scores(new_posts):
 # ═══════════════════════════════════════════════════════
 
 def scrape_reddit_sub(subreddit, sort="new", limit=100):
-    """Scrape one subreddit via public .json API."""
+    """Scrape one subreddit via public .json API with proxy + stealth."""
+    from proxy_rotator import get_rotator, stealth_json_headers
+    _rotator = get_rotator()
     url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
-    headers = {"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"}
+    headers = stealth_json_headers()
+    proxy_kwargs = {}
+    proxies = _rotator.format_for_requests()
+    if proxies:
+        proxy_kwargs["proxies"] = proxies
     try:
-        resp = requests.get(url, headers=headers, params={"limit": limit, "raw_json": 1}, timeout=15)
+        resp = requests.get(
+            url, headers=headers,
+            params={"limit": limit, "raw_json": 1},
+            timeout=20, allow_redirects=False,
+            **proxy_kwargs,
+        )
+        if resp.status_code == 403:
+            _rotator.health.record_block()
+            print(f"    [SYNC] r/{subreddit}/{sort} 403 BLOCKED")
+            return []
         if resp.status_code != 200:
+            _rotator.health.record_error()
             print(f"    [SYNC] r/{subreddit}/{sort} returned {resp.status_code}")
             return []
+        _rotator.health.record_success()
         data = resp.json()
     except Exception as e:
+        _rotator.health.record_error()
         print(f"    [SYNC] r/{subreddit}/{sort} error: {e}")
         return []
 
@@ -1207,25 +1251,32 @@ def scrape_all_reddit(subreddits=None):
     all_posts = []
     seen = set()
     status_counts = Counter()
+    subreddit_counts = Counter()
     for sub in (subreddits or BASE_SUBREDDITS):
         for sort in ("new", "hot"):
             posts = scrape_reddit_sub(sub, sort, limit=100)
             status_counts["requests"] += 1
             if not posts:
                 status_counts["empty"] += 1
+            else:
+                status_counts["successful_requests"] += 1
             for p in posts:
                 key = p["external_id"]
                 if key not in seen:
                     seen.add(key)
                     all_posts.append(p)
+                    if p.get("subreddit"):
+                        subreddit_counts[p["subreddit"]] += 1
             time.sleep(2.5)  # respect rate limits
         print(f"    r/{sub}: {len([p for p in all_posts if p.get('subreddit') == sub])} posts")
     scrape_all_reddit.last_run_stats = {
-        "mode": "sync",
+        "mode": "anonymous_public",
         "requested_subreddits": len(subreddits or BASE_SUBREDDITS),
         "requested_requests": status_counts.get("requests", 0),
+        "successful_requests": status_counts.get("successful_requests", 0),
         "failed_requests": status_counts.get("empty", 0),
-        "subreddit_post_counts": dict(Counter(p["subreddit"] for p in all_posts if p.get("subreddit"))),
+        "subreddit_post_counts": dict(subreddit_counts),
+        "subreddits_with_posts": len(subreddit_counts),
     }
     return all_posts
 
@@ -2338,6 +2389,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
                     "posts_collected": 0,
                     "ideas_updated": 0,
                 })
+    run_notes.append(_format_runner_note(source_label))
 
     # ── 1. Scrape (4-Layer Architecture) ──
     all_posts = []
@@ -2373,40 +2425,136 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         return added
 
     all_subs = load_user_requested_subreddits()
+
+    # ── Pre-step: Ensure proxies are available ──
+    try:
+        from proxy_rotator import get_rotator, reset_rotator
+        _pre_rotator = get_rotator()
+        if not _pre_rotator.has_proxies():
+            print("\n  [0/6] Auto-harvesting free proxies...")
+            try:
+                from proxy_harvester import ensure_proxies
+                found_proxies = ensure_proxies(min_count=8, max_age_hours=3.0)
+                if found_proxies:
+                    reset_rotator()  # Force re-init with new PROXY_LIST
+                    print(f"  [OK] Proxy pool ready: {len(found_proxies)} working proxies")
+                else:
+                    print("  [!] No free proxies found — scraper will try direct (expect 403s)")
+            except ImportError:
+                print("  [!] proxy_harvester not available — skipping auto-harvest")
+            except Exception as e:
+                print(f"  [!] Proxy harvest failed: {e} — continuing without proxies")
+        else:
+            print(f"  [Proxy] Pool ready: {_pre_rotator.mode} ({_pre_rotator.live_count()} proxies)")
+    except ImportError:
+        pass
     reddit_async_stats = {}
     pullpush_added = 0
     comment_added = 0
     sitemap_added = 0
     praw_added = 0
+    reddit_access_mode = "none"
+    reddit_successful_requests = 0
+    reddit_failed_requests = 0
+    reddit_post_count = 0
+    reddit_degraded_reason = ""
     healthy_sources = []
     degraded_sources = []
 
     if "reddit" in sources:
-        # ── Layer 1: Async Reddit JSON API (~15s for 42 subs) ──
-        print("\n  [1/6] Layer 1 — Async Reddit scrape...")
+        reddit_primary_stats = {}
+        reddit_fallback_stats = {}
+        provider_attempt_note = ""
+        auth_attempt_note = ""
+        provider_ready = False
+        auth_ready = False
+
         try:
-            from reddit_async import scrape_all_async
-            reddit_posts = asyncio.run(scrape_all_async(subreddits=all_subs))
-            reddit_async_stats = getattr(scrape_all_async, "last_run_stats", {}) or {}
-            added = _merge(reddit_posts, bucket="live")
-            print(f"  [OK] Layer 1 (async): {added} fresh posts")
-            if _should_retry_reddit_sync(reddit_async_stats, added, all_subs):
-                note = (
-                    f"Layer 1 async degraded: {reddit_async_stats.get('failed_requests', 0)}/"
-                    f"{reddit_async_stats.get('requested_requests', 0)} request failures"
-                )
-                run_notes.append(note)
-                print(f"  [!] {note} - retrying with sync scraper")
-                reddit_posts = scrape_all_reddit(subreddits=all_subs)
+            from reddit_scrapecreators import is_available as provider_available, scrape_all_subreddit_posts
+        except Exception:
+            provider_available = lambda: False
+            scrape_all_subreddit_posts = None
+
+        try:
+            from reddit_auth import is_available as praw_available, scrape_all_authenticated
+        except Exception:
+            praw_available = lambda: False
+            scrape_all_authenticated = None
+
+        if provider_available() and scrape_all_subreddit_posts:
+            reddit_access_mode = "provider_api"
+            print("\n  [0.5/6] Layer 0 - Provider Reddit scrape...")
+            try:
+                reddit_posts = scrape_all_subreddit_posts(all_subs, sorts=["new", "hot"], limit=100)
+                reddit_primary_stats = getattr(scrape_all_subreddit_posts, "last_run_stats", {}) or {}
                 added = _merge(reddit_posts, bucket="live")
-                print(f"  [OK] Layer 1 (sync recovery): +{added} posts")
-        except Exception as e:
-            note = f"Layer 1 async failed: {type(e).__name__}: {e}"
-            run_notes.append(note)
-            print(f"  [!] {note} - falling back to sync")
-            reddit_posts = scrape_all_reddit(subreddits=all_subs)
-            added = _merge(reddit_posts, bucket="live")
-            print(f"  [OK] Layer 1 (sync fallback): {added} posts")
+                print(f"  [OK] Layer 0 (provider): {added} fresh posts")
+
+                if _should_retry_reddit_sync(reddit_primary_stats, added, all_subs):
+                    provider_attempt_note = (
+                        f"Layer 0 provider degraded: {reddit_primary_stats.get('failed_requests', 0)}/"
+                        f"{reddit_primary_stats.get('requested_requests', 0)} request failures"
+                    )
+                    run_notes.append(provider_attempt_note)
+                    print(f"  [!] {provider_attempt_note} - retrying with authenticated Reddit")
+                else:
+                    provider_ready = True
+            except Exception as e:
+                provider_attempt_note = f"Layer 0 provider failed: {type(e).__name__}: {e}"
+                run_notes.append(provider_attempt_note)
+                print(f"  [!] {provider_attempt_note} - falling back to authenticated Reddit")
+
+        if not provider_ready and praw_available() and scrape_all_authenticated:
+            reddit_access_mode = "authenticated_app"
+            print("\n  [1/6] Layer 1 — Authenticated Reddit app scrape...")
+            try:
+                reddit_posts = scrape_all_authenticated(all_subs, sorts=["new", "hot"], limit=100)
+                reddit_primary_stats = getattr(scrape_all_authenticated, "last_run_stats", {}) or {}
+                added = _merge(reddit_posts, bucket="live")
+                print(f"  [OK] Layer 1 (authenticated): {added} fresh posts")
+
+                if _should_retry_reddit_sync(reddit_primary_stats, added, all_subs):
+                    auth_attempt_note = (
+                        f"Layer 1 authenticated degraded: {reddit_primary_stats.get('failed_requests', 0)}/"
+                        f"{reddit_primary_stats.get('requested_requests', 0)} request failures"
+                    )
+                    run_notes.append(auth_attempt_note)
+                    print(f"  [!] {auth_attempt_note} - retrying with anonymous Reddit fallback")
+                else:
+                    auth_ready = True
+            except Exception as e:
+                auth_attempt_note = f"Layer 1 authenticated failed: {type(e).__name__}: {e}"
+                run_notes.append(auth_attempt_note)
+                print(f"  [!] {auth_attempt_note} - falling back to anonymous Reddit")
+
+        if not provider_ready and not auth_ready:
+            reddit_access_mode = "anonymous_public"
+            print("\n  [1a/6] Anonymous Reddit fallback...")
+            try:
+                from reddit_async import scrape_all_async
+                reddit_posts = asyncio.run(scrape_all_async(subreddits=all_subs))
+                reddit_fallback_stats = getattr(scrape_all_async, "last_run_stats", {}) or {}
+                added = _merge(reddit_posts, bucket="live")
+                print(f"  [OK] Layer 1a (async fallback): {added} fresh posts")
+                if _should_retry_reddit_sync(reddit_fallback_stats, added, all_subs):
+                    note = (
+                        f"Layer 1 anonymous degraded: {reddit_fallback_stats.get('failed_requests', 0)}/"
+                        f"{reddit_fallback_stats.get('requested_requests', 0)} request failures"
+                    )
+                    run_notes.append(note)
+                    print(f"  [!] {note} - retrying with sync scraper")
+                    reddit_posts = scrape_all_reddit(subreddits=all_subs)
+                    reddit_fallback_stats = getattr(scrape_all_reddit, "last_run_stats", {}) or {}
+                    added = _merge(reddit_posts, bucket="live")
+                    print(f"  [OK] Layer 1a (sync fallback): +{added} posts")
+            except Exception as e:
+                note = f"Layer 1 anonymous failed: {type(e).__name__}: {e}"
+                run_notes.append(note)
+                print(f"  [!] {note} - falling back to sync")
+                reddit_posts = scrape_all_reddit(subreddits=all_subs)
+                reddit_fallback_stats = getattr(scrape_all_reddit, "last_run_stats", {}) or {}
+                added = _merge(reddit_posts, bucket="live")
+                print(f"  [OK] Layer 1a (sync fallback): {added} posts")
 
         # ── Layer 2: PullPush.io Historical (90 days back) ──
         print("\n  [2/6] Layer 2 — PullPush historical scrape...")
@@ -2450,33 +2598,79 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             run_notes.append(note)
             print(f"  [!] {note}")
 
-        # ── Layer 4: PRAW authenticated (optional) ──
-        try:
-            from reddit_auth import is_available as praw_available, scrape_all_authenticated
-            if praw_available():
-                print("\n  [3.5/6] Layer 4 — PRAW authenticated deep dive...")
-                praw_posts = scrape_all_authenticated(all_subs[:10], sorts=["rising"])
-                praw_added = _merge(praw_posts, bucket="live")
-                print(f"  [OK] Layer 4 (PRAW): +{praw_added} authenticated posts")
-        except Exception as e:
-            note = f"Layer 4 (PRAW) skipped: {type(e).__name__}: {e}"
-            run_notes.append(note)
-            print(f"  [!] {note}")
+        # ── Layer 4: PRAW authenticated top-up when the broad lane stayed anonymous ──
+        if reddit_access_mode not in {"authenticated_app", "provider_api"}:
+            try:
+                from reddit_auth import is_available as praw_available, scrape_all_authenticated
+                if praw_available():
+                    print("\n  [3.5/6] Layer 4 — PRAW authenticated top-up...")
+                    praw_posts = scrape_all_authenticated(all_subs[:10], sorts=["rising"])
+                    praw_added = _merge(praw_posts, bucket="live")
+                    print(f"  [OK] Layer 4 (PRAW): +{praw_added} authenticated posts")
+            except Exception as e:
+                note = f"Layer 4 (PRAW) skipped: {type(e).__name__}: {e}"
+                run_notes.append(note)
+                print(f"  [!] {note}")
+
+        effective_reddit_stats = reddit_primary_stats or reddit_async_stats
+        if reddit_fallback_stats:
+            effective_reddit_stats = reddit_fallback_stats
+
+        reddit_post_count = _count_source_posts(all_posts, "reddit")
+        reddit_successful_requests = int(effective_reddit_stats.get("successful_requests", 0) or 0)
+        reddit_failed_requests = int(effective_reddit_stats.get("failed_requests", 0) or 0)
 
         reddit_health = _reddit_health_summary(
             all_subs,
             live_posts,
-            async_stats=reddit_async_stats,
+            async_stats=effective_reddit_stats,
             pullpush_posts=pullpush_added + comment_added,
             praw_posts=praw_added,
             sitemap_posts=sitemap_added,
         )
         print(f"  [Reddit health] {reddit_health['summary']}")
         if reddit_health["is_degraded"]:
-            run_notes.append(f"Reddit degraded: {', '.join(reddit_health['warnings'])}")
+            reddit_degraded_reason = ", ".join(reddit_health["warnings"])
+            if provider_attempt_note and provider_attempt_note not in reddit_degraded_reason:
+                reddit_degraded_reason = f"{provider_attempt_note}; {reddit_degraded_reason}" if reddit_degraded_reason else provider_attempt_note
+            if auth_attempt_note and auth_attempt_note not in reddit_degraded_reason:
+                reddit_degraded_reason = f"{auth_attempt_note}; {reddit_degraded_reason}" if reddit_degraded_reason else auth_attempt_note
+            run_notes.append(f"Reddit degraded: {reddit_degraded_reason}")
             degraded_sources.append("reddit")
         else:
             healthy_sources.append("reddit")
+            reddit_degraded_reason = ""
+
+        run_notes.append(
+            _format_reddit_health_note(
+                reddit_access_mode,
+                reddit_post_count,
+                reddit_successful_requests,
+                reddit_failed_requests,
+                reddit_degraded_reason,
+            )
+        )
+
+        # ── Proxy health guardrail ──
+        try:
+            from proxy_rotator import get_rotator as _get_proxy_rotator
+            _proxy = _get_proxy_rotator()
+            if _proxy.has_proxies() and _proxy.health.total_requests > 0:
+                ph = _proxy.health
+                if ph.success_rate < 0.85:
+                    proxy_note = (
+                        f"PROXY DEGRADED: {ph.success_rate:.0%} success rate "
+                        f"({ph.blocked} blocked, {ph.timeouts} timeouts out of {ph.total_requests} requests)"
+                    )
+                    print(f"  [!] {proxy_note}")
+                    run_notes.append(proxy_note)
+                    if ph.success_rate < 0.50:
+                        print(f"  [!] CRITICAL: Proxy pool below 50% — check provider dashboard")
+                        run_notes.append("CRITICAL: Proxy success rate below 50%")
+                else:
+                    print(f"  [Proxy] Healthy: {ph.success_rate:.0%} success rate ({ph.success}/{ph.total_requests})")
+        except ImportError:
+            pass
 
     if "hackernews" in sources:
         print("\n  [4/6] Scraping Hacker News...")
@@ -2856,9 +3050,10 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         )
 
     # ── 6. Update run log ──
+    structured_note_prefixes = ("Source health:", "Run metadata:", "Reddit health:")
     non_health_notes = [
         note for note in run_notes
-        if not str(note or "").startswith("Source health:")
+        if not str(note or "").startswith(structured_note_prefixes)
     ]
     if degraded_sources:
         run_status = "degraded"

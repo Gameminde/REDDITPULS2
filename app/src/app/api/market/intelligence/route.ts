@@ -2,63 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { createAdmin } from "@/lib/supabase-admin";
 import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
+import { extractScraperRunHealth } from "@/lib/scraper-run-health";
 import {
     buildCompetitorPressure,
     buildEmergingWedges,
     buildThemesToShape,
     type MarketIntelligenceSummary,
 } from "@/lib/market-intelligence";
-
-type ScraperRunRow = Record<string, unknown> | null;
-
-function parseSourceList(value: unknown) {
-    return String(value || "")
-        .split(",")
-        .map((item) => item.trim().toLowerCase())
-        .filter(Boolean);
-}
-
-function parseNamedList(value: string) {
-    return value
-        .split(",")
-        .map((item) => item.trim().toLowerCase())
-        .filter((item) => item && item !== "none");
-}
-
-function extractSourceHealth(latestRun: ScraperRunRow) {
-    const rawSources = parseSourceList(latestRun?.source);
-    const errorText = String(latestRun?.error_text || "");
-    const structuredMatch = errorText.match(/Source health:\s*healthy=([^;|]+);\s*degraded=([^|]+)/i);
-
-    let healthySources = structuredMatch ? parseNamedList(structuredMatch[1] || "") : [];
-    let degradedSources = structuredMatch ? parseNamedList(structuredMatch[2] || "") : [];
-
-    if (!structuredMatch) {
-        const degradedHints = [
-            { source: "reddit", pattern: /reddit degraded|layer 1 async degraded|layer 1 async failed|layer 2b/i },
-            { source: "hackernews", pattern: /hacker news skipped/i },
-            { source: "producthunt", pattern: /producthunt skipped/i },
-            { source: "indiehackers", pattern: /indiehackers skipped/i },
-        ];
-
-        degradedSources = degradedHints
-            .filter((hint) => hint.pattern.test(errorText))
-            .map((hint) => hint.source);
-        healthySources = rawSources.filter((source) => !degradedSources.includes(source));
-    }
-
-    const runHealth = String(latestRun?.status || "").toLowerCase() === "failed"
-        ? "failed"
-        : degradedSources.length > 0 || String(latestRun?.status || "").toLowerCase() === "degraded"
-            ? "degraded"
-            : "healthy";
-
-    return {
-        healthy_sources: healthySources,
-        degraded_sources: degradedSources,
-        run_health: runHealth as MarketIntelligenceSummary["run_health"],
-    };
-}
 
 function normalizeSlugArray(value: unknown, primaryIdeaSlug = "") {
     const parsed = typeof value === "string" ? (() => {
@@ -189,7 +139,7 @@ export async function GET(req: NextRequest) {
         limit: 12,
     });
 
-    const sourceHealth = extractSourceHealth((latestRuns?.[0] || null) as ScraperRunRow);
+    const sourceHealth = extractScraperRunHealth((latestRuns?.[0] || null) as Record<string, unknown> | null);
     const new72hCount = hydratedIdeas.filter((idea) => {
         const firstSeen = Date.parse(String(idea.first_seen || ""));
         if (!Number.isFinite(firstSeen)) return false;

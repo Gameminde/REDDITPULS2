@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { ensureProfileForUser } from "@/lib/ensure-profile";
 
 // ── Rate Limiting (per IP) ──
 const signupTimestamps = new Map<string, number[]>();
@@ -92,17 +93,10 @@ export async function POST(req: NextRequest) {
         const user = authData.user;
 
         // 2. Create profile row (using service role — bypasses RLS)
-        const { error: profileError } = await adminClient
-            .from("profiles")
-            .upsert({
-                id: user.id,
-                email: user.email || email,
-                full_name: email.split("@")[0],
-                plan: "free",
-            }, { onConflict: "id" });
-
-        if (profileError) {
-            console.error("Profile creation error:", profileError.message);
+        try {
+            await ensureProfileForUser(user);
+        } catch (profileError: any) {
+            console.error("Profile creation error:", profileError?.message || profileError);
         }
 
         // 3. Sign in the user with the anon client to set cookies

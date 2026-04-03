@@ -8,6 +8,8 @@ output/
 .next/
 dist/
 *.log
+engine/data/working_proxies.json
+engine/data/working_proxies.txt
 
 # SQL schemas moved to sql/ dir
 sql/

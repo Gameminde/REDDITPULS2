@@ -15,6 +15,7 @@ Usage:
 
 import os
 import time
+from collections import Counter
 from datetime import datetime
 
 try:
@@ -23,22 +24,28 @@ try:
 except ImportError:
     PRAW_AVAILABLE = False
 
-REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
-REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USER_AGENT = "RedditPulse/1.0 (opportunity intelligence)"
+
+
+def _get_credentials():
+    return (
+        os.environ.get("REDDIT_CLIENT_ID", "").strip(),
+        os.environ.get("REDDIT_CLIENT_SECRET", "").strip(),
+    )
 
 
 def _get_reddit() -> "praw.Reddit | None":
     """Create a PRAW Reddit instance if credentials are available."""
     if not PRAW_AVAILABLE:
         return None
-    if not REDDIT_CLIENT_ID or not REDDIT_CLIENT_SECRET:
+    client_id, client_secret = _get_credentials()
+    if not client_id or not client_secret:
         return None
 
     try:
         return praw.Reddit(
-            client_id=REDDIT_CLIENT_ID,
-            client_secret=REDDIT_CLIENT_SECRET,
+            client_id=client_id,
+            client_secret=client_secret,
             user_agent=REDDIT_USER_AGENT,
         )
     except Exception as e:
@@ -48,9 +55,10 @@ def _get_reddit() -> "praw.Reddit | None":
 
 def is_available() -> bool:
     """Check if authenticated Reddit access is available."""
-    has_creds = PRAW_AVAILABLE and bool(REDDIT_CLIENT_ID) and bool(REDDIT_CLIENT_SECRET)
+    client_id, client_secret = _get_credentials()
+    has_creds = PRAW_AVAILABLE and bool(client_id) and bool(client_secret)
     if has_creds:
-        print("[Reddit] Using official API (pre-approved credentials)")
+        print("[Reddit] Using authenticated app credentials")
     else:
         print("[Reddit] ⚠ No official API credentials — using proxy scraping")
         print("[Reddit] Apply for commercial access: reddit.com/wiki/api")
@@ -183,19 +191,37 @@ def scrape_all_authenticated(
     seen = set()
     all_posts = []
     start = time.time()
+    request_stats = Counter()
+    subreddit_counts = Counter()
 
     print(f"  [PRAW] Authenticated scrape: {len(subreddits)} subs × {len(sort_modes)} sorts")
 
     for sub in subreddits:
         for sort in sort_modes:
             posts = scrape_sub_authenticated(sub, sort, limit)
+            request_stats["requests"] += 1
+            if posts:
+                request_stats["successful_requests"] += 1
+            else:
+                request_stats["failed_requests"] += 1
             for post in posts:
                 if post["external_id"] not in seen:
                     seen.add(post["external_id"])
                     all_posts.append(post)
+                    if post.get("subreddit"):
+                        subreddit_counts[post["subreddit"]] += 1
             time.sleep(0.6)  # 100 req/min = 1.67 per sec, stay safe at 0.6s
 
     elapsed = time.time() - start
+    scrape_all_authenticated.last_run_stats = {
+        "mode": "authenticated_app",
+        "requested_subreddits": len(subreddits),
+        "requested_requests": request_stats.get("requests", 0),
+        "successful_requests": request_stats.get("successful_requests", 0),
+        "failed_requests": request_stats.get("failed_requests", 0),
+        "subreddit_post_counts": dict(subreddit_counts),
+        "subreddits_with_posts": len(subreddit_counts),
+    }
     print(f"  [PRAW] Done: {len(all_posts)} unique posts in {elapsed:.1f}s")
     return all_posts
 

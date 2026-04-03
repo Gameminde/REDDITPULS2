@@ -254,6 +254,68 @@ def test_reddit_scraping(monkeypatch):
     print(f"Reddit: {len(posts)} posts in {elapsed:.1f}s")
 
 
+def test_reddit_scraping_uses_provider_when_available(monkeypatch):
+    monkeypatch.setattr(keyword_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(keyword_scraper, "SCRAPECREATORS_IMPORTED", True)
+    monkeypatch.setattr(keyword_scraper, "scrapecreators_available", lambda: True)
+    monkeypatch.setattr(keyword_scraper, "PRAW_IMPORTED", False)
+    monkeypatch.setattr(keyword_scraper, "praw_available", lambda: False)
+    monkeypatch.setattr(
+        keyword_scraper,
+        "search_scrapecreators_posts",
+        lambda keywords, selected_subreddits=None, forced_subreddits=None, idea_text="", max_posts=250: {
+            "posts": [
+                {
+                    "id": "provider-1",
+                    "external_id": "provider-1",
+                    "title": "Freelancers hate chasing invoices",
+                    "body": "Looking for a better payment reminder flow.",
+                    "selftext": "Looking for a better payment reminder flow.",
+                    "full_text": "Freelancers hate chasing invoices Looking for a better payment reminder flow.",
+                    "score": 19,
+                    "num_comments": 7,
+                    "subreddit": "freelance",
+                    "permalink": "https://reddit.com/r/freelance/comments/provider-1/example/",
+                    "matched_keywords": ["invoice", "payment reminder"],
+                    "source": "reddit",
+                }
+            ],
+            "global_posts": [
+                {
+                    "title": "Freelancers hate chasing invoices",
+                    "body": "Looking for a better payment reminder flow.",
+                    "full_text": "Freelancers hate chasing invoices Looking for a better payment reminder flow.",
+                    "score": 19,
+                    "num_comments": 7,
+                    "subreddit": "freelance",
+                },
+                {
+                    "title": "My agency invoicing workflow is broken",
+                    "body": "Need automation for reminders.",
+                    "full_text": "My agency invoicing workflow is broken Need automation for reminders.",
+                    "score": 11,
+                    "num_comments": 5,
+                    "subreddit": "agency",
+                },
+            ],
+            "discovered_subreddits": ["agency"],
+            "stats": {"mode": "provider_api"},
+        },
+    )
+
+    result = keyword_scraper.run_keyword_scan(
+        ["invoice", "payment reminder"],
+        duration="10min",
+        min_keyword_matches=1,
+        return_metadata=True,
+    )
+
+    assert len(result["posts"]) == 1
+    assert result["posts"][0]["external_id"] == "provider-1"
+    assert "agency" in result["selected_subreddits"]
+    assert "agency" in result["discovered_subreddits"]
+
+
 def test_primary_filter(generate_mock_posts):
     mock_posts = generate_mock_posts(50)
     passed = pipeline.apply_primary_filter(mock_posts, "invoice freelance")
@@ -925,6 +987,58 @@ def test_live_reddit_comment_posts_from_seed_posts(monkeypatch):
     assert "churn" in " ".join(comments[0]["matched_keywords"]).lower()
 
 
+def test_live_reddit_comment_posts_prefers_provider_comments(monkeypatch):
+    fake_provider_module = types.SimpleNamespace(
+        is_available=lambda: True,
+        fetch_top_comments=lambda seed_posts, keywords, max_posts=40, per_post_limit=4: [
+            {
+                "id": "provider-comment-1",
+                "external_id": "provider-comment-1",
+                "title": "We would pay for better churn alerts",
+                "body": "We would pay for better churn alerts before cancellations spike.",
+                "selftext": "We would pay for better churn alerts before cancellations spike.",
+                "full_text": "Usage dropped for my tiny SaaS. We would pay for better churn alerts before cancellations spike.",
+                "score": 22,
+                "num_comments": 0,
+                "source": "reddit_comment",
+                "subreddit": "microsaas",
+                "permalink": "https://reddit.com/r/microsaas/comments/post1/example/provider-comment-1/",
+                "matched_keywords": ["churn"],
+                "parent_external_id": "post-1",
+            }
+        ],
+    )
+
+    monkeypatch.setitem(sys.modules, "engine.reddit_scrapecreators", fake_provider_module)
+    monkeypatch.setattr(
+        pipeline.requests,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback HTTP path should not be used")),
+    )
+
+    comments = pipeline._fetch_live_reddit_comment_posts(
+        [
+            {
+                "id": "post-1",
+                "external_id": "post-1",
+                "source": "reddit",
+                "subreddit": "microsaas",
+                "title": "Usage dropped for my tiny SaaS",
+                "score": 28,
+                "num_comments": 22,
+                "permalink": "https://reddit.com/r/microsaas/comments/post1/example/",
+            }
+        ],
+        ["usage drop", "churn"],
+        timeout_seconds=5,
+        max_posts=5,
+    )
+
+    assert len(comments) == 1
+    assert comments[0]["external_id"] == "provider-comment-1"
+    assert comments[0]["source"] == "reddit_comment"
+
+
 def test_synthesis_pass1(get_sample_posts, load_user_configs):
     brain = StubBrain(load_user_configs())
     result = pipeline.run_synthesis_pass1(
@@ -1082,6 +1196,98 @@ def test_competition_tier():
     summary = competition_summary(result)
     assert summary["overall_tier"] != "BLUE_OCEAN", "BLUE_OCEAN with 3 known competitors - bug!"
     print(f"Competition: {summary['overall_tier']} (not BLUE_OCEAN)")
+
+
+def test_authenticated_reddit_scrape_records_stats(monkeypatch):
+    from engine import reddit_auth
+
+    class FakeSubmission:
+        def __init__(self, submission_id, subreddit_name, title):
+            self.id = submission_id
+            self.subreddit = subreddit_name
+            self.title = title
+            self.selftext = "Repeated buyer pain around invoice reminders."
+            self.author = "tester"
+            self.score = 12
+            self.num_comments = 4
+            self.created_utc = 1710892800
+            self.permalink = f"/r/{subreddit_name}/comments/{submission_id}/example/"
+
+    class FakeSubreddit:
+        def __init__(self, name):
+            self.name = name
+
+        def new(self, limit=100):
+            return [FakeSubmission(f"{self.name}-new", self.name, f"{self.name} new post")]
+
+        def hot(self, limit=100):
+            return [FakeSubmission(f"{self.name}-hot", self.name, f"{self.name} hot post")]
+
+    class FakeReddit:
+        def subreddit(self, name):
+            return FakeSubreddit(name)
+
+    monkeypatch.setattr(reddit_auth, "_get_reddit", lambda: FakeReddit())
+
+    posts = reddit_auth.scrape_all_authenticated(["SaaS"], sorts=["new", "hot"], limit=5)
+
+    assert len(posts) == 2
+    stats = getattr(reddit_auth.scrape_all_authenticated, "last_run_stats", {})
+    assert stats["mode"] == "authenticated_app"
+    assert stats["requested_requests"] == 2
+    assert stats["successful_requests"] == 2
+    assert stats["failed_requests"] == 0
+    assert stats["subreddits_with_posts"] == 1
+
+
+def test_scraper_run_notes_include_reddit_health_and_runner():
+    runner_note = market_scraper._format_runner_note("github_actions")
+    reddit_note = market_scraper._format_reddit_health_note(
+        "authenticated_app",
+        128,
+        84,
+        0,
+        "",
+    )
+
+    assert runner_note == "Run metadata: caller=github_actions"
+    assert reddit_note == "Reddit health: mode=authenticated_app; posts=128; success=84; failed=0; reason=none"
+
+
+def test_finalize_scraper_run_preserves_structured_notes(monkeypatch):
+    captured = {}
+
+    class DummyResponse:
+        status_code = 200
+
+    def fake_patch(table, match_query, data):
+        captured["payload"] = data
+        return DummyResponse()
+
+    monkeypatch.setattr(market_scraper, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(market_scraper, "sb_patch", fake_patch)
+
+    market_scraper.finalize_scraper_run_record(
+        "run-123",
+        "completed",
+        time.time(),
+        notes=[
+            "ordinary note 1",
+            "ordinary note 2",
+            "ordinary note 3",
+            "ordinary note 4",
+            "ordinary note 5",
+            "ordinary note 6",
+            "Source health: healthy=reddit; degraded=none",
+            "Run metadata: caller=github_actions",
+            "Reddit health: mode=authenticated_app; posts=120; success=84; failed=0; reason=none",
+        ],
+    )
+
+    error_text = captured["payload"]["error_text"]
+    assert "Source health: healthy=reddit; degraded=none" in error_text
+    assert "Run metadata: caller=github_actions" in error_text
+    assert "Reddit health: mode=authenticated_app; posts=120; success=84; failed=0; reason=none" in error_text
 
 
 def test_full_pipeline_quick(monkeypatch, get_sample_posts, load_user_configs):

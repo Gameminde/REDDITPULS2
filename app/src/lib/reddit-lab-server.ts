@@ -147,15 +147,28 @@ export function isRedditConnectionLabEnabled() {
     return process.env.NEXT_PUBLIC_REDDIT_CONNECTION_LAB_ENABLED !== "false";
 }
 
+function resolveRedditOauthCredentials() {
+    const clientId =
+        process.env.REDDIT_OAUTH_CLIENT_ID?.trim() ||
+        process.env.REDDIT_CLIENT_ID?.trim() ||
+        "";
+    const clientSecret =
+        process.env.REDDIT_OAUTH_CLIENT_SECRET?.trim() ||
+        process.env.REDDIT_CLIENT_SECRET?.trim() ||
+        "";
+
+    return { clientId, clientSecret };
+}
+
 export function hasRedditOauthConfig() {
-    return Boolean(process.env.REDDIT_OAUTH_CLIENT_ID?.trim() && process.env.REDDIT_OAUTH_CLIENT_SECRET?.trim());
+    const { clientId, clientSecret } = resolveRedditOauthCredentials();
+    return Boolean(clientId && clientSecret);
 }
 
 function requireRedditOauthConfig(origin: string) {
-    const clientId = process.env.REDDIT_OAUTH_CLIENT_ID?.trim();
-    const clientSecret = process.env.REDDIT_OAUTH_CLIENT_SECRET?.trim();
+    const { clientId, clientSecret } = resolveRedditOauthCredentials();
     if (!clientId || !clientSecret) {
-        throw new Error("Reddit OAuth is not configured. Set REDDIT_OAUTH_CLIENT_ID and REDDIT_OAUTH_CLIENT_SECRET.");
+        throw new Error("Reddit OAuth is not configured. Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET, or the REDDIT_OAUTH_* equivalents.");
     }
 
     const redirectUri =

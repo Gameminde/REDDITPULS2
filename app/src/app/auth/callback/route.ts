@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { ensureProfileForUser } from "@/lib/ensure-profile";
 
 export async function GET(request: Request) {
     const { searchParams, origin } = new URL(request.url);
@@ -14,8 +15,13 @@ export async function GET(request: Request) {
         if (path.startsWith("//")) return false;
         if (path.startsWith("/\\")) return false;
         if (path.includes("://")) return false;
-        // Only allow paths starting with /dashboard or /login
-        if (!path.startsWith("/dashboard") && !path.startsWith("/login") && path !== "/") return false;
+        // Only allow paths starting with /dashboard, /login, or /reset-password
+        if (
+            !path.startsWith("/dashboard")
+            && !path.startsWith("/login")
+            && !path.startsWith("/reset-password")
+            && path !== "/"
+        ) return false;
         return true;
     };
 
@@ -44,6 +50,14 @@ export async function GET(request: Request) {
 
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (!error) {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                try {
+                    await ensureProfileForUser(user);
+                } catch (profileError) {
+                    console.error("OAuth profile sync error:", profileError);
+                }
+            }
             return NextResponse.redirect(`${origin}${safePath}`);
         }
     }

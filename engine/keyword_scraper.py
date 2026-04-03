@@ -13,6 +13,12 @@ import requests
 from collections import Counter
 from datetime import datetime, timezone
 
+try:
+    from proxy_rotator import get_rotator, stealth_json_headers
+    _PROXY_AVAILABLE = True
+except ImportError:
+    _PROXY_AVAILABLE = False
+
 # ── Try to import PRAW-based authenticated scraper ──
 try:
     import os
@@ -24,11 +30,24 @@ except ImportError:
     PRAW_IMPORTED = False
     praw_available = lambda: False
 
+try:
+    from reddit_scrapecreators import (
+        is_available as scrapecreators_available,
+        search_keyword_posts as search_scrapecreators_posts,
+        discover_subreddits_from_results as discover_subreddits_from_results,
+    )
+    SCRAPECREATORS_IMPORTED = True
+except ImportError:
+    SCRAPECREATORS_IMPORTED = False
+    scrapecreators_available = lambda: False
+    search_scrapecreators_posts = None
+    discover_subreddits_from_results = None
+
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_4) AppleWebKit/537.36 Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
 ]
 
 # Duration mapping (seconds)
@@ -50,7 +69,20 @@ _spam_re = [re.compile(p, re.IGNORECASE) for p in SPAM_PATTERNS]
 
 
 def _headers():
+    if _PROXY_AVAILABLE:
+        return stealth_json_headers()
     return {"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"}
+
+
+def _proxy_kwargs():
+    """Get proxy kwargs for requests.get() calls."""
+    if not _PROXY_AVAILABLE:
+        return {}
+    rotator = get_rotator()
+    proxies = rotator.format_for_requests()
+    if proxies:
+        return {"proxies": proxies}
+    return {}
 
 
 def search_reddit(keywords: list, after: str = "", limit: int = 100) -> list:
@@ -71,7 +103,7 @@ def search_reddit(keywords: list, after: str = "", limit: int = 100) -> list:
         params["after"] = after
 
     try:
-        resp = requests.get(url, headers=_headers(), params=params, timeout=15)
+        resp = requests.get(url, headers=_headers(), params=params, timeout=20, allow_redirects=False, **_proxy_kwargs())
         if resp.status_code == 429:
             print("    [!] Rate limited, waiting 10s...")
             time.sleep(10)
@@ -101,7 +133,7 @@ def search_subreddit(subreddit: str, keywords: list, after: str = "", limit: int
         params["after"] = after
 
     try:
-        resp = requests.get(url, headers=_headers(), params=params, timeout=15)
+        resp = requests.get(url, headers=_headers(), params=params, timeout=20, allow_redirects=False, **_proxy_kwargs())
         if resp.status_code == 429:
             time.sleep(10)
             return [], ""
@@ -276,6 +308,19 @@ NOISE_SUBREDDITS_FOR_NON_DEV = {
     "books", "gaming", "3dprinting", "selfhosted", "homelab",
 }
 
+UTILITY_SUBREDDIT_BLOCKLIST = {
+    "askreddit",
+    "funny",
+    "pics",
+    "todayilearned",
+    "worldnews",
+    "news",
+    "videos",
+    "gaming",
+    "movies",
+    "television",
+}
+
 
 def _is_dev_targeted(idea_text: str = "", keywords: list | None = None) -> bool:
     haystack = " ".join([str(idea_text or "")] + [str(kw or "") for kw in (keywords or [])]).lower()
@@ -345,6 +390,36 @@ def discover_subreddits(
     return extras[:20]
 
 
+def _discover_dynamic_subreddits(posts: list[dict], keywords: list[str], selected_subs: list[str], max_subs: int = 6) -> list[str]:
+    if discover_subreddits_from_results:
+        return discover_subreddits_from_results(
+            posts or [],
+            keywords or [],
+            selected_subreddits=selected_subs or [],
+            max_subs=max_subs,
+        )
+
+    selected_lookup = {_normalize_subreddit_name(sub) for sub in (selected_subs or []) if str(sub).strip()}
+    lowered_keywords = {
+        token.lower()
+        for token in keywords or []
+        if len(str(token or "").strip()) >= 3
+    }
+    scores = Counter()
+
+    for post in posts or []:
+        subreddit = _normalize_subreddit_name(post.get("subreddit", ""))
+        if not subreddit or subreddit in selected_lookup or subreddit in UTILITY_SUBREDDIT_BLOCKLIST:
+            continue
+        text = f"{post.get('title', '')} {post.get('full_text', '')}".lower()
+        keyword_hits = sum(1 for token in lowered_keywords if token in text or token in subreddit)
+        if keyword_hits <= 0:
+            continue
+        scores[subreddit] += keyword_hits * 4 + min(int(post.get("score", 0) or 0), 30) / 10
+
+    return [sub for sub, _ in scores.most_common(max_subs)]
+
+
 def _normalize_subreddit_name(value: str) -> str:
     return str(value or "").strip().lower().replace("r/", "").replace("/r/", "")
 
@@ -389,10 +464,15 @@ def run_keyword_scan(
     seen_ids = set()
     all_posts = []
     selected_subs = []
+    dynamic_discovered_subs = []
+    global_phase_posts = []
 
     # ── Determine scraping mode: Official API vs Anonymous ──
-    use_official_api = PRAW_IMPORTED and praw_available()
-    if use_official_api:
+    use_provider_api = SCRAPECREATORS_IMPORTED and scrapecreators_available() and search_scrapecreators_posts is not None
+    use_official_api = (not use_provider_api) and PRAW_IMPORTED and praw_available()
+    if use_provider_api:
+        print("  [Reddit] + Using provider-backed Reddit search (ScrapeCreators)")
+    elif use_official_api:
         print(f"  [Reddit] ✓ Using official API (PRAW) — 100 req/min, legally compliant")
     else:
         print(f"  [Reddit] ⚠ Using anonymous scraping — consider setting REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET")
@@ -418,9 +498,41 @@ def run_keyword_scan(
     if on_progress:
         on_progress(0, "Searching Reddit globally...")
 
-    if use_official_api:
+    if use_provider_api:
+        try:
+            provider_result = search_scrapecreators_posts(
+                keywords,
+                selected_subreddits=selected_subs,
+                forced_subreddits=forced_subreddits,
+                idea_text=idea_text,
+                max_posts=300,
+            ) or {}
+            provider_posts = provider_result.get("posts", []) or []
+            global_phase_posts = provider_result.get("global_posts", []) or list(provider_posts)
+            dynamic_discovered_subs = provider_result.get("discovered_subreddits", []) or []
+            if not provider_posts:
+                print("    [Provider] No posts returned - falling back to native Reddit paths")
+                use_provider_api = False
+                use_official_api = PRAW_IMPORTED and praw_available()
+            for post_data in provider_posts:
+                eid = post_data.get("external_id", post_data.get("id", ""))
+                if eid and eid not in seen_ids and _allow_global_post(post_data, selected_subs, forced_subreddits, icp_category, min_keyword_matches):
+                    seen_ids.add(eid)
+                    all_posts.append(post_data)
+            print(f"    [Provider] Reddit search: {len(all_posts)} posts")
+            if on_progress:
+                on_progress(len(all_posts), f"Provider Reddit search: {len(all_posts)} posts")
+        except Exception as exc:
+            print(f"    [!] Provider Reddit search failed: {exc}")
+            use_provider_api = False
+            use_official_api = PRAW_IMPORTED and praw_available()
+
+    if use_provider_api:
+        pass
+    elif use_official_api:
         # ── PRAW path: use authenticated search (fast + legal) ──
         praw_posts = search_authenticated(keywords, sort="new", time_filter="month", limit=250)
+        global_phase_posts = list(praw_posts)
         for post_data in praw_posts:
             eid = post_data.get("external_id", post_data.get("id", ""))
             if eid and eid not in seen_ids:
@@ -454,6 +566,7 @@ def run_keyword_scan(
                 if post and post["id"] not in seen_ids and _allow_global_post(post, selected_subs, forced_subreddits, icp_category, min_keyword_matches):
                     seen_ids.add(post["id"])
                     all_posts.append(post)
+                    global_phase_posts.append(post)
 
             if on_progress:
                 on_progress(len(all_posts), f"Global search page {page+1}: {len(all_posts)} posts")
@@ -462,11 +575,26 @@ def run_keyword_scan(
                 break
             time.sleep(2.5)
 
+    if global_phase_posts:
+        dynamic_discovered_subs = list(
+            dict.fromkeys(
+                list(dynamic_discovered_subs)
+                + list(_discover_dynamic_subreddits(global_phase_posts, keywords, selected_subs))
+            )
+        )
+        if dynamic_discovered_subs:
+            selected_subs = list(dict.fromkeys(selected_subs + dynamic_discovered_subs))
+            print(f"    [Discovery] Added dynamic subreddits: {dynamic_discovered_subs}")
+
     # ── Phase 2: Subreddit-specific searches ──
     if on_progress:
         on_progress(len(all_posts), f"Scanning {len(selected_subs)} subreddits...")
 
-    if use_official_api:
+    if use_provider_api:
+        print(f"    [Provider] Subreddit discovery merged into search results ({len(selected_subs)} subs tracked)")
+        if on_progress:
+            on_progress(len(all_posts), f"Provider scan done: {len(all_posts)} posts")
+    elif use_official_api:
         # ── PRAW path: authenticated subreddit scrape ──
         praw_sub_posts = scrape_all_authenticated(
             subreddits=selected_subs,
@@ -615,6 +743,11 @@ def run_keyword_scan(
             "selected_subreddits": [
                 str(sub).strip().lower().replace("r/", "").replace("/r/", "")
                 for sub in selected_subs
+                if str(sub).strip()
+            ],
+            "discovered_subreddits": [
+                str(sub).strip().lower().replace("r/", "").replace("/r/", "")
+                for sub in dynamic_discovered_subs
                 if str(sub).strip()
             ],
             "subreddit_post_counts": dict(sorted(subreddit_post_counts.items())),
