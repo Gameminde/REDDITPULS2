@@ -3,8 +3,32 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
+function resolvePublicOrigin(request: Request): string {
+    const requestUrl = new URL(request.url);
+    const forwardedProto = request.headers.get("x-forwarded-proto");
+    const forwardedHost = request.headers.get("x-forwarded-host");
+    const host = forwardedHost || request.headers.get("host");
+    const envOrigin = (
+        process.env.NEXT_PUBLIC_SITE_URL
+        || process.env.SITE_URL
+        || ""
+    ).replace(/\/+$/, "");
+
+    if (host && !/^0\.0\.0\.0(?::\d+)?$/i.test(host) && !/^localhost(?::\d+)?$/i.test(host)) {
+        const protocol = forwardedProto || requestUrl.protocol.replace(":", "") || "http";
+        return `${protocol}://${host}`;
+    }
+
+    if (envOrigin) {
+        return envOrigin;
+    }
+
+    return requestUrl.origin;
+}
+
 export async function GET(request: Request) {
-    const { searchParams, origin } = new URL(request.url);
+    const { searchParams } = new URL(request.url);
+    const origin = resolvePublicOrigin(request);
     const code = searchParams.get("code");
     const next = searchParams.get("next") ?? "/dashboard";
 
