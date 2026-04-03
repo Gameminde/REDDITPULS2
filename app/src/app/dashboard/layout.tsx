@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase-server";
-import { BETA_OPEN } from "@/lib/beta-access";
+import { BETA_FULL_ACCESS, BETA_OPEN } from "@/lib/beta-access";
 import { redirect } from "next/navigation";
 import { DashboardLayout } from "./DashboardLayout";
 
@@ -23,7 +23,7 @@ export default async function Layout({ children }: { children: React.ReactNode }
         <DashboardLayout
             isGuest={isGuest}
             userEmail={profile?.email || user?.email || "beta guest"}
-            userPlan={profile?.plan || "free"}
+            userPlan={user ? (BETA_FULL_ACCESS ? "beta" : profile?.plan || "free") : "free"}
         >
             {children}
         </DashboardLayout>

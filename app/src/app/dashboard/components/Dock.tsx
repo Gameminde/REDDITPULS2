@@ -14,9 +14,11 @@ import {
     LogIn,
     Mail,
     Settings,
+    Sparkles,
     TrendingUp,
 } from "lucide-react";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
+import { BETA_FULL_ACCESS } from "@/lib/beta-access";
 
 interface DockNavItem {
     name: string;
@@ -76,6 +78,7 @@ export function Dock({
     isGuest: boolean;
 }) {
     const [hasCompletedValidation, setHasCompletedValidation] = useState(false);
+    const showBetaBadge = isGuest || BETA_FULL_ACCESS;
     const groups = (isGuest
         ? [marketItems, infoItems]
         : [marketItems, validateItems, monitorItems, infoItems]
@@ -213,6 +216,22 @@ export function Dock({
                 ))}
 
                 <DockDivider />
+                {showBetaBadge ? (
+                    <>
+                        <div
+                            className="relative flex items-center gap-2 px-4 py-2 rounded-xl min-w-[60px] text-[10px] tracking-wider text-primary"
+                            style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                        >
+                            <Sparkles className="w-[16px] h-[16px]" />
+                            <div className="flex flex-col leading-none">
+                                <span className="font-semibold uppercase tracking-[0.14em]">Beta</span>
+                                <span className="text-[9px] text-primary/80">{isGuest ? "Open beta" : "Full access"}</span>
+                            </div>
+                        </div>
+                        <DockDivider />
+                    </>
+                ) : null}
+
                 {isGuest ? (
                     <Link
                         href="/login"
@@ -223,21 +242,23 @@ export function Dock({
                         <span className="font-medium">Log In</span>
                     </Link>
                 ) : (
-                    <Link
-                        href="/dashboard/settings"
-                        className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
-                            currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                        }`}
-                        style={currentPath?.startsWith("/dashboard/settings")
-                            ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
-                            : { border: "1px solid transparent" }}
-                    >
-                        <Settings className="w-[18px] h-[18px]" />
-                        <span className="font-medium">Settings</span>
-                        {currentPath?.startsWith("/dashboard/settings") && (
-                            <span className="absolute bottom-1 w-1 h-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
-                        )}
-                    </Link>
+                    <>
+                        <Link
+                            href="/dashboard/settings"
+                            className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
+                                currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                            style={currentPath?.startsWith("/dashboard/settings")
+                                ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                : { border: "1px solid transparent" }}
+                        >
+                            <Settings className="w-[18px] h-[18px]" />
+                            <span className="font-medium">Settings</span>
+                            {currentPath?.startsWith("/dashboard/settings") && (
+                                <span className="absolute bottom-1 w-1 h-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
+                            )}
+                        </Link>
+                    </>
                 )}
             </nav>
         </div>

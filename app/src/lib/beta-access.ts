@@ -19,6 +19,7 @@ function normalizePathname(pathname: string) {
 }
 
 export const BETA_OPEN = process.env.NEXT_PUBLIC_BETA_OPEN === "true";
+export const BETA_FULL_ACCESS = process.env.NEXT_PUBLIC_BETA_FULL_ACCESS === "true";
 
 export function isPublicDashboardPath(pathname: string) {
     const normalized = normalizePathname(pathname);

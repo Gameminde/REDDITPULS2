@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
+import { BETA_FULL_ACCESS } from "@/lib/beta-access";
 
 // ── Founder emergency fallback — DO NOT ADD CUSTOMER EMAILS HERE ──
 // These only trigger if the profiles DB query fails entirely.
@@ -29,6 +30,12 @@ export function useUserPlan() {
         async function fetchPlan() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) { setLoading(false); return; }
+
+            if (BETA_FULL_ACCESS) {
+                setPlan("beta");
+                setLoading(false);
+                return;
+            }
 
             // PRIMARY: check profiles.plan from database
             try {

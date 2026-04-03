@@ -10,6 +10,7 @@
  */
 
 import { SupabaseClient } from "@supabase/supabase-js";
+import { BETA_FULL_ACCESS } from "@/lib/beta-access";
 
 // ── Founder emergency fallback — DO NOT ADD CUSTOMER EMAILS HERE ──
 // These only trigger if the profiles DB query fails entirely.
@@ -23,6 +24,10 @@ export async function checkPremium(
     supabase: SupabaseClient,
     userId: string
 ): Promise<{ isPremium: boolean; plan: string }> {
+    if (BETA_FULL_ACCESS) {
+        return { isPremium: true, plan: "beta" };
+    }
+
     // PRIMARY: check profiles.plan from database
     try {
         const { data, error } = await supabase

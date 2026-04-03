@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, LoaderCircle, PlugZap, RefreshCw } from "lucide-react";
 import { BrandLogo } from "@/app/components/brand-logo";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
+import { BETA_FULL_ACCESS } from "@/lib/beta-access";
 import type { RedditConnectionSummary, RedditSourcePack } from "@/lib/reddit-lab";
 
 type RedditLabTopbarState = {
@@ -152,16 +153,16 @@ export function TopBar({
 
                 <div
                     className="hidden items-center gap-1.5 rounded-full px-2.5 py-0.5 sm:flex"
-                    style={isGuest
+                    style={isGuest || BETA_FULL_ACCESS
                         ? { background: "hsla(16,100%,50%,0.08)", border: "1px solid hsla(16,100%,50%,0.2)" }
                         : { background: "hsla(134,61%,55%,0.08)", border: "1px solid hsla(134,61%,55%,0.2)" }}
                 >
                     <span
-                        className={`status-live h-[5px] w-[5px] rounded-full ${isGuest ? "bg-primary" : "bg-build"}`}
-                        style={{ animation: `${isGuest ? "pulse-orange" : "pulse-green"} 2s ease infinite` }}
+                        className={`status-live h-[5px] w-[5px] rounded-full ${isGuest || BETA_FULL_ACCESS ? "bg-primary" : "bg-build"}`}
+                        style={{ animation: `${isGuest || BETA_FULL_ACCESS ? "pulse-orange" : "pulse-green"} 2s ease infinite` }}
                     />
-                    <span className={`text-[11px] font-mono font-medium ${isGuest ? "text-primary" : "text-build"}`}>
-                        {isGuest ? "OPEN BETA" : "LIVE"}
+                    <span className={`text-[11px] font-mono font-medium ${isGuest || BETA_FULL_ACCESS ? "text-primary" : "text-build"}`}>
+                        {isGuest ? "OPEN BETA" : BETA_FULL_ACCESS ? "BETA FULL ACCESS" : "LIVE"}
                     </span>
                 </div>
 
