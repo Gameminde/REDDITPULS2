@@ -3,8 +3,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, CheckCircle, XCircle, AlertTriangle, User, Mail, Key, Loader2, Wand2 } from "lucide-react";
-import { useUserPlan } from "@/lib/use-user-plan";
-import { PremiumGate } from "@/app/components/premium-gate";
 import { createClient } from "@/lib/supabase-browser";
 import Link from "next/link";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
@@ -55,7 +53,6 @@ const statusIcons: Record<string, React.ReactNode> = {
 };
 
 export default function SettingsPage() {
-    const { isPremium } = useUserPlan();
     const [configs, setConfigs] = useState<ProviderConfig[]>([]);
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [validationCount, setValidationCount] = useState(0);
@@ -133,8 +130,6 @@ export default function SettingsPage() {
         fetchProfile();
         fetchValidationCount();
     }, [fetchConfigs, fetchProfile, fetchValidationCount]);
-
-    if (!isPremium) return <PremiumGate feature="AI Settings" />;
 
     // Auto-detect provider when user pastes a key
     const handleKeyChange = async (key: string) => {

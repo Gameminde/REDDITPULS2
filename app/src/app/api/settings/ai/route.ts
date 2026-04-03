@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
-import { checkPremium } from "@/lib/check-premium";
 
 export const MODEL_CATALOG: Record<string, { name: string; models: { id: string; label: string }[]; endpoint: string }> = {
     gemini: {
@@ -181,11 +180,6 @@ export async function GET() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        const { isPremium } = await checkPremium(supabase, user.id);
-        if (!isPremium) {
-            return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
-        }
-
         const encryptionKey = requireEncryptionKey();
         const { data: configs, error } = await supabase.rpc("get_ai_configs_decrypted", {
             p_user_id: user.id,
@@ -216,11 +210,6 @@ export async function POST(req: NextRequest) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-        const { isPremium } = await checkPremium(supabase, user.id);
-        if (!isPremium) {
-            return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
-        }
 
         if (!checkConfigRateLimit(user.id)) {
             return NextResponse.json({ error: "Rate limit exceeded — max 10 config changes per hour" }, { status: 429 });
@@ -314,11 +303,6 @@ export async function DELETE(req: NextRequest) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-        const { isPremium } = await checkPremium(supabase, user.id);
-        if (!isPremium) {
-            return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
-        }
 
         const { searchParams } = new URL(req.url);
         const configId = searchParams.get("id");

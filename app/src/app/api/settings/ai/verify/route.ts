@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
-import { checkPremium } from "@/lib/check-premium";
 
 // ── Model name aliases (mirrors Python resolve_model) ──
 const MODEL_ALIASES: Record<string, string> = {
@@ -328,11 +327,6 @@ export async function POST(req: NextRequest) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-        const { isPremium } = await checkPremium(supabase, user.id);
-        if (!isPremium) {
-            return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
-        }
 
         const body = await req.json();
         const { provider, api_key, selected_model } = body;

@@ -39,13 +39,21 @@ export default function LandingPage() {
             <span className="text-foreground">REDDIT</span>
             <span className="text-primary">PULSE</span>
           </span>
-          <Link
-            href="/dashboard/validate"
-            className="inline-flex items-center gap-2 px-4 h-8 rounded-lg text-xs font-semibold text-white transition-all hover:-translate-y-0.5"
-            style={{ background: "hsl(16 100% 50%)", boxShadow: "0 0 24px hsla(16,100%,50%,0.3)" }}
-          >
-            Open Dashboard <ArrowRight className="w-3 h-3" />
-          </Link>
+          <div className="flex items-center gap-5">
+            <Link href="/how-it-works" className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
+              How it works
+            </Link>
+            <Link href="/pricing" className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
+              Pricing
+            </Link>
+            <Link
+              href="/dashboard/validate"
+              className="inline-flex items-center gap-2 px-4 h-8 rounded-lg text-xs font-semibold text-white transition-all hover:-translate-y-0.5"
+              style={{ background: "hsl(16 100% 50%)", boxShadow: "0 0 24px hsla(16,100%,50%,0.3)" }}
+            >
+              Open Dashboard <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
         </div>
       </motion.nav>
 
@@ -87,10 +95,16 @@ export default function LandingPage() {
               Start Validating
             </Link>
             <Link
-              href="/dashboard"
+              href="/how-it-works"
               className="inline-flex items-center gap-2 px-6 h-11 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              View Dashboard <ArrowRight className="w-3.5 h-3.5" />
+              How it works <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            <Link
+              href="/pricing"
+              className="inline-flex items-center gap-2 px-6 h-11 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Pricing <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </motion.div>
