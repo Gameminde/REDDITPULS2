@@ -17,6 +17,7 @@ import {
     type OpportunitySignalContract,
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
+import { useDashboardViewer } from "./viewer-context";
 
 interface Idea {
     id: string;
@@ -479,7 +480,7 @@ function BreakdownMeter({ label, value, color }: { label: string; value: number;
     );
 }
 
-function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
+function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: boolean }) {
     const displayTopic = getIdeaDisplayTopic(idea);
     const suggestedWedge = getIdeaSuggestedWedge(idea);
     const marketHint = idea.market_hint || null;
@@ -551,6 +552,15 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
         event.preventDefault();
         event.stopPropagation();
         if (promoteState === "saving" || promoteState === "saved") return;
+        if (isGuest) {
+            if (typeof window !== "undefined") {
+                window.location.href = "/login";
+                return;
+            }
+            setPromoteState("error");
+            setPromoteMessage("Sign in to save this signal to Opportunities.");
+            return;
+        }
 
         setPromoteState("saving");
         setPromoteMessage("");
@@ -877,11 +887,13 @@ function IdeaRow({ idea, rank }: { idea: Idea; rank: number }) {
                                                 Opportunity board
                                             </div>
                                             <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
-                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : "Promote to board"}
+                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Promote to board"}
                                             </div>
                                         </div>
                                         <div style={{ fontSize: 10, color: promoteState === "saved" ? "#dcfce7" : "#dbeafe", lineHeight: 1.5 }}>
-                                            {promoteMessage || "Create a curated opportunity row without rewriting the live market feed."}
+                                            {promoteMessage || (isGuest
+                                                ? "Guest beta is read-only. Log in to save signals into your opportunity board."
+                                                : "Create a curated opportunity row without rewriting the live market feed.")}
                                         </div>
                                     </button>
                                 </div>
@@ -1354,17 +1366,28 @@ function IntelligencePromoteButton({
     topic,
     category,
     suggestedLabel,
+    isGuest,
 }: {
     slug: string;
     topic: string;
     category: string;
     suggestedLabel?: string | null;
+    isGuest: boolean;
 }) {
     const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
     const [message, setMessage] = useState("");
 
     const handlePromote = async () => {
         if (state === "saving" || state === "saved") return;
+        if (isGuest) {
+            if (typeof window !== "undefined") {
+                window.location.href = "/login";
+                return;
+            }
+            setState("error");
+            setMessage("Sign in to save this signal to the board.");
+            return;
+        }
 
         let label = cleanText(suggestedLabel || "");
         if (!label && typeof window !== "undefined") {
@@ -1408,7 +1431,7 @@ function IntelligencePromoteButton({
                     fontWeight: 700,
                 }}
             >
-                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : "Promote to board"}
+                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Promote to board"}
             </button>
             {message && (
                 <div style={{ fontSize: 10, color: state === "error" ? "#fca5a5" : "#bfdbfe", lineHeight: 1.5 }}>
@@ -1419,7 +1442,7 @@ function IntelligencePromoteButton({
     );
 }
 
-function EmergingWedgeTile({ card }: { card: EmergingWedgeCard }) {
+function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest: boolean }) {
     const suggestedLabel = cleanText(card.suggested_wedge_label || "");
     const readinessColor = card.promotion_readiness === "ready"
         ? "#86efac"
@@ -1516,13 +1539,14 @@ function EmergingWedgeTile({ card }: { card: EmergingWedgeCard }) {
                     topic={card.topic}
                     category={card.category}
                     suggestedLabel={card.suggested_wedge_label}
+                    isGuest={isGuest}
                 />
             </div>
         </div>
     );
 }
 
-function ThemeToShapeTile({ card }: { card: ThemeToShapeCard }) {
+function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: boolean }) {
     return (
         <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -1599,6 +1623,7 @@ function ThemeToShapeTile({ card }: { card: ThemeToShapeCard }) {
                     topic={card.topic}
                     category={card.category}
                     suggestedLabel={card.suggested_wedge_label}
+                    isGuest={isGuest}
                 />
             </div>
         </div>
@@ -1681,11 +1706,13 @@ function MarketIntelligenceSection({
     loading,
     tab,
     onTabChange,
+    isGuest,
 }: {
     intelligence: MarketIntelligencePayload | null;
     loading: boolean;
     tab: IntelligenceTab;
     onTabChange: (tab: IntelligenceTab) => void;
+    isGuest: boolean;
 }) {
     const tabs: Array<{ key: IntelligenceTab; label: string; icon: LucideIcon; color: string }> = [
         { key: "emerging", label: "Emerging Wedges", icon: Target, color: "#f97316" },
@@ -1782,10 +1809,10 @@ function MarketIntelligenceSection({
                 ) : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
                         {tab === "emerging" && (currentRows as EmergingWedgeCard[]).map((card) => (
-                            <EmergingWedgeTile key={card.slug} card={card} />
+                            <EmergingWedgeTile key={card.slug} card={card} isGuest={isGuest} />
                         ))}
                         {tab === "themes" && (currentRows as ThemeToShapeCard[]).map((card) => (
-                            <ThemeToShapeTile key={card.slug} card={card} />
+                            <ThemeToShapeTile key={card.slug} card={card} isGuest={isGuest} />
                         ))}
                         {tab === "competitors" && (currentRows as CompetitorPressureCard[]).map((card) => (
                             <CompetitorPressureTile key={`${card.competitor}-${card.weakness_category}`} card={card} />
@@ -1798,6 +1825,7 @@ function MarketIntelligenceSection({
 }
 
 export default function StockMarketDashboard() {
+    const { isGuest } = useDashboardViewer();
     const [ideas, setIdeas] = useState<Idea[]>([]);
     const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligencePayload | null>(null);
     const [intelligenceLoading, setIntelligenceLoading] = useState(true);
@@ -1912,6 +1940,12 @@ export default function StockMarketDashboard() {
 
     const launchScan = async () => {
         if (scanning) return;
+        if (isGuest) {
+            if (typeof window !== "undefined") {
+                window.location.href = "/login";
+            }
+            return;
+        }
         setScanning(true);
         setScanError("");
         try {
@@ -2078,6 +2112,11 @@ export default function StockMarketDashboard() {
                                 </motion.div>
                                 Scanning...
                             </>
+                        ) : isGuest ? (
+                            <>
+                                <Zap style={{ width: 14, height: 14 }} />
+                                Sign in to run scans
+                            </>
                         ) : (
                             <>
                                 <Zap style={{ width: 14, height: 14 }} />
@@ -2105,6 +2144,47 @@ export default function StockMarketDashboard() {
                     </span>
                 </div>
             </div>
+
+            {isGuest && (
+                <div style={{
+                    padding: "12px 18px",
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    background: "rgba(249,115,22,0.08)",
+                    border: "1px solid rgba(249,115,22,0.18)",
+                    color: "#fed7aa",
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 10,
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                }}>
+                    <span>
+                        CueIdea beta is open. Browse the live market, explore ideas, and watch trend shifts now. Log in to validate ideas, save opportunities, and personalize your workspace.
+                    </span>
+                    <Link
+                        href="/login"
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            textDecoration: "none",
+                            background: "rgba(249,115,22,0.16)",
+                            border: "1px solid rgba(249,115,22,0.24)",
+                            color: "#fb923c",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        Create free account
+                    </Link>
+                </div>
+            )}
 
             {/* Scanning Progress Banner */}
             <AnimatePresence>
@@ -2236,6 +2316,7 @@ export default function StockMarketDashboard() {
                 loading={intelligenceLoading}
                 tab={intelligenceTab}
                 onTabChange={setIntelligenceTab}
+                isGuest={isGuest}
             />
 
             {/* Stats Row */}
@@ -2379,10 +2460,12 @@ export default function StockMarketDashboard() {
                                     }}
                                 >
                                     <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-                                    {scanning ? "Scanning..." : "Launch First Scan"}
+                                    {scanning ? "Scanning..." : isGuest ? "Sign in to run first scan" : "Launch First Scan"}
                                 </motion.button>
                                 <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
-                                    Scans Reddit, HN, ProductHunt & IndieHackers for opportunities
+                                    {isGuest
+                                        ? "Guest beta is read-only. Log in to unlock personal workflows."
+                                        : "Scans Reddit, HN, ProductHunt & IndieHackers for opportunities"}
                                 </div>
                             </>
                         ) : (
@@ -2400,7 +2483,7 @@ export default function StockMarketDashboard() {
                 ) : (
                     <AnimatePresence>
                         {visibleIdeas.map((idea, i) => (
-                            <IdeaRow key={idea.id} idea={idea} rank={i + 1} />
+                            <IdeaRow key={idea.id} idea={idea} rank={i + 1} isGuest={isGuest} />
                         ))}
                     </AnimatePresence>
                 )}

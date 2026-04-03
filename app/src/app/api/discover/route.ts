@@ -125,8 +125,6 @@ export async function GET() {
     try {
         const executionMode = getScraperExecutionMode();
         const supabase = await createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
         const { data: runs } = await supabase
             .from("scraper_runs")

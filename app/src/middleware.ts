@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { canAccessDashboardAsGuest } from "@/lib/beta-access";
 
 export async function middleware(request: NextRequest) {
     let supabaseResponse = NextResponse.next({ request });
@@ -30,7 +31,11 @@ export async function middleware(request: NextRequest) {
     } = await supabase.auth.getUser();
 
     // Redirect to login if not authenticated and trying to access dashboard
-    if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+    if (
+        !user
+        && request.nextUrl.pathname.startsWith("/dashboard")
+        && !canAccessDashboardAsGuest(request.nextUrl.pathname)
+    ) {
         const url = request.nextUrl.clone();
         url.pathname = "/login";
         return NextResponse.redirect(url);

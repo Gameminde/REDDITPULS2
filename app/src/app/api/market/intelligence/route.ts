@@ -28,15 +28,14 @@ export async function GET(req: NextRequest) {
     const {
         data: { user },
     } = await supabase.auth.getUser();
-
-    if (!user) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = user?.id || null;
 
     const category = (req.nextUrl.searchParams.get("category") || "").trim().toLowerCase();
     const admin = createAdmin();
     const recentHistorySince = new Date(Date.now() - 7 * 86400000).toISOString();
     const recentComplaintsSince = new Date(Date.now() - 30 * 86400000).toISOString();
+
+    const emptyResult = Promise.resolve({ data: [], error: null as { message?: string } | null });
 
     const [
         { data: ideaRows, error: ideasError },
@@ -49,21 +48,27 @@ export async function GET(req: NextRequest) {
     ] = await Promise.all([
         admin.from("ideas").select("*"),
         admin.from("scraper_runs").select("*").order("started_at", { ascending: false }).limit(1),
-        admin
-            .from("idea_validations")
-            .select("status, verdict, idea_text, extracted_keywords, extracted_audience, extracted_competitors")
-            .eq("user_id", user.id)
-            .eq("status", "done")
-            .limit(200),
-        admin
-            .from("opportunities")
-            .select("primary_idea_slug, source_idea_slugs")
-            .eq("user_id", user.id),
-        admin
-            .from("pain_alerts")
-            .select("*")
-            .eq("user_id", user.id)
-            .eq("is_active", true),
+        userId
+            ? admin
+                .from("idea_validations")
+                .select("status, verdict, idea_text, extracted_keywords, extracted_audience, extracted_competitors")
+                .eq("user_id", userId)
+                .eq("status", "done")
+                .limit(200)
+            : emptyResult,
+        userId
+            ? admin
+                .from("opportunities")
+                .select("primary_idea_slug, source_idea_slugs")
+                .eq("user_id", userId)
+            : emptyResult,
+        userId
+            ? admin
+                .from("pain_alerts")
+                .select("*")
+                .eq("user_id", userId)
+                .eq("is_active", true)
+            : emptyResult,
         admin
             .from("competitor_complaints")
             .select("*")

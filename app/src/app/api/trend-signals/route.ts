@@ -105,9 +105,6 @@ export async function GET() {
     const {
         data: { user },
     } = await supabase.auth.getUser();
-    if (!user) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const [{ data, error }, { data: validations }] = await Promise.all([
         supabaseAdmin
@@ -116,13 +113,15 @@ export async function GET() {
             .neq("confidence_level", "INSUFFICIENT")
             .order("last_updated", { ascending: false })
             .limit(300),
-        supabaseAdmin
-            .from("idea_validations")
-            .select("report")
-            .eq("user_id", user.id)
-            .eq("status", "done")
-            .order("created_at", { ascending: false })
-            .limit(1),
+        user?.id
+            ? supabaseAdmin
+                .from("idea_validations")
+                .select("report")
+                .eq("user_id", user.id)
+                .eq("status", "done")
+                .order("created_at", { ascending: false })
+                .limit(1)
+            : Promise.resolve({ data: [], error: null as { message?: string } | null }),
     ]);
 
     if (error) {

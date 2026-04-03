@@ -3,12 +3,20 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
-    BarChart3, Bell, BookOpen, Compass, FileText,
-    Lightbulb, Mail, Settings,
+    BarChart3,
+    Bell,
+    BookOpen,
+    CircleHelp,
+    Compass,
+    CreditCard,
+    FileText,
+    Lightbulb,
+    LogIn,
+    Mail,
+    Settings,
+    TrendingUp,
 } from "lucide-react";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
-
-/* ─── Nav groups ─────────────────────────────────────────────── */
 
 interface DockNavItem {
     name: string;
@@ -20,6 +28,7 @@ interface DockNavItem {
 const marketItems: DockNavItem[] = [
     ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Market", path: "/dashboard", icon: BarChart3, exact: true }] : []),
     ...(FEATURE_FLAGS.EXPLORE_ENABLED ? [{ name: "Explore", path: "/dashboard/explore", icon: Compass }] : []),
+    ...(FEATURE_FLAGS.TRENDS_ENABLED ? [{ name: "Trends", path: "/dashboard/trends", icon: TrendingUp }] : []),
 ];
 
 const validateItems: DockNavItem[] = [
@@ -33,14 +42,15 @@ const monitorItems: DockNavItem[] = [
     ...(FEATURE_FLAGS.DIGEST_ENABLED ? [{ name: "Digest", path: "/dashboard/digest", icon: Mail }] : []),
 ];
 
-const groups = [marketItems, validateItems, monitorItems].filter((group) => group.length > 0);
+const infoItems: DockNavItem[] = [
+    { name: "Pricing", path: "/dashboard/pricing", icon: CreditCard },
+    { name: "How It Works", path: "/dashboard/how-it-works", icon: CircleHelp },
+];
 
 const ACTIVE_VALIDATION_ID_KEY = "activeValidationId";
 const ACTIVE_VALIDATION_IDEA_KEY = "activeValidationIdea";
 const COMPLETED_VALIDATION_ID_KEY = "completedValidationId";
 const VALIDATION_STORAGE_EVENT = "validation-storage";
-
-/* ─── Divider ────────────────────────────────────────────────── */
 
 function DockDivider() {
     return (
@@ -56,16 +66,20 @@ function DockDivider() {
     );
 }
 
-/* ─── Dock ───────────────────────────────────────────────────── */
-
 export function Dock({
     currentPath,
     alertCount,
+    isGuest,
 }: {
     currentPath: string;
     alertCount: number;
+    isGuest: boolean;
 }) {
     const [hasCompletedValidation, setHasCompletedValidation] = useState(false);
+    const groups = (isGuest
+        ? [marketItems, infoItems]
+        : [marketItems, validateItems, monitorItems, infoItems]
+    ).filter((group) => group.length > 0);
 
     const emitValidationStorageChange = useCallback(() => {
         if (typeof window === "undefined") return;
@@ -78,6 +92,10 @@ export function Dock({
     }, []);
 
     useEffect(() => {
+        if (isGuest) {
+            setHasCompletedValidation(false);
+            return;
+        }
         if (typeof window === "undefined") return;
 
         const onStorageChange = () => syncValidationBadge();
@@ -89,9 +107,10 @@ export function Dock({
             window.removeEventListener("storage", onStorageChange);
             window.removeEventListener(VALIDATION_STORAGE_EVENT, onStorageChange);
         };
-    }, [syncValidationBadge]);
+    }, [isGuest, syncValidationBadge]);
 
     useEffect(() => {
+        if (isGuest) return;
         if (typeof window === "undefined") return;
 
         if (currentPath?.startsWith("/dashboard/validate")) {
@@ -127,11 +146,11 @@ export function Dock({
         void checkValidationStatus();
         const interval = window.setInterval(checkValidationStatus, 10000);
         return () => window.clearInterval(interval);
-    }, [currentPath, emitValidationStorageChange]);
+    }, [currentPath, emitValidationStorageChange, isGuest]);
 
     return (
         <div
-            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[980px] overflow-x-auto"
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[1080px] overflow-x-auto"
             style={{ scrollbarWidth: "none" }}
         >
             <nav
@@ -168,7 +187,9 @@ export function Dock({
                                     className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
                                         isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
                                     }`}
-                                    style={isActive ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" } : { border: "1px solid transparent" }}
+                                    style={isActive
+                                        ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                        : { border: "1px solid transparent" }}
                                 >
                                     <div className="relative">
                                         <Icon className="w-[18px] h-[18px]" />
@@ -191,21 +212,33 @@ export function Dock({
                     </span>
                 ))}
 
-                {/* Settings — utility icon at dock end */}
                 <DockDivider />
-                <Link
-                    href="/dashboard/settings"
-                    className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
-                        currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    style={currentPath?.startsWith("/dashboard/settings") ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" } : { border: "1px solid transparent" }}
-                >
-                    <Settings className="w-[18px] h-[18px]" />
-                    <span className="font-medium">Settings</span>
-                    {currentPath?.startsWith("/dashboard/settings") && (
-                        <span className="absolute bottom-1 w-1 h-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
-                    )}
-                </Link>
+                {isGuest ? (
+                    <Link
+                        href="/login"
+                        className="relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider text-primary"
+                        style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                    >
+                        <LogIn className="w-[18px] h-[18px]" />
+                        <span className="font-medium">Log In</span>
+                    </Link>
+                ) : (
+                    <Link
+                        href="/dashboard/settings"
+                        className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
+                            currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        style={currentPath?.startsWith("/dashboard/settings")
+                            ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                            : { border: "1px solid transparent" }}
+                    >
+                        <Settings className="w-[18px] h-[18px]" />
+                        <span className="font-medium">Settings</span>
+                        {currentPath?.startsWith("/dashboard/settings") && (
+                            <span className="absolute bottom-1 w-1 h-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
+                        )}
+                    </Link>
+                )}
             </nav>
         </div>
     );

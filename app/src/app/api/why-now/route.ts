@@ -15,13 +15,13 @@ export async function GET(req: NextRequest) {
     const {
         data: { user },
     } = await supabase.auth.getUser();
-    if (!user) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = user?.id || null;
 
     const scope = (req.nextUrl.searchParams.get("scope") || "").trim().toLowerCase();
     const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit") || 12), 1), 30);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+
+    const emptyResult = Promise.resolve({ data: [], error: null as { message?: string } | null });
 
     const [
         { data: ideas, error: ideasError },
@@ -41,16 +41,20 @@ export async function GET(req: NextRequest) {
             .gte("scraped_at", thirtyDaysAgo)
             .order("scraped_at", { ascending: false })
             .limit(300),
-        supabaseAdmin
-            .from("pain_alerts")
-            .select("*")
-            .eq("user_id", user.id)
-            .eq("is_active", true),
-        supabaseAdmin
-            .from("watchlists")
-            .select("idea_id")
-            .eq("user_id", user.id)
-            .not("idea_id", "is", null),
+        userId
+            ? supabaseAdmin
+                .from("pain_alerts")
+                .select("*")
+                .eq("user_id", userId)
+                .eq("is_active", true)
+            : emptyResult,
+        userId
+            ? supabaseAdmin
+                .from("watchlists")
+                .select("idea_id")
+                .eq("user_id", userId)
+                .not("idea_id", "is", null)
+            : emptyResult,
     ]);
 
     if (ideasError) return NextResponse.json({ error: ideasError.message }, { status: 500 });

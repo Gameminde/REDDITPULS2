@@ -14,10 +14,12 @@ type RedditLabTopbarState = {
 };
 
 export function TopBar({
+    isGuest,
     postCount,
     modelCount,
     ideaCount,
 }: {
+    isGuest: boolean;
     postCount: number;
     modelCount: number;
     ideaCount: number;
@@ -84,9 +86,9 @@ export function TopBar({
     }, []);
 
     useEffect(() => {
-        if (!FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED) return;
+        if (isGuest || !FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED) return;
         void loadRedditState();
-    }, []);
+    }, [isGuest]);
 
     useEffect(() => {
         if (!redditMenuOpen) return;
@@ -150,10 +152,17 @@ export function TopBar({
 
                 <div
                     className="hidden items-center gap-1.5 rounded-full px-2.5 py-0.5 sm:flex"
-                    style={{ background: "hsla(134,61%,55%,0.08)", border: "1px solid hsla(134,61%,55%,0.2)" }}
+                    style={isGuest
+                        ? { background: "hsla(16,100%,50%,0.08)", border: "1px solid hsla(16,100%,50%,0.2)" }
+                        : { background: "hsla(134,61%,55%,0.08)", border: "1px solid hsla(134,61%,55%,0.2)" }}
                 >
-                    <span className="status-live h-[5px] w-[5px] rounded-full bg-build" style={{ animation: "pulse-green 2s ease infinite" }} />
-                    <span className="text-[11px] font-mono font-medium text-build">LIVE</span>
+                    <span
+                        className={`status-live h-[5px] w-[5px] rounded-full ${isGuest ? "bg-primary" : "bg-build"}`}
+                        style={{ animation: `${isGuest ? "pulse-orange" : "pulse-green"} 2s ease infinite` }}
+                    />
+                    <span className={`text-[11px] font-mono font-medium ${isGuest ? "text-primary" : "text-build"}`}>
+                        {isGuest ? "OPEN BETA" : "LIVE"}
+                    </span>
                 </div>
 
                 <div className="hidden h-3 w-px bg-border md:block" />
@@ -164,7 +173,22 @@ export function TopBar({
             </div>
 
             <div className="flex items-center gap-3">
-                {FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED && (
+                {isGuest ? (
+                    <>
+                        <Link
+                            href="/dashboard/pricing"
+                            className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-white sm:inline-flex"
+                        >
+                            Pricing
+                        </Link>
+                        <Link
+                            href="/login"
+                            className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+                        >
+                            Log in to unlock actions
+                        </Link>
+                    </>
+                ) : FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED && (
                     <div className="relative" ref={redditMenuRef}>
                         <button
                             type="button"
