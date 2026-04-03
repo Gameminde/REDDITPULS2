@@ -175,6 +175,19 @@ function toSentence(value: string, fallback: string) {
     return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+function isLowQualityLandingText(value: string) {
+    const normalized = cleanText(value).toLowerCase();
+    if (!normalized) return true;
+    return (
+        normalized === "http status 0"
+        || normalized.startsWith("http status ")
+        || normalized.includes("trying create")
+        || normalized.includes("any good")
+        || normalized.includes("explore page")
+        || normalized.includes("featured offer")
+    );
+}
+
 function hoursSince(firstSeen: unknown) {
     const parsed = Date.parse(String(firstSeen || ""));
     if (!Number.isFinite(parsed)) return null;
@@ -266,11 +279,17 @@ async function getLandingData() {
             .map((idea) => {
                 const painPost = pickPainPost(idea);
                 if (!painPost) return null;
+                const topic = cleanText(idea.topic);
+                const wedge = cleanText(idea.suggested_wedge_label) || topic;
+                const pain = cleanText(painPost.title);
+                if (isLowQualityLandingText(topic) || isLowQualityLandingText(wedge) || isLowQualityLandingText(pain)) {
+                    return null;
+                }
 
                 return {
-                    topic: idea.topic,
-                    wedge: cleanText(idea.suggested_wedge_label) || idea.topic,
-                    pain: cleanText(painPost.title),
+                    topic,
+                    wedge,
+                    pain,
                     source: formatPlatform(cleanText(painPost.source_name || painPost.source)),
                     community: painPost.subreddit ? `r/${cleanText(painPost.subreddit)}` : "public thread",
                     score: Number(idea.current_score || 0),
@@ -286,6 +305,7 @@ async function getLandingData() {
             .slice(0, 3);
 
         const recentWedges = proofIdeas
+            .filter((idea) => !isLowQualityLandingText(cleanText(idea.topic)) && !isLowQualityLandingText(cleanText(idea.suggested_wedge_label || "")))
             .slice(0, 3)
             .map((idea) => ({
                 topic: idea.topic,
