@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -88,8 +88,6 @@ export async function POST(req: NextRequest) {
 
         // Launch Python scan process with JSON config file (no shell injection)
         const projectRoot = path.resolve(process.cwd(), "..");
-        const cmd = `python run_scan.py --config-file "${configPath}"`;
-
         const env = {
             ...process.env,
             PYTHONIOENCODING: "utf-8",
@@ -102,17 +100,45 @@ export async function POST(req: NextRequest) {
             AI_ENCRYPTION_KEY: process.env.AI_ENCRYPTION_KEY || "",
         };
 
-        exec(cmd, { cwd: projectRoot, env }, (error, stdout, stderr) => {
+        const child = spawn("python", ["run_scan.py", "--config-file", configPath], {
+            cwd: projectRoot,
+            env,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        let stdoutBuffer = "";
+        let stderrBuffer = "";
+
+        child.stdout.on("data", (chunk) => {
+            stdoutBuffer += chunk.toString();
+        });
+
+        child.stderr.on("data", (chunk) => {
+            stderrBuffer += chunk.toString();
+        });
+
+        child.on("error", (error) => {
+            releaseProcess(user.id);
+
+            try { fs.unlinkSync(configPath); } catch { }
+            console.error(`Scan ${scan.id} failed to start:`, error.message);
+        });
+
+        child.on("close", (code) => {
             releaseProcess(user.id);
 
             // Clean up temp config file
             try { fs.unlinkSync(configPath); } catch { }
 
-            if (error) {
-                console.error(`Scan ${scan.id} error:`, error.message);
-                console.error(stderr);
+            if (code !== 0) {
+                console.error(`Scan ${scan.id} exited with code ${code}`);
+                if (stderrBuffer) {
+                    console.error(stderrBuffer);
+                }
             }
-            console.log(`Scan ${scan.id} output:`, stdout);
+            if (stdoutBuffer) {
+                console.log(`Scan ${scan.id} output:`, stdoutBuffer);
+            }
         });
 
         return NextResponse.json({ scanId: scan.id, status: "started" });
