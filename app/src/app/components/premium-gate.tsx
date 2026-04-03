@@ -4,6 +4,8 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Lock, ArrowRight, Sparkles } from "lucide-react";
 
+import { PRICING } from "@/lib/pricing-plans";
+
 export function PremiumGate({
     feature,
     children,
@@ -28,10 +30,14 @@ export function PremiumGate({
             >
                 <motion.div
                     style={{
-                        width: 64, height: 64, borderRadius: 16,
+                        width: 64,
+                        height: 64,
+                        borderRadius: 16,
                         background: "rgba(249,115,22,0.1)",
                         border: "1px solid rgba(249,115,22,0.2)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
                         margin: "0 auto 24px",
                     }}
                     animate={{
@@ -46,18 +52,27 @@ export function PremiumGate({
                     <Lock style={{ width: 24, height: 24, color: "#f97316" }} />
                 </motion.div>
 
-                <h2 style={{
-                    fontSize: 22, fontWeight: 700, color: "#f1f5f9",
-                    fontFamily: "var(--font-display)", marginBottom: 8,
-                }}>
+                <h2
+                    style={{
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: "#f1f5f9",
+                        fontFamily: "var(--font-display)",
+                        marginBottom: 8,
+                    }}
+                >
                     {feature}
                 </h2>
 
-                <p style={{
-                    fontSize: 14, color: "#64748b", marginBottom: 32,
-                    lineHeight: 1.6,
-                }}>
-                    This is a premium feature. Upgrade to Pro for lifetime access to {feature.toLowerCase()}, validation reports, trend tracking, and everything else.
+                <p
+                    style={{
+                        fontSize: 14,
+                        color: "#64748b",
+                        marginBottom: 32,
+                        lineHeight: 1.6,
+                    }}
+                >
+                    This is a paid feature. Start a {PRICING.trialDays}-day free trial, then choose Starter at ${PRICING.starter.priceMonthly}/mo or Pro at ${PRICING.pro.priceMonthly}/mo.
                 </p>
 
                 <motion.div
@@ -68,20 +83,24 @@ export function PremiumGate({
                         href="/dashboard/pricing"
                         className="btn-primary"
                         style={{
-                            display: "inline-flex", alignItems: "center", gap: 8,
-                            textDecoration: "none", padding: "14px 32px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            textDecoration: "none",
+                            padding: "14px 32px",
                         }}
                     >
                         <Sparkles style={{ width: 16, height: 16 }} />
-                        Upgrade — $49 lifetime
+                        Start {PRICING.trialDays}-day free trial
                         <ArrowRight style={{ width: 16, height: 16 }} />
                     </a>
                 </motion.div>
 
                 <p style={{ fontSize: 11, color: "#475569", marginTop: 16 }}>
-                    One-time payment · No subscription · Secure via Stripe
+                    Then ${PRICING.starter.priceMonthly}/mo Starter or ${PRICING.pro.priceMonthly}/mo Pro · Secure via Stripe
                 </p>
             </motion.div>
         </div>
     );
 }
+

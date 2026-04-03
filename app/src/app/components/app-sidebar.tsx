@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
+import { PRICING } from "@/lib/pricing-plans";
 
 /* ─── Nav Groups ──────────────────────────────────────────── */
 
@@ -158,17 +159,17 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                             position: "relative",
                         }}>
                             <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: "#f1f5f9" }}>
-                                Unlock all features
+                                Start free, upgrade when ready
                             </p>
                             <p style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>
-                                One-time $49 for lifetime access.
+                                {PRICING.trialDays}-day full-access trial, then ${PRICING.starter.priceMonthly}/mo Starter or ${PRICING.pro.priceMonthly}/mo Pro.
                             </p>
                             <Link href="/dashboard/pricing" className="btn-primary" style={{
                                 display: "flex", alignItems: "center", justifyContent: "center",
                                 gap: 6, padding: "8px 16px", fontSize: 12, textDecoration: "none",
                                 width: "100%", boxSizing: "border-box",
                             }}>
-                                Upgrade <ArrowRight style={{ width: 12, height: 12 }} />
+                                See plans <ArrowRight style={{ width: 12, height: 12 }} />
                             </Link>
                         </div>
                     </motion.div>

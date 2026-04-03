@@ -13,6 +13,7 @@ import {
     Zap, Crown, Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
+import { PRICING } from "@/lib/pricing-plans";
 
 function StatCard({ title, value, numericValue, accent, icon: Icon, sub }: {
     title: string; value: string | number; numericValue?: number;
@@ -307,14 +308,14 @@ export default function DashboardHome() {
                                         <div className="pulse-glow" style={{ padding: 6, borderRadius: 8, background: "rgba(249,115,22,0.1)" }}>
                                             <Sparkles style={{ width: 14, height: 14, color: "#f97316" }} />
                                         </div>
-                                        <p style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9" }}>Upgrade to Pro</p>
+                                        <p style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9" }}>Choose your plan</p>
                                     </div>
                                     <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>
-                                        Unlock validation reports, trend velocity, multi-source intelligence, and unlimited scans.
+                                        Start with a {PRICING.trialDays}-day free trial, then pick Starter at ${PRICING.starter.priceMonthly}/mo or Pro at ${PRICING.pro.priceMonthly}/mo.
                                     </p>
                                     <button className="btn-primary" style={{ width: "100%", fontSize: 13 }}
                                         onClick={() => router.push("/dashboard/pricing")}>
-                                        $49 — Lifetime access
+                                        See plans
                                     </button>
                                 </div>
                             </div>
