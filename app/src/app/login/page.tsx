@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { createClient } from "@/lib/supabase-browser";
+import { APP_NAME } from "@/lib/brand";
 
 type AuthMode = "login" | "signup";
 
@@ -147,7 +148,7 @@ function LoginForm() {
             <div className="w-full max-w-md">
                 <Link href="/" className="flex items-center gap-2 justify-center mb-8">
                     <span className="text-3xl">📡</span>
-                    <span className="font-bold text-2xl">RedditPulse</span>
+                    <span className="font-bold text-2xl">{APP_NAME}</span>
                 </Link>
 
                 <div className="card-glow p-8">
@@ -157,7 +158,7 @@ function LoginForm() {
                     <p className="text-zinc-400 text-sm text-center mb-6">
                         {mode === "login"
                             ? "Log in to your dashboard"
-                            : "Create your account and start scanning Reddit for opportunities"}
+                            : "Create your account and start turning raw signal into sharper wedges"}
                     </p>
 
                     <button

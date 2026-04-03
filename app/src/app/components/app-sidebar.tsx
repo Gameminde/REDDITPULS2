@@ -14,6 +14,7 @@ import {
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
 import { PRICING } from "@/lib/pricing-plans";
+import { APP_NAME } from "@/lib/brand";
 
 /* ─── Nav Groups ──────────────────────────────────────────── */
 
@@ -132,7 +133,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                         <Activity style={{ width: 14, height: 14, color: "#fff" }} />
                     </motion.div>
                     <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#f1f5f9" }}>
-                        RedditPulse
+                        {APP_NAME}
                     </span>
                 </Link>
             </div>

@@ -203,7 +203,7 @@ export async function verifyKey(provider: string, apiKey: string, model: string)
                         "Authorization": `Bearer ${apiKey}`,
                         "Content-Type": "application/json",
                         "HTTP-Referer": "https://redditpulse.app",
-                        "X-Title": "RedditPulse",
+                        "X-Title": "CueIdea",
                     },
                     body: JSON.stringify({
                         model: resolvedModel,

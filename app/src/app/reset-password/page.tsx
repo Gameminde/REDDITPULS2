@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import { createClient } from "@/lib/supabase-browser";
+import { APP_NAME } from "@/lib/brand";
 
 export default function ResetPasswordPage() {
     const supabase = useMemo(() => createClient(), []);
@@ -87,7 +88,7 @@ export default function ResetPasswordPage() {
             <div className="w-full max-w-md">
                 <Link href="/" className="flex items-center gap-2 justify-center mb-8">
                     <span className="text-3xl">📡</span>
-                    <span className="font-bold text-2xl">RedditPulse</span>
+                    <span className="font-bold text-2xl">{APP_NAME}</span>
                 </Link>
 
                 <div className="card-glow p-8">

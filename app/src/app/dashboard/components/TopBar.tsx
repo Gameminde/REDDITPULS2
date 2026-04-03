@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, LoaderCircle, PlugZap, RefreshCw } from "lucide-react";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
 import type { RedditConnectionSummary, RedditSourcePack } from "@/lib/reddit-lab";
+import { APP_NAME_UPPER } from "@/lib/brand";
 
 type RedditLabTopbarState = {
     oauth_configured: boolean;
@@ -144,9 +145,8 @@ export function TopBar({
         >
             <div className="flex items-center gap-4">
                 <span className="font-display text-[15px] font-bold tracking-[0.08em]">
-                    <span className="text-muted-foreground">O</span>{" "}
-                    <span className="text-foreground">REDDIT</span>
-                    <span className="text-primary">PULSE</span>
+                    <span className="text-muted-foreground">⬡</span>{" "}
+                    <span className="text-foreground">{APP_NAME_UPPER}</span>
                 </span>
 
                 <div className="hidden h-3 w-px bg-border sm:block" />

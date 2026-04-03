@@ -22,7 +22,7 @@ const REDDIT_TOKEN_URL = "https://www.reddit.com/api/v1/access_token";
 const REDDIT_API_BASE = "https://oauth.reddit.com";
 const REDDIT_REQUIRED_SCOPES = ["identity", "read"];
 const REDDIT_PREFERRED_SCOPES = ["history", "save", "mysubreddits"];
-const REDDIT_USER_AGENT = "RedditPulse/1.0 (experimental reddit connection lab)";
+const REDDIT_USER_AGENT = "CueIdea/1.0 (experimental reddit connection lab)";
 
 type RedditTokenResponse = {
     access_token: string;
@@ -888,7 +888,7 @@ export async function verifyProxyUrl(proxyUrl: string) {
         "import json, requests, sys",
         "proxy = sys.argv[1]",
         "proxies = {'http': proxy, 'https': proxy}",
-        "resp = requests.get('https://www.reddit.com/.json', proxies=proxies, timeout=12, headers={'User-Agent': 'RedditPulse/1.0 proxy verify'})",
+        "resp = requests.get('https://www.reddit.com/.json', proxies=proxies, timeout=12, headers={'User-Agent': 'CueIdea/1.0 proxy verify'})",
         "print(json.dumps({'status_code': resp.status_code, 'ok': bool(resp.ok)}))",
     ].join("; ");
 

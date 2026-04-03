@@ -615,7 +615,7 @@ export default function DashboardClient({
                         fontSize: 16, flexShrink: 0
                     }}>⚡</div>
                     {sidebarOpen && <div>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9", fontFamily: "var(--font-display)", letterSpacing: "-0.3px" }}>RedditPulse</div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9", fontFamily: "var(--font-display)", letterSpacing: "-0.3px" }}>CueIdea</div>
                         <div style={{ fontSize: 9, color: "#475569" }}>INTELLIGENCE TOOL</div>
                     </div>}
                 </div>
@@ -1161,7 +1161,7 @@ export default function DashboardClient({
                             }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                                     <span style={{ fontSize: 16 }}>⚡</span>
-                                    <span style={{ fontSize: 14, fontWeight: 700, color: "#f97316", fontFamily: "var(--font-display)" }}>RedditPulse Intelligence</span>
+                                    <span style={{ fontSize: 14, fontWeight: 700, color: "#f97316", fontFamily: "var(--font-display)" }}>CueIdea Intelligence</span>
                                 </div>
                                 <p style={{ fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
                                     Connect at least one AI model to start analyzing Reddit opportunities. Gemini is free and recommended as your primary model.

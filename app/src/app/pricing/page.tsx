@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PricingContent } from "@/app/components/pricing-content";
+import { APP_NAME, APP_NAME_UPPER } from "@/lib/brand";
 
 export default function PublicPricingPage() {
     return (
@@ -23,12 +24,11 @@ export default function PublicPricingPage() {
                 <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
                     <Link href="/" className="font-mono text-[13px] font-semibold tracking-wider">
                         <span className="text-muted-foreground">⬡</span>{" "}
-                        <span className="text-foreground">REDDIT</span>
-                        <span className="text-primary">PULSE</span>
+                        <span className="text-foreground">{APP_NAME_UPPER}</span>
                     </Link>
                     <div className="flex items-center gap-5 text-xs font-semibold">
                         <Link href="/how-it-works" className="text-muted-foreground hover:text-white transition-colors">
-                            How It Works
+                            How it works
                         </Link>
                         <Link href="/login" className="text-white hover:text-primary transition-colors">
                             Sign in
@@ -38,9 +38,11 @@ export default function PublicPricingPage() {
             </nav>
 
             <main className="relative z-10 pt-24 pb-16">
+                <div className="mb-4 text-center text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground">
+                    {APP_NAME} pricing
+                </div>
                 <PricingContent />
             </main>
         </div>
     );
 }
-

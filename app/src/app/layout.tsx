@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ThreeBackgroundWrapper } from '@/app/components/ThreeBackgroundWrapper';
+import { APP_DESCRIPTION, APP_NAME } from '@/lib/brand';
 
 export const metadata: Metadata = {
-  title: "RedditPulse",
-  description: "Extract. Validate. Dominate.",
+  title: APP_NAME,
+  description: APP_DESCRIPTION,
 };
 
 export default function RootLayout({

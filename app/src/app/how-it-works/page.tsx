@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { ArrowRight, Search, FileText, TrendingUp, BellRing, Shield, Sparkles } from "lucide-react";
 
+import { APP_NAME, APP_NAME_UPPER } from "@/lib/brand";
+
 const steps = [
     {
         icon: Search,
         title: "1. Watch live market signal",
-        body: "RedditPulse continuously scans Reddit and the supporting web to surface recurring pain, wedges, and proof-bearing market movement.",
+        body: `${APP_NAME} continuously scans Reddit and supporting sources to surface recurring pain, wedges, and proof-bearing market movement.`,
     },
     {
         icon: FileText,
@@ -19,8 +21,8 @@ const steps = [
     },
     {
         icon: BellRing,
-        title: "4. Save, monitor, and return when the wedge sharpens",
-        body: "Use saved ideas, alerts, and the opportunity board to keep the strongest bets alive instead of rediscovering them from scratch every week.",
+        title: "4. Save, monitor, and come back when the wedge sharpens",
+        body: "Use saved ideas, live alerts, and the opportunity board to keep the strongest bets alive instead of rediscovering them every week.",
     },
 ];
 
@@ -51,8 +53,7 @@ export default function HowItWorksPage() {
                 <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
                     <Link href="/" className="font-mono text-[13px] font-semibold tracking-wider">
                         <span className="text-muted-foreground">⬡</span>{" "}
-                        <span className="text-foreground">REDDIT</span>
-                        <span className="text-primary">PULSE</span>
+                        <span className="text-foreground">{APP_NAME_UPPER}</span>
                     </Link>
                     <div className="flex items-center gap-5 text-xs font-semibold">
                         <Link href="/pricing" className="text-muted-foreground hover:text-white transition-colors">
@@ -69,15 +70,15 @@ export default function HowItWorksPage() {
                 <div className="text-center mb-14">
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-6 border border-build/20 bg-build/10 text-build text-[11px] font-mono uppercase tracking-[0.16em]">
                         <Sparkles className="w-3.5 h-3.5" />
-                        How RedditPulse works
+                        How {APP_NAME} works
                     </div>
                     <h1 className="font-display text-5xl md:text-7xl font-extrabold tracking-tight-custom leading-[0.92] mb-5">
-                        From raw Reddit pain
+                        From raw market noise
                         <br />
                         to a sharper business bet
                     </h1>
                     <p className="text-muted-foreground max-w-2xl mx-auto text-sm md:text-base leading-relaxed">
-                        RedditPulse is built for founders who want to move from scattered market noise to a tighter wedge, better validation, and a more repeatable decision loop.
+                        {APP_NAME} is built for founders who want to move from scattered signal to a tighter wedge, better validation, and a more repeatable decision loop.
                     </p>
                 </div>
 
@@ -142,4 +143,3 @@ export default function HowItWorksPage() {
         </div>
     );
 }
-

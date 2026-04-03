@@ -1,231 +1,387 @@
 "use client";
 
+import Link from "next/link";
 import React from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, ArrowRight, Shield, Activity, Search, FileText, Bookmark, TrendingUp, DollarSign, Radar, Mail, Globe, Sparkles } from "lucide-react";
+import {
+    Activity,
+    ArrowRight,
+    BellRing,
+    Bookmark,
+    Check,
+    Compass,
+    DollarSign,
+    FileText,
+    Globe,
+    Mail,
+    Radar,
+    Shield,
+    Sparkles,
+    TrendingUp,
+    X,
+} from "lucide-react";
 
 import { StaggerContainer, StaggerItem } from "@/app/components/motion";
+import { APP_NAME } from "@/lib/brand";
 import { PRICING } from "@/lib/pricing-plans";
 
-const FEATURES = [
-    { name: "Live market feed", free: true, starter: true, pro: true, icon: Activity },
-    { name: "Market intelligence add-on", free: false, starter: true, pro: true, icon: Sparkles },
-    { name: "Post explorer", free: true, starter: true, pro: true, icon: Search },
-    { name: "Idea validation", free: false, starter: true, pro: true, icon: FileText },
-    { name: "Validation reports", free: false, starter: true, pro: true, icon: FileText },
-    { name: "Saved ideas and alerts", free: false, starter: true, pro: true, icon: Bookmark },
-    { name: "Trend velocity and why-now", free: false, starter: false, pro: true, icon: TrendingUp },
-    { name: "WTP detection", free: false, starter: false, pro: true, icon: DollarSign },
-    { name: "Competitor radar", free: false, starter: false, pro: true, icon: Radar },
-    { name: "Source intelligence and digest", free: false, starter: false, pro: true, icon: Globe },
-    { name: "Email digest", free: false, starter: false, pro: true, icon: Mail },
+type Availability = "free" | "starter" | "pro";
+
+type FeatureRow = {
+    name: string;
+    description: string;
+    icon: React.ComponentType<{ className?: string }>;
+    availability: Availability;
+};
+
+const FEATURE_ROWS: FeatureRow[] = [
+    {
+        name: "Live market feed",
+        description: "The raw market feed with evidence-first topic cards and source counts.",
+        icon: Activity,
+        availability: "free",
+    },
+    {
+        name: "Market intelligence add-on",
+        description: "Derived wedge, theme, and competitor summaries above the raw feed.",
+        icon: Sparkles,
+        availability: "starter",
+    },
+    {
+        name: "Post explorer",
+        description: "Browse and inspect the evidence behind opportunities and scans.",
+        icon: Compass,
+        availability: "free",
+    },
+    {
+        name: "Idea validation",
+        description: "Run the validation engine against one idea or wedge.",
+        icon: FileText,
+        availability: "starter",
+    },
+    {
+        name: "Validation reports",
+        description: "Read the full report archive and report detail pages.",
+        icon: FileText,
+        availability: "starter",
+    },
+    {
+        name: "Saved ideas and live alerts",
+        description: "Track saved opportunities, monitors, and alert matches.",
+        icon: Bookmark,
+        availability: "starter",
+    },
+    {
+        name: "Trend velocity and why-now",
+        description: "Read momentum tiers and timing notes in the trends surface.",
+        icon: TrendingUp,
+        availability: "pro",
+    },
+    {
+        name: "WTP detection",
+        description: "See willingness-to-pay signals extracted from validations.",
+        icon: DollarSign,
+        availability: "pro",
+    },
+    {
+        name: "Competitor radar",
+        description: "Track competitor weakness clusters and complaint signals.",
+        icon: Radar,
+        availability: "pro",
+    },
+    {
+        name: "Source intelligence",
+        description: "Inspect platform mix, models used, and source composition.",
+        icon: Globe,
+        availability: "pro",
+    },
+    {
+        name: "In-app digest brief",
+        description: "Use the digest surface inside the app to review monitor changes.",
+        icon: Mail,
+        availability: "pro",
+    },
 ];
 
-const starterBullets = [
-    "Core workflow for finding and validating opportunities",
-    "Good fit if you want the market feed, validations, reports, and saved ideas",
-    "Best for solo founders who want the essential loop without every advanced surface",
+const FREE_FEATURES = [
+    "Live market feed",
+    "Post explorer",
+    "Login, signup, and core product access",
 ];
 
-const proBullets = [
+const STARTER_FEATURES = [
+    "Everything in Free",
+    "Market intelligence add-on",
+    "Idea validation and full reports",
+    "Saved ideas and live alerts",
+];
+
+const PRO_FEATURES = [
     "Everything in Starter",
-    "All intelligence surfaces unlocked",
-    "Best fit if RedditPulse is becoming part of your weekly operating system",
+    "Trend velocity and why-now",
+    "WTP detection and competitor radar",
+    "Source intelligence and in-app digest",
 ];
 
-function PlanButton({ label, featured = false }: { label: string; featured?: boolean }) {
+function availabilityFor(plan: "free" | "starter" | "pro", row: FeatureRow) {
+    if (plan === "pro") return true;
+    if (plan === "starter") return row.availability === "free" || row.availability === "starter";
+    return row.availability === "free";
+}
+
+function PlanCard({
+    title,
+    price,
+    subtitle,
+    points,
+    cta,
+    href,
+    featured = false,
+    badge,
+    accent = "#22c55e",
+}: {
+    title: string;
+    price: string;
+    subtitle: string;
+    points: string[];
+    cta: string;
+    href: string;
+    featured?: boolean;
+    badge?: string;
+    accent?: string;
+}) {
     return (
-        <button
-            className="w-full py-4 px-6 rounded-xl flex items-center justify-center gap-2 font-bold text-sm tracking-wide transition-all group relative overflow-hidden"
+        <motion.div
+            className="rounded-[22px] border p-6 md:p-7 relative overflow-hidden"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
             style={{
-                background: featured
-                    ? "linear-gradient(135deg, hsla(16,100%,50%,0.95), hsla(16,85%,55%,0.82))"
-                    : "rgba(255,255,255,0.04)",
-                color: "#fff",
-                border: featured ? "1px solid rgba(249,115,22,0.25)" : "1px solid rgba(255,255,255,0.08)",
-                boxShadow: featured ? "0 0 40px hsla(16,100%,50%,0.25)" : "none",
+                background: featured ? "linear-gradient(180deg, rgba(10,31,20,0.96), rgba(10,18,16,0.95))" : "rgba(12,15,20,0.92)",
+                borderColor: featured ? `${accent}` : "rgba(255,255,255,0.08)",
+                boxShadow: featured ? "0 0 0 1px rgba(34,197,94,0.18), 0 20px 70px rgba(0,0,0,0.35)" : "0 20px 60px rgba(0,0,0,0.2)",
             }}
         >
-            <div className="absolute inset-0 bg-white/15 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
-            <span className="relative z-10 uppercase tracking-widest text-[11px] font-mono">{label}</span>
-            <ArrowRight className="w-4 h-4 relative z-10 group-hover:translate-x-1 transition-transform" />
-        </button>
+            {badge ? (
+                <div
+                    className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full px-4 py-1 text-[11px] font-bold uppercase tracking-[0.16em]"
+                    style={{
+                        background: accent,
+                        color: "#04130a",
+                        boxShadow: "0 10px 24px rgba(34,197,94,0.22)",
+                    }}
+                >
+                    {badge}
+                </div>
+            ) : null}
+
+            <div className="mb-4">
+                <div className="text-2xl font-bold text-white">{title}</div>
+                <div className="mt-2 flex items-end gap-1.5">
+                    <span className="text-5xl font-extrabold text-white font-display leading-none">{price}</span>
+                    {price !== "$0" ? <span className="pb-1 text-lg text-muted-foreground">/month</span> : <span className="pb-1 text-sm text-muted-foreground">forever</span>}
+                </div>
+            </div>
+
+            <p className="mb-6 min-h-[52px] text-sm leading-relaxed text-muted-foreground">{subtitle}</p>
+
+            <div className="space-y-3.5 mb-7">
+                {points.map((point) => (
+                    <div key={point} className="flex items-start gap-3 text-sm text-foreground/90">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-build" />
+                        <span>{point}</span>
+                    </div>
+                ))}
+            </div>
+
+            <Link
+                href={href}
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all"
+                style={{
+                    background: featured ? "linear-gradient(135deg, rgba(34,197,94,0.18), rgba(34,197,94,0.12))" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${featured ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.08)"}`,
+                    color: featured ? "#86efac" : "#f8fafc",
+                }}
+            >
+                {cta}
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+            </Link>
+        </motion.div>
     );
 }
 
 export function PricingContent() {
     return (
-        <div className="max-w-6xl mx-auto p-6 md:p-8">
+        <div className="max-w-7xl mx-auto px-6 md:px-8">
             <motion.div
                 className="text-center mb-10"
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
             >
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-build/20 bg-build/10 text-build text-[11px] font-mono uppercase tracking-[0.16em] mb-4">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {PRICING.trialDays}-day free trial on every paid plan
+                <div className="inline-flex items-center gap-2 rounded-full border border-build/20 bg-build/10 px-3 py-1 text-[11px] font-mono uppercase tracking-[0.16em] text-build mb-4">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {PRICING.trialDays}-day free trial on paid plans
                 </div>
-                <h1 className="text-[30px] md:text-[36px] font-extrabold font-display text-white mb-2 tracking-tight">
-                    Pick the plan that matches how deeply you want to run the engine
+                <h1 className="mb-3 text-[34px] font-extrabold tracking-tight text-white md:text-[42px]">
+                    Pricing for founders who want signal, not fluff
                 </h1>
-                <p className="text-sm md:text-base text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                    Starter is the core workflow. Pro unlocks every intelligence surface. Both begin with a {PRICING.trialDays}-day full-access trial.
+                <p className="mx-auto max-w-3xl text-sm leading-relaxed text-muted-foreground md:text-base">
+                    {APP_NAME} has the features shown below today. I removed anything the product does not really ship yet, including email delivery claims for the digest.
                 </p>
             </motion.div>
 
-            <div className="grid gap-6 lg:grid-cols-[0.9fr_1fr_1fr] items-stretch">
-                <motion.div
-                    className="bento-cell p-6 rounded-2xl"
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                >
-                    <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground mb-3">Free</div>
-                    <div className="flex items-baseline gap-2 mb-4">
-                        <span className="text-[42px] font-extrabold text-white font-display leading-none">$0</span>
-                        <span className="text-sm text-muted-foreground font-mono">forever</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
-                        Enough to explore the market and understand what RedditPulse is seeing before you commit.
-                    </p>
-
-                    <div className="space-y-3 mb-6">
-                        {["Live market feed", "Post explorer", "Basic product access"].map((item) => (
-                            <div key={item} className="flex items-center gap-3 text-sm text-foreground/90">
-                                <CheckCircle2 className="w-4 h-4 text-build" />
-                                <span>{item}</span>
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="text-xs text-muted-foreground leading-relaxed">
-                        Best for getting familiar with the market feed before you start serious validation work.
-                    </div>
-                </motion.div>
-
-                <motion.div
-                    className="bento-cell p-8 rounded-2xl border-white/10 relative overflow-hidden"
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 }}
-                >
-                    <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
-                    <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground mb-3">
-                        {PRICING.starter.name}
-                    </div>
-                    <div className="flex items-baseline gap-2 mb-4">
-                        <span className="text-[48px] font-extrabold text-white font-display leading-none">${PRICING.starter.priceMonthly}</span>
-                        <span className="text-sm text-muted-foreground font-mono">/ month</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
-                        The core RedditPulse workflow for solo founders who want real market signal, idea validation, and saved follow-up.
-                    </p>
-
-                    <div className="space-y-3 mb-6">
-                        {starterBullets.map((item) => (
-                            <div key={item} className="flex items-start gap-3 text-sm text-foreground/90">
-                                <CheckCircle2 className="w-4 h-4 text-build mt-0.5 shrink-0" />
-                                <span>{item}</span>
-                            </div>
-                        ))}
-                    </div>
-
-                    <PlanButton label={`Start ${PRICING.trialDays}-day Starter trial`} />
-
-                    <div className="flex items-center gap-2 justify-center mt-4">
-                        <Shield className="w-3.5 h-3.5 text-muted-foreground/60" />
-                        <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
-                            Then ${PRICING.starter.priceMonthly}/mo
-                        </span>
-                    </div>
-                </motion.div>
-
-                <motion.div
-                    className="bento-cell p-8 rounded-2xl border-primary/20 relative overflow-hidden"
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
-                >
-                    <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
-                    <div className="flex items-center justify-between mb-3">
-                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
-                            {PRICING.pro.name}
-                        </div>
-                        <div className="px-2.5 py-1 rounded bg-build/10 border border-build/20 text-build text-[10px] font-bold font-mono uppercase tracking-widest">
-                            Best value
-                        </div>
-                    </div>
-                    <div className="flex items-baseline gap-2 mb-4">
-                        <span className="text-[52px] font-extrabold text-primary font-display leading-none">${PRICING.pro.priceMonthly}</span>
-                        <span className="text-sm text-muted-foreground font-mono">/ month</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
-                        Everything unlocked. This is the full operating layer: market intelligence, validation depth, monitoring, trends, WTP, competitors, and sources.
-                    </p>
-
-                    <div className="space-y-3 mb-6">
-                        {proBullets.map((item) => (
-                            <div key={item} className="flex items-start gap-3 text-sm text-foreground/90">
-                                <CheckCircle2 className="w-4 h-4 text-build mt-0.5 shrink-0" />
-                                <span>{item}</span>
-                            </div>
-                        ))}
-                    </div>
-
-                    <PlanButton label={`Start ${PRICING.trialDays}-day Pro trial`} featured />
-
-                    <div className="flex items-center gap-2 justify-center mt-4">
-                        <Shield className="w-3.5 h-3.5 text-muted-foreground/60" />
-                        <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
-                            Then ${PRICING.pro.priceMonthly}/mo · full access
-                        </span>
-                    </div>
-                </motion.div>
+            <div className="grid gap-5 xl:grid-cols-3 items-stretch">
+                <PlanCard
+                    title="Free"
+                    price="$0"
+                    subtitle="Use the live feed and post explorer to see what the market is saying before you commit."
+                    points={FREE_FEATURES}
+                    cta="Open the app"
+                    href="/login"
+                />
+                <PlanCard
+                    title={PRICING.starter.name}
+                    price={`$${PRICING.starter.priceMonthly}`}
+                    subtitle="The core workflow for a solo founder: market intelligence, validation depth, and saved follow-up."
+                    points={STARTER_FEATURES}
+                    cta={`Start ${PRICING.trialDays}-day free trial`}
+                    href="/login?mode=signup"
+                />
+                <PlanCard
+                    title={PRICING.pro.name}
+                    price={`$${PRICING.pro.priceMonthly}`}
+                    subtitle="Everything unlocked. This is the full intelligence layer when you want CueIdea in your weekly operating system."
+                    points={PRO_FEATURES}
+                    cta={`Start ${PRICING.trialDays}-day free trial`}
+                    href="/login?mode=signup"
+                    featured
+                    badge="Most Popular"
+                />
             </div>
 
             <motion.div
-                className="mt-16"
+                className="mt-8 grid gap-4 lg:grid-cols-[1.35fr_0.65fr]"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+            >
+                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-6">
+                    <div className="mb-4 flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.16em] text-build">
+                        <Shield className="h-3.5 w-3.5" />
+                        Product truth
+                    </div>
+                    <div className="space-y-3 text-sm text-muted-foreground">
+                        <p>
+                            The pricing matrix below reflects the product that actually exists in the codebase today.
+                        </p>
+                        <p>
+                            The biggest copy correction is digest: it is real, but it is an in-app brief surface, not an outbound email system yet.
+                        </p>
+                        <p>
+                            Starter covers the core founder loop. Pro is everything above that line.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-6">
+                    <div className="mb-4 text-[11px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
+                        Trial policy
+                    </div>
+                    <div className="space-y-3 text-sm text-foreground/90">
+                        <p>Every paid plan starts with a {PRICING.trialDays}-day full-access trial.</p>
+                        <p>Starter is ${PRICING.starter.priceMonthly}/month after trial.</p>
+                        <p>Pro is ${PRICING.pro.priceMonthly}/month after trial.</p>
+                    </div>
+                </div>
+            </motion.div>
+
+            <motion.div
+                className="mt-14"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
             >
-                <h2 className="text-sm font-bold font-mono text-white text-center mb-6 uppercase tracking-widest">
-                    Feature access
-                </h2>
+                <div className="mb-6 text-center">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Feature access</div>
+                </div>
 
-                <div className="bento-cell overflow-hidden max-w-5xl mx-auto rounded-[14px]">
-                    <div className="grid grid-cols-[1fr_80px_90px_80px] p-4 border-b border-white/5 bg-black/20">
-                        <span className="text-[10px] font-bold text-muted-foreground font-mono uppercase tracking-widest">Feature</span>
-                        <span className="text-[10px] font-bold text-muted-foreground font-mono uppercase tracking-widest text-center">Free</span>
-                        <span className="text-[10px] font-bold text-white font-mono uppercase tracking-widest text-center">Starter</span>
-                        <span className="text-[10px] font-bold text-primary font-mono uppercase tracking-widest text-center">Pro</span>
+                <div className="overflow-hidden rounded-[22px] border border-white/8 bg-black/25">
+                    <div className="grid grid-cols-[minmax(0,1fr)_70px_90px_70px] gap-2 border-b border-white/8 bg-white/[0.03] px-4 py-4 text-[11px] font-mono uppercase tracking-[0.16em] text-muted-foreground md:grid-cols-[minmax(0,1.15fr)_90px_110px_90px]">
+                        <span>Feature</span>
+                        <span className="text-center">Free</span>
+                        <span className="text-center text-white">Starter</span>
+                        <span className="text-center text-build">Pro</span>
                     </div>
 
-                    <StaggerContainer delay={0.3} className="flex flex-col">
-                        {FEATURES.map((feature, index) => (
-                            <StaggerItem key={feature.name}>
-                                <div className={`grid grid-cols-[1fr_80px_90px_80px] p-4 items-center ${index !== FEATURES.length - 1 ? "border-b border-white/5" : ""} hover:bg-white/[0.02] transition-colors`}>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-6 h-6 rounded flex items-center justify-center bg-white/5 border border-white/10">
-                                            <feature.icon className="w-3.5 h-3.5 text-muted-foreground" />
+                    <StaggerContainer className="flex flex-col">
+                        {FEATURE_ROWS.map((row, index) => {
+                            const Icon = row.icon;
+                            return (
+                                <StaggerItem key={row.name}>
+                                    <div
+                                        className={`grid grid-cols-[minmax(0,1fr)_70px_90px_70px] gap-2 px-4 py-4 md:grid-cols-[minmax(0,1.15fr)_90px_110px_90px] ${index !== FEATURE_ROWS.length - 1 ? "border-b border-white/6" : ""}`}
+                                    >
+                                        <div className="flex items-start gap-3 pr-3">
+                                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5">
+                                                <Icon className="h-4 w-4 text-muted-foreground" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="text-sm font-semibold text-white">{row.name}</div>
+                                                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{row.description}</div>
+                                            </div>
                                         </div>
-                                        <span className="text-xs text-foreground/90 font-medium">{feature.name}</span>
+
+                                        {(["free", "starter", "pro"] as const).map((plan) => {
+                                            const enabled = availabilityFor(plan, row);
+                                            return (
+                                                <div key={plan} className="flex items-center justify-center">
+                                                    {enabled ? (
+                                                        <Check className={`h-4 w-4 ${plan === "pro" ? "text-build" : "text-emerald-400"}`} />
+                                                    ) : (
+                                                        <X className="h-4 w-4 text-white/20" />
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                    <div className="flex justify-center">
-                                        {feature.free ? <CheckCircle2 className="w-4 h-4 text-build" /> : <span className="text-sm text-muted-foreground/40 font-mono">—</span>}
-                                    </div>
-                                    <div className="flex justify-center">
-                                        {feature.starter ? <CheckCircle2 className="w-4 h-4 text-build" /> : <span className="text-sm text-muted-foreground/40 font-mono">—</span>}
-                                    </div>
-                                    <div className="flex justify-center">
-                                        {feature.pro ? <CheckCircle2 className="w-4 h-4 text-build drop-shadow-[0_0_8px_rgba(16,185,129,0.3)]" /> : <span className="text-sm text-muted-foreground/40 font-mono">—</span>}
-                                    </div>
-                                </div>
-                            </StaggerItem>
-                        ))}
+                                </StaggerItem>
+                            );
+                        })}
                     </StaggerContainer>
                 </div>
+            </motion.div>
+
+            <motion.div
+                className="mt-12 grid gap-4 md:grid-cols-3"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+            >
+                {[
+                    {
+                        icon: Activity,
+                        title: "Live feed stays raw",
+                        body: "The market feed is not rewritten into marketing copy. You still inspect the real signal.",
+                    },
+                    {
+                        icon: BellRing,
+                        title: "Alerts are live",
+                        body: "Saved ideas, monitors, and alert matches already exist in the current app.",
+                    },
+                    {
+                        icon: Mail,
+                        title: "Digest is in-app",
+                        body: "Today the digest is a dashboard surface. If you want outbound email later, we should build it as a separate feature.",
+                    },
+                ].map(({ icon: Icon, title, body }) => (
+                    <div key={title} className="rounded-[22px] border border-white/8 bg-white/[0.03] p-6">
+                        <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-build/20 bg-build/10">
+                            <Icon className="h-5 w-5 text-build" />
+                        </div>
+                        <div className="mb-2 text-base font-semibold text-white">{title}</div>
+                        <div className="text-sm leading-relaxed text-muted-foreground">{body}</div>
+                    </div>
+                ))}
             </motion.div>
         </div>
     );
 }
-
