@@ -7,12 +7,12 @@ const steps = [
     {
         icon: Search,
         title: "1. Watch live market signal",
-        body: `${APP_NAME} continuously scans Reddit and supporting sources to surface recurring pain, wedges, and proof-bearing market movement.`,
+        body: `${APP_NAME} continuously scans Reddit and supporting sources to surface recurring pain, clearer opportunities, and proof-bearing market movement.`,
     },
     {
         icon: FileText,
         title: "2. Validate one idea deeply",
-        body: "Take any idea or market signal into the validation engine to collect evidence, pressure-test the wedge, and build a decision-ready report.",
+        body: "Take any idea or market signal into the validation engine to collect evidence, pressure-test the opportunity, and build a decision-ready report.",
     },
     {
         icon: TrendingUp,
@@ -21,7 +21,7 @@ const steps = [
     },
     {
         icon: BellRing,
-        title: "4. Save, monitor, and come back when the wedge sharpens",
+        title: "4. Save, monitor, and come back when the opportunity sharpens",
         body: "Use saved ideas, live alerts, and the opportunity board to keep the strongest bets alive instead of rediscovering them every week.",
     },
 ];
@@ -46,7 +46,7 @@ export function HowItWorksContent({ inDashboard = false }: { inDashboard?: boole
                     to a sharper business bet
                 </h1>
                 <p className="text-muted-foreground max-w-2xl mx-auto text-sm md:text-base leading-relaxed">
-                    {APP_NAME} is built for founders who want to move from scattered signal to a tighter wedge, better validation, and a more repeatable decision loop.
+                    {APP_NAME} is built for founders who want to move from scattered signal to a clearer opportunity, better validation, and a more repeatable decision loop.
                 </p>
             </div>
 

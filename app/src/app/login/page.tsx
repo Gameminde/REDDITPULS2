@@ -169,7 +169,7 @@ function LoginForm() {
                     <p className="text-zinc-400 text-sm text-center mb-6">
                         {mode === "login"
                             ? "Log in to your dashboard"
-                            : "Create your account and start turning raw signal into sharper wedges"}
+                            : "Create your account and start turning raw signal into clearer opportunities"}
                     </p>
 
                     <button

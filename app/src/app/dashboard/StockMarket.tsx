@@ -17,6 +17,13 @@ import {
     type OpportunitySignalContract,
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
+import {
+    formatCountLabel,
+    getReadinessLabel,
+    getSupportLevelLabel,
+    summarizeIdeaForBrowse,
+    summarizeReasonForUser,
+} from "@/lib/user-facing-copy";
 import { useDashboardViewer } from "./viewer-context";
 
 interface Idea {
@@ -205,7 +212,7 @@ const CATEGORIES = [
 const CONFIDENCE_MAP: Record<string, { label: string; color: string; icon: string }> = {
     INSUFFICIENT: { label: "Needs data", color: "#6b7280", icon: "🔍" },
     LOW: { label: "Early signal", color: "#f59e0b", icon: "📡" },
-    MEDIUM: { label: "Solid signal", color: "#3b82f6", icon: "📊" },
+    MEDIUM: { label: "Strong signal", color: "#3b82f6", icon: "📊" },
     HIGH: { label: "Strong", color: "#22c55e", icon: "✅" },
     STRONG: { label: "Very Strong", color: "#10b981", icon: "🔥" },
 };
@@ -224,7 +231,7 @@ const SIGNAL_LEVEL_MAP: Record<OpportunitySignalContract["support_level"], { lab
         background: "rgba(34,197,94,0.12)",
     },
     supporting_context: {
-        label: "Context signal",
+        label: "Strong signal",
         color: "#3b82f6",
         background: "rgba(59,130,246,0.12)",
     },
@@ -493,6 +500,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
     const [expanded, setExpanded] = useState(false);
+    const [showFullAnalysis, setShowFullAnalysis] = useState(false);
     const [promoteState, setPromoteState] = useState<"idle" | "saving" | "saved" | "error">("idle");
     const [promoteMessage, setPromoteMessage] = useState("");
     const signalContract = idea.signal_contract || null;
@@ -503,7 +511,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
             color: conf.color,
             background: "rgba(148,163,184,0.12)",
         };
-    const signalBadgeLabel = signalContract?.label || signalTone.label;
+    const signalBadgeLabel = signalContract ? getSupportLevelLabel(signalContract.support_level) : conf.label;
     const representativePosts = rankOpportunityRepresentativePosts(idea.top_posts || []).slice(0, 3);
     const signalPanelTitle =
         signalContract?.support_level === "evidence_backed"
@@ -548,10 +556,25 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         { label: "Volume", value: Number(scoreBreakdown.volume ?? 0), color: "#eab308" },
         { label: "Evidence quality", value: Number(scoreBreakdown.evidence_quality ?? 0), color: "#14b8a6" },
     ].filter((item) => Number.isFinite(item.value)) : [];
+    const browseSummary = summarizeIdeaForBrowse(idea);
+    const verdictSummary = summarizeReasonForUser(
+        signalContract?.summary,
+        hasThinDataWarning
+            ? `${displayTopic} is still early and needs stronger proof before you treat it as a real bet`
+            : `${displayTopic} has enough repeated signal to deserve a closer look`,
+    );
+    const evidenceSummary = directBuyerCount > 0
+        ? `${formatCountLabel(directBuyerCount, "buyer quote")} and ${formatCountLabel(idea.source_count, "source")} support this idea.`
+        : `${formatCountLabel(idea.post_count_total, "post")} and ${formatCountLabel(idea.source_count, "source")} are visible, but stronger buyer proof is still missing.`;
+    const nextStepSummary = summarizeReasonForUser(
+        marketHint?.recommended_board_action || "",
+        isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to check whether the signal holds up under deeper evidence.",
+    );
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
         setExpanded((current) => !current);
+        setShowFullAnalysis(false);
     };
 
     const handlePromote = async (event: React.MouseEvent) => {
@@ -635,7 +658,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                 color: "#93c5fd",
                                 fontWeight: 700,
                             }}>
-                                Needs wedge
+                                Needs focus
                             </span>
                         )}
                         {idea.fresh_candidate && (
@@ -676,8 +699,8 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                         )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b" }}>
-                        <span>{idea.post_count_total} posts</span>
-                        <span>{idea.source_count} {idea.source_count === 1 ? "source" : "sources"}</span>
+                        <span>{formatCountLabel(idea.post_count_total, "post")}</span>
+                        <span>{formatCountLabel(idea.source_count, "source")}</span>
                         <span style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -779,6 +802,171 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                             borderTop: "1px solid rgba(249,115,22,0.15)",
                         }}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                                <div style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                                    gap: 12,
+                                }}>
+                                    <div style={{
+                                        padding: "14px 16px",
+                                        borderRadius: 14,
+                                        background: "rgba(249,115,22,0.06)",
+                                        border: "1px solid rgba(249,115,22,0.14)",
+                                    }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4,
+                                                color: signalTone.color,
+                                                background: signalTone.background,
+                                                padding: "3px 8px",
+                                                borderRadius: 999,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                            }}>
+                                                {signalBadgeLabel}
+                                            </span>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4,
+                                                color: conf.color,
+                                                background: `${conf.color}15`,
+                                                padding: "3px 8px",
+                                                borderRadius: 999,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                            }}>
+                                                {conf.label}
+                                            </span>
+                                        </div>
+                                        <div style={{ fontSize: 13, color: "#f8fafc", fontWeight: 700, marginBottom: 8 }}>
+                                            Verdict
+                                        </div>
+                                        <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                                            {verdictSummary}
+                                        </div>
+                                    </div>
+
+                                    <div style={{
+                                        padding: "14px 16px",
+                                        borderRadius: 14,
+                                        background: "rgba(255,255,255,0.03)",
+                                        border: "1px solid rgba(255,255,255,0.08)",
+                                    }}>
+                                        <div style={{ fontSize: 13, color: "#f8fafc", fontWeight: 700, marginBottom: 8 }}>
+                                            Evidence
+                                        </div>
+                                        <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                                            {evidenceSummary}
+                                        </div>
+                                        <div style={{ marginTop: 10, fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                                            {browseSummary}
+                                        </div>
+                                    </div>
+
+                                    <div style={{
+                                        padding: "14px 16px",
+                                        borderRadius: 14,
+                                        background: "rgba(59,130,246,0.08)",
+                                        border: "1px solid rgba(59,130,246,0.16)",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 12,
+                                    }}>
+                                        <div>
+                                            <div style={{ fontSize: 13, color: "#f8fafc", fontWeight: 700, marginBottom: 8 }}>
+                                                Next step
+                                            </div>
+                                            <div style={{ fontSize: 12, color: "#dbeafe", lineHeight: 1.6 }}>
+                                                {nextStepSummary}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                            <Link
+                                                href={validateHref}
+                                                onClick={(event) => event.stopPropagation()}
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    gap: 8,
+                                                    padding: "10px 14px",
+                                                    borderRadius: 10,
+                                                    textDecoration: "none",
+                                                    background: "linear-gradient(135deg, rgba(249,115,22,0.18), rgba(234,88,12,0.08))",
+                                                    border: "1px solid rgba(249,115,22,0.22)",
+                                                    color: "#f8fafc",
+                                                    fontSize: 12,
+                                                    fontWeight: 700,
+                                                }}
+                                            >
+                                                Validate this idea
+                                            </Link>
+                                            <button
+                                                onClick={handlePromote}
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    gap: 8,
+                                                    padding: "10px 14px",
+                                                    borderRadius: 10,
+                                                    textAlign: "left",
+                                                    background: promoteState === "saved"
+                                                        ? "linear-gradient(135deg, rgba(34,197,94,0.14), rgba(22,163,74,0.08))"
+                                                        : "linear-gradient(135deg, rgba(59,130,246,0.14), rgba(37,99,235,0.06))",
+                                                    border: promoteState === "saved"
+                                                        ? "1px solid rgba(34,197,94,0.18)"
+                                                        : "1px solid rgba(59,130,246,0.18)",
+                                                    color: "#f8fafc",
+                                                    cursor: promoteState === "saving" ? "wait" : "pointer",
+                                                    fontSize: 12,
+                                                    fontWeight: 700,
+                                                }}
+                                            >
+                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Save to board"}
+                                            </button>
+                                        </div>
+                                        {promoteMessage && (
+                                            <div style={{ fontSize: 11, color: promoteState === "error" ? "#fca5a5" : "#dbeafe", lineHeight: 1.5 }}>
+                                                {promoteMessage}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                                    <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.6 }}>
+                                        Open the deeper breakdown only when you want the full homework.
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            setShowFullAnalysis((current) => !current);
+                                        }}
+                                        style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            padding: "8px 12px",
+                                            borderRadius: 999,
+                                            border: "1px solid rgba(255,255,255,0.12)",
+                                            background: "rgba(255,255,255,0.03)",
+                                            color: "#e2e8f0",
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        {showFullAnalysis ? "Hide full analysis" : "Show full analysis"}
+                                    </button>
+                                </div>
+
+                                <div style={{ display: showFullAnalysis ? "flex" : "none", flexDirection: "column", gap: 16 }}>
                                 <div style={{
                                     display: "grid",
                                     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -938,23 +1126,19 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                                         ? "1px solid rgba(59,130,246,0.18)"
                                                         : "1px solid rgba(245,158,11,0.18)",
                                             }}>
-                                                {marketHint.promotion_readiness === "ready"
-                                                    ? "Ready for board"
-                                                    : marketHint.promotion_readiness === "needs_wedge"
-                                                        ? "Needs wedge"
-                                                        : "Needs more proof"}
+                                                {getReadinessLabel(marketHint.promotion_readiness)}
                                             </span>
                                         </div>
                                         {suggestedWedge && (
                                             <div style={{ fontSize: 12, color: "#dbeafe", lineHeight: 1.55 }}>
-                                                Suggested wedge: {suggestedWedge}
+                                                Recommended angle: {suggestedWedge}
                                             </div>
                                         )}
                                         <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
-                                            {marketHint.why_it_matters_now}
+                                            {summarizeReasonForUser(marketHint.why_it_matters_now, `${displayTopic} is moving enough to keep watching.`)}
                                         </div>
                                         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                                            Missing proof: {marketHint.missing_proof}
+                                            Missing proof: {summarizeReasonForUser(marketHint.missing_proof, "It still needs stronger buyer proof.")}
                                         </div>
                                         <div style={{ fontSize: 11, color: "#bfdbfe", lineHeight: 1.55 }}>
                                             Recommended action: {marketHint.recommended_board_action}
@@ -1296,6 +1480,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                     </div>
                                 </div>
+                                </div>
                             </div>
                             </div>
                         </div>
@@ -1303,6 +1488,239 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: boolean }) {
+    const [expanded, setExpanded] = useState(false);
+    const [showFullAnalysis, setShowFullAnalysis] = useState(false);
+    const displayTopic = getIdeaDisplayTopic(idea);
+    const suggestedWedge = getIdeaSuggestedWedge(idea);
+    const representativePosts = rankOpportunityRepresentativePosts(idea.top_posts || []).slice(0, 2);
+    const signalContract = idea.signal_contract || null;
+    const marketHint = idea.market_hint || null;
+    const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
+    const signalTone = signalContract
+        ? SIGNAL_LEVEL_MAP[signalContract.support_level]
+        : {
+            label: conf.label,
+            color: conf.color,
+            background: "rgba(148,163,184,0.12)",
+        };
+    const signalBadgeLabel = signalContract ? getSupportLevelLabel(signalContract.support_level) : conf.label;
+    const validateHref = buildMarketValidationHref(
+        idea,
+        representativePosts,
+        signalContract?.summary || null,
+        signalContract?.dominant_platform || null,
+    );
+    const ideaHref = buildIdeaHref(idea.slug);
+    const sourceSummary = (idea.sources || [])
+        .map((source) => `${formatSourceName(source.platform)} ${source.count}`)
+        .join(" - ");
+    const marketLeadersSummary = isRecord(idea.competition_data) && typeof idea.competition_data.market_leaders_summary === "string"
+        ? idea.competition_data.market_leaders_summary
+        : "";
+    const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
+    const browseSummary = summarizeIdeaForBrowse(idea);
+    const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
+    const verdictSummary = summarizeReasonForUser(
+        signalContract?.summary,
+        `${displayTopic} is getting enough repeated discussion to review, but the signal still needs proof.`,
+    );
+    const nextStepSummary = summarizeReasonForUser(
+        marketHint?.recommended_board_action,
+        isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next before you commit to it.",
+    );
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: rank * 0.03, duration: 0.24 }}
+            className="surface-panel p-4"
+        >
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+                            #{rank}
+                        </span>
+                        <span className="rounded-full px-2 py-1 text-[10px] font-mono uppercase tracking-[0.14em]" style={{ background: signalTone.background, color: signalTone.color }}>
+                            {signalBadgeLabel}
+                        </span>
+                        {idea.fresh_candidate && (
+                            <span className="rounded-full border border-build/20 bg-build/10 px-2 py-1 text-[10px] font-mono uppercase tracking-[0.14em] text-build">
+                                Fresh
+                            </span>
+                        )}
+                        {idea.market_status === "needs_wedge" && (
+                            <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-[10px] font-mono uppercase tracking-[0.14em] text-blue-300">
+                                Needs focus
+                            </span>
+                        )}
+                    </div>
+
+                    <Link href={ideaHref} className="block">
+                        <h3 className="text-base font-semibold leading-6 text-white">{displayTopic}</h3>
+                        {suggestedWedge && (
+                            <p className="mt-1 text-sm leading-6 text-slate-300">{suggestedWedge}</p>
+                        )}
+                    </Link>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">{browseSummary}</p>
+                </div>
+
+                <div className="shrink-0 text-right">
+                    <div className="text-3xl font-display font-black" style={{ color: scoreColor }}>
+                        {idea.current_score.toFixed(0)}
+                    </div>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">score</div>
+                </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">24h</div>
+                    <div className="mt-1 text-sm font-semibold">
+                        <ChangeDisplay value={idea.change_24h} />
+                    </div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">7d</div>
+                    <div className="mt-1 text-sm font-semibold">
+                        <ChangeDisplay value={idea.change_7d} />
+                    </div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Volume</div>
+                    <div className="mt-1 text-sm font-semibold text-white">{formatCountLabel(idea.post_count_total, "post")}</div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Sources</div>
+                    <div className="mt-1 text-sm font-semibold text-white">{formatCountLabel(idea.source_count, "source")}</div>
+                </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+                {(idea.sources || []).map((source) => {
+                    const platform = source.platform;
+                    return (
+                        <span
+                            key={`${idea.id}-mobile-${platform}`}
+                            className="rounded-full px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.14em]"
+                            style={{
+                                background: platform === "reddit" ? "rgba(255,69,0,0.15)"
+                                    : platform === "hackernews" ? "rgba(255,102,0,0.15)"
+                                        : platform === "producthunt" ? "rgba(218,85,47,0.15)"
+                                            : "rgba(79,70,229,0.15)",
+                                color: platform === "reddit" ? "#ff4500"
+                                    : platform === "hackernews" ? "#ff6600"
+                                        : platform === "producthunt" ? "#da552f"
+                                            : "#818cf8",
+                            }}
+                        >
+                            {formatSourceShort(platform)}{Math.max(0, Number(source.count || 0))}
+                        </span>
+                    );
+                })}
+            </div>
+
+            <div className="mt-4 flex gap-2">
+                <button
+                    type="button"
+                    onClick={() => {
+                        setExpanded((current) => !current);
+                        setShowFullAnalysis(false);
+                    }}
+                    className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-foreground transition-colors hover:bg-white/[0.05]"
+                >
+                    {expanded ? <Minus style={{ width: 14, height: 14 }} /> : <Plus style={{ width: 14, height: 14 }} />}
+                    {expanded ? "Hide details" : "See details"}
+                </button>
+                <Link
+                    href={isGuest ? "/login" : validateHref}
+                    className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-primary/25 bg-primary/10 px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-primary transition-colors hover:bg-primary/15"
+                >
+                    <Zap style={{ width: 14, height: 14 }} />
+                    Validate
+                </Link>
+            </div>
+
+            <AnimatePresence>
+                {expanded && (
+                    <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                        style={{ overflow: "hidden" }}
+                    >
+                        <div className="mt-4 space-y-3 border-t border-white/8 pt-4">
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                                <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">Verdict</div>
+                                <p className="mt-2 text-xs leading-6 text-slate-200">{verdictSummary}</p>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                                <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Evidence</div>
+                                <p className="mt-2 text-xs leading-6 text-slate-200">
+                                    {directBuyerCount > 0
+                                        ? `${formatCountLabel(directBuyerCount, "buyer quote")} across ${formatCountLabel(idea.source_count, "source")}.`
+                                        : `${formatCountLabel(idea.post_count_total, "post")} across ${formatCountLabel(idea.source_count, "source")}, but stronger buyer proof is still missing.`}
+                                </p>
+                            </div>
+
+                            <div className="rounded-2xl border border-primary/20 bg-primary/10 p-3">
+                                <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">Next step</div>
+                                <p className="mt-2 text-xs leading-6 text-slate-100">{nextStepSummary}</p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setShowFullAnalysis((current) => !current)}
+                                className="inline-flex min-h-[44px] w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-foreground"
+                            >
+                                {showFullAnalysis ? "Hide full analysis" : "Show full analysis"}
+                            </button>
+
+                            {showFullAnalysis && representativePosts.length > 0 && (
+                                <div className="space-y-2">
+                                    {representativePosts.map((post, index) => (
+                                        <a
+                                            key={`${idea.id}-mobile-post-${index}`}
+                                            href={post.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block rounded-2xl border border-white/8 bg-black/20 p-3"
+                                        >
+                                            <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+                                                {post.subreddit ? `r/${decodeHtml(post.subreddit)}` : formatSourceName(post.source)}
+                                            </div>
+                                            <p className="mt-2 text-sm leading-6 text-white">{decodeHtml(post.title)}</p>
+                                            <div className="mt-2 text-[11px] text-muted-foreground">
+                                                {post.score} upvotes - {post.comments || 0} comments
+                                            </div>
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
+
+                            {showFullAnalysis && (sourceSummary || marketLeadersSummary) && (
+                                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Signal audit</div>
+                                    {sourceSummary && (
+                                        <p className="mt-2 text-xs leading-6 text-slate-200">Source mix: {sourceSummary}</p>
+                                    )}
+                                    {marketLeadersSummary && (
+                                        <p className="mt-2 text-xs leading-6 text-muted-foreground">{marketLeadersSummary}</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
     );
 }
 
@@ -1479,11 +1897,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
                         }}>
                             {card.category}
                         </span>
-                        <IntelligenceBadge
-                            label={card.promotion_readiness === "ready" ? "Ready" : card.promotion_readiness === "needs_wedge" ? "Needs wedge" : "Needs proof"}
-                            color={readinessColor}
-                            background={readinessBg}
-                        />
+                        <IntelligenceBadge label={getReadinessLabel(card.promotion_readiness)} color={readinessColor} background={readinessBg} />
                         {card.validation_bias === "positive" && (
                             <IntelligenceBadge label="Validation tailwind" color="#86efac" background="rgba(34,197,94,0.12)" />
                         )}
@@ -1493,7 +1907,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
                     </div>
                     {suggestedLabel && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Suggested wedge: {suggestedLabel}
+                            Recommended angle: {suggestedLabel}
                         </div>
                     )}
                 </div>
@@ -1510,10 +1924,10 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
             </div>
 
             <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.65 }}>
-                {card.why_it_matters_now}
+                {summarizeReasonForUser(card.why_it_matters_now, `${card.topic} is moving enough to review closely.`)}
             </div>
             <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Missing proof: {card.missing_proof}
+                Missing proof: {summarizeReasonForUser(card.missing_proof, "It still needs stronger buyer proof.")}
             </div>
             {card.validation_note && (
                 <div style={{ fontSize: 11, color: card.validation_bias === "caution" ? "#fca5a5" : "#86efac", lineHeight: 1.55 }}>
@@ -1568,7 +1982,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                             color: "#93c5fd",
                             fontWeight: 700,
                         }}>
-                            Needs wedge
+                            Needs focus
                         </span>
                         <span style={{
                             fontSize: 10,
@@ -1584,7 +1998,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                     </div>
                     {card.suggested_wedge_label && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Wedge direction: {card.suggested_wedge_label}
+                            Recommended angle: {card.suggested_wedge_label}
                         </div>
                     )}
                 </div>
@@ -1599,10 +2013,10 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
             </div>
 
             <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
-                {card.recommended_shape_direction}
+                {summarizeReasonForUser(card.recommended_shape_direction, `${card.topic} needs a more focused angle before it becomes a stronger bet.`)}
             </div>
             <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Missing proof: {card.missing_proof}
+                Missing proof: {summarizeReasonForUser(card.missing_proof, "It still needs stronger buyer proof.")}
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -1722,8 +2136,8 @@ function MarketIntelligenceSection({
     isGuest: boolean;
 }) {
     const tabs: Array<{ key: IntelligenceTab; label: string; icon: LucideIcon; color: string }> = [
-        { key: "emerging", label: "Emerging Wedges", icon: Target, color: "#f97316" },
-        { key: "themes", label: "Themes to Shape", icon: Lightbulb, color: "#3b82f6" },
+        { key: "emerging", label: "Emerging opportunities", icon: Target, color: "#f97316" },
+        { key: "themes", label: "Themes to refine", icon: Lightbulb, color: "#3b82f6" },
         { key: "competitors", label: "Competitor Pressure", icon: ShieldAlert, color: "#ef4444" },
     ];
 
@@ -1754,13 +2168,13 @@ function MarketIntelligenceSection({
                             <div>
                                 <div style={{ fontSize: 18, color: "#f8fafc", fontWeight: 800 }}>Market Intelligence</div>
                                 <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
-                                    Analyst-assist view on top of the raw market feed. It highlights sharper wedges without rewriting the feed itself.
+                                    Analyst-assist view on top of the raw market feed. It highlights stronger opportunities without rewriting the feed itself.
                                 </div>
                             </div>
                         </div>
                         {intelligence?.summary && (
                             <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.7 }}>
-                                {intelligence.summary.emerging_wedge_count} emerging wedge{intelligence.summary.emerging_wedge_count === 1 ? "" : "s"} from {intelligence.summary.new_72h_count} new signal{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
+                                {intelligence.summary.emerging_wedge_count} emerging opportunit{intelligence.summary.emerging_wedge_count === 1 ? "y" : "ies"} from {intelligence.summary.new_72h_count} new signal{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
                             </div>
                         )}
                     </div>
@@ -2012,12 +2426,10 @@ export default function StockMarketDashboard() {
 
     const visibleIdeas = filteredIdeas;
     const liveIdeaCount = Math.max(scanStatus?.ideaCount || 0, visibleIdeas.length);
-    const archiveIdeaCount = Math.max(scanStatus?.archiveIdeaCount || 0, liveIdeaCount);
     const visibleIdeaCount = visibleIdeas.length;
     const avgScore = visibleIdeas.length > 0 ? visibleIdeas.reduce((a, b) => a + b.current_score, 0) / visibleIdeas.length : 0;
     const postsInFeed = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
     const activePostCount = Math.max(scanStatus?.trackedPostCount || 0, postsInFeed);
-    const archivePostCount = Math.max(scanStatus?.archivePostCount || 0, activePostCount);
     const executionMode = scanStatus?.executionMode || "local";
     const usingExternalWorker = executionMode === "external";
 
@@ -2032,11 +2444,11 @@ export default function StockMarketDashboard() {
                             fontSize: 32, fontWeight: 900, color: "#f8fafc",
                             fontFamily: "var(--font-display)", marginBottom: 8, letterSpacing: "-0.03em",
                         }}>
-                            Read the market before you shape the wedge.
+                            Read the market before you build.
                         </h1>
                         <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.8 }}>
                             Real-time market signals from Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
-                            Review complaints and hiring proof can widen the feed when those lanes are configured.
+                            Review complaints and hiring proof widen the board when those lanes are configured.
                         </p>
                     </div>
 
@@ -2230,7 +2642,14 @@ export default function StockMarketDashboard() {
             />
 
             {/* Stats Row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 24 }}>
+            <div className="mb-6 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
+                <div className="min-w-[180px]"><StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" /></div>
+                <div className="min-w-[180px]"><StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" /></div>
+                <div className="min-w-[180px]"><StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" /></div>
+                <div className="min-w-[180px]"><StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible signal${visibleIdeaCount === 1 ? "" : "s"} in this view`} /></div>
+                <div className="min-w-[180px]"><StatCard label="Posts In Feed" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="live evidence attached to visible signals" /></div>
+            </div>
+            <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 24 }}>
                 <StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" />
                 <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
                 <StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
@@ -2238,30 +2657,15 @@ export default function StockMarketDashboard() {
                 <StatCard label="Posts In Feed" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="live evidence attached to visible signals" />
             </div>
 
-            <div style={{
-                marginBottom: 20,
-                padding: "14px 16px",
-                borderRadius: 16,
-                background: "rgba(148,163,184,0.07)",
-                border: "1px solid rgba(148,163,184,0.14)",
-                color: "#cbd5e1",
-                fontSize: 12,
-                lineHeight: 1.65,
-            }}>
-                Archive memory: {archiveIdeaCount.toLocaleString()} non-junk signals discovered over time and {archivePostCount.toLocaleString()} posts archived.
-                The cards below are the live market feed, not a curated board.
-            </div>
-
             {/* Tabs + Category Filter */}
-            <div style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                marginBottom: 18, flexWrap: "wrap", gap: 14,
-                padding: "12px 14px",
-                borderRadius: 16,
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.08)",
-            }}>
-                <div style={{ display: "flex", gap: 4 }}>
+            <div
+                className="mb-[18px] flex flex-col gap-3 rounded-2xl border p-[12px_14px] lg:flex-row lg:items-center lg:justify-between"
+                style={{
+                    background: "rgba(255,255,255,0.03)",
+                    borderColor: "rgba(255,255,255,0.08)",
+                }}
+            >
+                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 lg:mx-0 lg:flex-wrap lg:overflow-visible">
                     {TABS.map((t) => {
                         const Icon = t.icon;
                         return (
@@ -2284,7 +2688,7 @@ export default function StockMarketDashboard() {
                     })}
                 </div>
 
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 lg:mx-0 lg:flex-wrap lg:overflow-visible">
                     {CATEGORIES.map((c) => (
                         <button
                             key={c.key}
@@ -2324,31 +2728,10 @@ export default function StockMarketDashboard() {
                 </div>
             </div>
 
-            {/* Table Header */}
-            <div style={{
-                display: "grid", gridTemplateColumns: "40px 1.5fr 100px 100px 100px 80px 80px",
-                gap: 12, padding: "12px 18px",
-                fontSize: 10, color: "#64748b", fontWeight: 700,
-                textTransform: "uppercase", letterSpacing: "0.08em",
-                borderBottom: "1px solid rgba(255,255,255,0.08)",
-                background: "rgba(255,255,255,0.02)",
-                borderTopLeftRadius: 14,
-                borderTopRightRadius: 14,
-            }}>
-                <div style={{ textAlign: "center" }}>#</div>
-                <div>Market Signal</div>
-                <div style={{ textAlign: "center" }}>Score</div>
-                <div style={{ textAlign: "center" }}>24h</div>
-                <div style={{ textAlign: "center" }}>7d</div>
-                <div style={{ textAlign: "center" }}>Volume</div>
-                <div style={{ textAlign: "center" }}>Sources</div>
-            </div>
-
-            {/* Idea Rows */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
+            <div className="lg:hidden">
                 {loading && visibleIdeas.length === 0 ? (
                     <div style={{
-                        padding: 60, textAlign: "center", color: "#475569",
+                        padding: 40, textAlign: "center", color: "#475569",
                         fontSize: 14,
                     }}>
                         <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
@@ -2356,7 +2739,7 @@ export default function StockMarketDashboard() {
                     </div>
                 ) : visibleIdeas.length === 0 ? (
                     <div style={{
-                        padding: 60, textAlign: "center", color: "#475569",
+                        padding: 40, textAlign: "center", color: "#475569",
                         fontSize: 14,
                     }}>
                         {ideas.length === 0 ? (
@@ -2398,12 +2781,96 @@ export default function StockMarketDashboard() {
                         )}
                     </div>
                 ) : (
-                    <AnimatePresence>
+                    <div className="space-y-3">
                         {visibleIdeas.map((idea, i) => (
-                            <IdeaRow key={idea.id} idea={idea} rank={i + 1} isGuest={isGuest} />
+                            <MobileIdeaCard key={`${idea.id}-mobile`} idea={idea} rank={i + 1} isGuest={isGuest} />
                         ))}
-                    </AnimatePresence>
+                    </div>
                 )}
+            </div>
+
+            <div className="hidden lg:block">
+                {/* Table Header */}
+                <div style={{
+                    display: "grid", gridTemplateColumns: "40px 1.5fr 100px 100px 100px 80px 80px",
+                    gap: 12, padding: "12px 18px",
+                    fontSize: 10, color: "#64748b", fontWeight: 700,
+                    textTransform: "uppercase", letterSpacing: "0.08em",
+                    borderBottom: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(255,255,255,0.02)",
+                    borderTopLeftRadius: 14,
+                    borderTopRightRadius: 14,
+                }}>
+                    <div style={{ textAlign: "center" }}>#</div>
+                    <div>Market Signal</div>
+                    <div style={{ textAlign: "center" }}>Score</div>
+                    <div style={{ textAlign: "center" }}>24h</div>
+                    <div style={{ textAlign: "center" }}>7d</div>
+                    <div style={{ textAlign: "center" }}>Volume</div>
+                    <div style={{ textAlign: "center" }}>Sources</div>
+                </div>
+
+                {/* Idea Rows */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
+                    {loading && visibleIdeas.length === 0 ? (
+                        <div style={{
+                            padding: 60, textAlign: "center", color: "#475569",
+                            fontSize: 14,
+                        }}>
+                            <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
+                            Loading ideas...
+                        </div>
+                    ) : visibleIdeas.length === 0 ? (
+                        <div style={{
+                            padding: 60, textAlign: "center", color: "#475569",
+                            fontSize: 14,
+                        }}>
+                            {ideas.length === 0 ? (
+                                <>
+                                    <Zap style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
+                                    <div style={{ marginBottom: 12 }}>No ideas found yet.</div>
+                                    <motion.button
+                                        onClick={launchScan}
+                                        disabled={scanning}
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                        style={{
+                                            padding: "10px 24px", borderRadius: 8,
+                                            border: "1px solid rgba(249,115,22,0.3)",
+                                            background: "linear-gradient(135deg, rgba(249,115,22,0.2), rgba(234,88,12,0.1))",
+                                            color: "#fb923c", cursor: "pointer",
+                                            fontSize: 14, fontWeight: 600,
+                                        }}
+                                    >
+                                        <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
+                                        {scanning ? "Scanning..." : isGuest ? "Sign in to run first scan" : "Launch First Scan"}
+                                    </motion.button>
+                                    <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
+                                        {isGuest
+                                            ? "Guest beta is read-only. Log in to unlock personal workflows."
+                                            : "Scans Reddit, HN, ProductHunt & IndieHackers for opportunities"}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
+                                    <div style={{ marginBottom: 8, color: "#94a3b8", fontWeight: 600 }}>
+                                        No live signals match this filter
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
+                                        Try another category or reveal exploratory signals to widen the live market feed.
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    ) : (
+                        <AnimatePresence>
+                            {visibleIdeas.map((idea, i) => (
+                                <IdeaRow key={idea.id} idea={idea} rank={i + 1} isGuest={isGuest} />
+                            ))}
+                        </AnimatePresence>
+                    )}
+                </div>
             </div>
         </div>
     );

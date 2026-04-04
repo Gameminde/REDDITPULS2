@@ -18,8 +18,8 @@ export function BrandLogo({
     className = "",
 }: BrandLogoProps) {
     const wordmark = uppercase ? APP_NAME.toUpperCase() : APP_NAME;
-    const iconSize = compact ? 30 : 38;
-    const innerRadius = compact ? 11 : 14;
+    const iconSize = compact ? 26 : 38;
+    const innerRadius = compact ? 10 : 14;
     const alignItems = align === "center" ? "items-center text-center" : "items-start text-left";
 
     return (
@@ -45,10 +45,10 @@ export function BrandLogo({
                 <div
                     className="absolute rounded-full bg-white/90"
                     style={{
-                        width: compact ? 5 : 6,
-                        height: compact ? 5 : 6,
-                        left: compact ? 7 : 9,
-                        top: compact ? 7 : 8,
+                        width: compact ? 4 : 6,
+                        height: compact ? 4 : 6,
+                        left: compact ? 6 : 9,
+                        top: compact ? 6 : 8,
                         boxShadow: "0 0 16px rgba(255,255,255,0.8)",
                     }}
                 />
@@ -63,8 +63,8 @@ export function BrandLogo({
                 <div
                     className="absolute left-1/2 top-1/2 rounded-full bg-white"
                     style={{
-                        width: compact ? 4 : 5,
-                        height: compact ? 4 : 5,
+                        width: compact ? 3 : 5,
+                        height: compact ? 3 : 5,
                         transform: "translate(-50%, -50%)",
                         boxShadow: "0 0 18px rgba(255,255,255,0.95)",
                     }}
@@ -72,10 +72,10 @@ export function BrandLogo({
                 <div
                     className="absolute rounded-full"
                     style={{
-                        width: compact ? 16 : 20,
-                        height: compact ? 16 : 20,
-                        right: compact ? -3 : -4,
-                        bottom: compact ? -3 : -4,
+                        width: compact ? 14 : 20,
+                        height: compact ? 14 : 20,
+                        right: compact ? -2 : -4,
+                        bottom: compact ? -2 : -4,
                         background: "radial-gradient(circle, rgba(251,146,60,0.5), rgba(251,146,60,0))",
                         filter: "blur(4px)",
                     }}
@@ -84,7 +84,7 @@ export function BrandLogo({
 
             <div className={`flex min-w-0 flex-col justify-center ${alignItems}`}>
                 <span
-                    className={`font-display font-extrabold tracking-[-0.03em] text-white ${compact ? "text-[15px]" : "text-[20px]"}`}
+                    className={`font-display font-extrabold tracking-[-0.03em] text-white ${compact ? "text-[13px]" : "text-[20px]"}`}
                     style={{
                         textShadow: "0 0 24px rgba(249,115,22,0.2)",
                     }}

@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 import { useDashboardViewer } from "@/app/dashboard/viewer-context";
+import { formatCountLabel, summarizeIdeaForBrowse } from "@/lib/user-facing-copy";
 
 interface IdeaRow {
     id: string;
@@ -158,21 +159,7 @@ function getPostureTone(posture?: string) {
 }
 
 function describeIdea(idea: IdeaRow): string {
-    if (idea.pain_summary) {
-        return idea.pain_summary;
-    }
-    const category = idea.category ? idea.category.replace(/-/g, " ") : "general";
-    const recentPosts = idea.post_count_7d || idea.post_count_total;
-    return `${category} opportunity with ${recentPosts} recent posts feeding this score.`;
-}
-
-function getTopSignal(idea: IdeaRow): string {
-    const topPost = Array.isArray(idea.top_posts) ? idea.top_posts[0] : null;
-    if (topPost?.title) return topPost.title;
-    if (Array.isArray(idea.keywords) && idea.keywords.length > 0) {
-        return `Conversations keep clustering around ${idea.keywords.slice(0, 3).join(", ")}.`;
-    }
-    return "No representative post headline is available yet.";
+    return summarizeIdeaForBrowse(idea);
 }
 
 function getSourceMix(sources: IdeaRow["sources"]): string {
@@ -430,7 +417,7 @@ export default function ExplorePage() {
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.03 }}
-                                className="bento-cell flex h-full min-h-[360px] flex-col p-5"
+                                className="bento-cell flex h-full min-h-[300px] flex-col p-5"
                             >
                                 <div className="mb-4 flex items-start justify-between gap-4">
                                     <div className="min-w-0">
@@ -476,17 +463,15 @@ export default function ExplorePage() {
                                     </div>
                                 </div>
 
-                                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div className="mb-4 grid grid-cols-3 gap-3">
                                     <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
                                         <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                                             <Activity className="h-3.5 w-3.5" />
                                             Momentum
                                         </div>
-                                        <div className="text-lg font-semibold font-mono text-foreground">
-                                            {getMomentumLabel(idea.change_24h)}
-                                        </div>
+                                        <div className="text-sm font-semibold text-foreground">{getMomentumLabel(idea.change_24h)}</div>
                                         <p className="mt-1 text-xs text-muted-foreground">
-                                            {formatSigned(idea.change_24h)} today, {formatSigned(idea.change_7d)} over 7d
+                                            {formatSigned(idea.change_24h)} today
                                         </p>
                                     </div>
 
@@ -500,8 +485,8 @@ export default function ExplorePage() {
                                         </div>
                                         <p className="mt-1 text-xs text-muted-foreground">
                                             {(idea.post_count_24h ?? 0) > 0
-                                                ? `${idea.post_count_24h} in the last 24h | ${idea.post_count_7d} in 7d`
-                                                : `${idea.post_count_7d} posts in the last 7 days`}
+                                                ? `${idea.post_count_24h} in 24h`
+                                                : `${idea.post_count_7d} in 7d`}
                                         </p>
                                     </div>
 
@@ -511,15 +496,8 @@ export default function ExplorePage() {
                                             Sources
                                         </div>
                                         <div className="text-lg font-semibold font-mono text-foreground">{idea.source_count}</div>
-                                        <p className="mt-1 text-xs text-muted-foreground">{getTopSourceLabel(idea.sources)}</p>
+                                        <p className="mt-1 text-xs text-muted-foreground">{formatCountLabel(idea.source_count, "source")}</p>
                                     </div>
-                                </div>
-
-                                <div className="mb-4 rounded-xl border border-primary/12 bg-primary/[0.04] p-4">
-                                    <div className="mb-2 text-[11px] uppercase tracking-[0.12em] text-primary font-mono">
-                                        Why this card is here
-                                    </div>
-                                    <p className="text-sm leading-relaxed text-foreground/88">{getTopSignal(idea)}</p>
                                 </div>
 
                                 <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
@@ -546,7 +524,9 @@ export default function ExplorePage() {
                                         <div>
                                             <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Direct proof</span>
                                             <p className="mt-1 text-foreground">
-                                                {idea.trust.direct_evidence_count} evidence posts | {idea.trust.direct_quote_count} pain quotes
+                                                {idea.trust.direct_quote_count > 0
+                                                    ? `${idea.trust.direct_quote_count} buyer quotes`
+                                                    : "Needs more buyer proof"}
                                             </p>
                                         </div>
                                     </div>
@@ -573,11 +553,8 @@ export default function ExplorePage() {
                                                 {idea.strategy_preview.readiness_score}/100 readiness
                                             </span>
                                         </div>
-                                        <p className="text-sm leading-relaxed text-foreground/88 line-clamp-3">
-                                            {idea.strategy_preview.posture_rationale}
-                                        </p>
-                                        <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
-                                            Next move: {idea.strategy_preview.next_move_summary}
+                                        <p className="text-sm leading-relaxed text-foreground/88 line-clamp-2">
+                                            {idea.strategy_preview.next_move_summary}
                                         </p>
                                     </div>
                                 )}

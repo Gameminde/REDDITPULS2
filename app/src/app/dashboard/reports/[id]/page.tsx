@@ -431,7 +431,7 @@ const CollapsibleSection = ({
         <button
             type="button"
             onClick={onToggle}
-            className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
+            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.02] sm:px-5 sm:py-4"
         >
             <div>
                 <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">{title}</div>
@@ -439,7 +439,7 @@ const CollapsibleSection = ({
             </div>
             <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </button>
-        {open && <div className="border-t border-white/10 p-5">{children}</div>}
+        {open && <div className="border-t border-white/10 p-4 sm:p-5">{children}</div>}
     </SurfaceCard>
 );
 
@@ -1082,14 +1082,14 @@ ${first10Html}
     };
 
     return (
-        <div className="w-full max-w-6xl mx-auto pt-6 px-4 lg:px-8 pb-8 pl-16">
+        <div className="mx-auto w-full max-w-6xl px-3 pb-28 pt-4 sm:px-4 sm:pt-6 lg:px-8 lg:pb-8 lg:pl-16">
             {/* Back */}
             <button onClick={() => router.push("/dashboard/reports")} className="flex items-center gap-2 text-muted-foreground hover:text-foreground font-mono text-[11px] uppercase tracking-widest transition-colors mb-6">
                 <ArrowLeft className="w-3 h-3" /> Back
             </button>
 
             {/* ═══════════ SECTION 1 — VERDICT CARD ═══════════ */}
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bento-cell p-6 mb-6">
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bento-cell mb-6 p-4 sm:p-6">
                 <div className="flex flex-col lg:flex-row gap-6 items-start justify-between">
                     <div className="flex-1 min-w-0">
                         <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-base font-mono uppercase font-bold tracking-widest ${vs.bg} ${vs.border} ${vs.color}`}>
@@ -1811,7 +1811,7 @@ ${first10Html}
             </div>
 
             {/* ═══════════ SECTION 6 — FLOATING ACTION BAR (left side) ═══════════ */}
-            <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50 print:hidden">
+            <div className="fixed left-3 top-1/2 z-50 hidden -translate-y-1/2 print:hidden lg:block">
                 <div className="flex flex-col items-center gap-1.5 bg-[#0a0a0a]/90 backdrop-blur-md border border-white/10 rounded-2xl px-2 py-3">
                     {/* Verdict indicator */}
                     <div className={`w-10 rounded-xl flex flex-col items-center justify-center py-1.5 text-[10px] font-mono font-bold ${vs.bg} ${vs.border} ${vs.color} border`} title={`${vs.label} — ${report.confidence}%`}>
@@ -1849,6 +1849,64 @@ ${first10Html}
                                 <span className="text-[7px] font-mono uppercase leading-none">Deep</span>
                             </button>
                         </>
+                    )}
+                </div>
+            </div>
+
+            <div
+                className="fixed inset-x-3 z-40 print:hidden lg:hidden"
+                style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 86px)" }}
+            >
+                <div className="rounded-[20px] border border-white/10 bg-[#0a0a0a]/90 p-3 backdrop-blur-md">
+                    <div className="grid grid-cols-4 gap-2">
+                        <button
+                            type="button"
+                            onClick={toggleWatchlist}
+                            disabled={watchlistLoading}
+                            className={`flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-2xl border text-[10px] font-mono uppercase tracking-[0.12em] transition-colors ${
+                                savedToWatchlist
+                                    ? "border-build/30 bg-build/10 text-build"
+                                    : "border-white/10 bg-white/[0.03] text-muted-foreground"
+                            } disabled:opacity-60`}
+                        >
+                            <Bookmark className="h-4 w-4" />
+                            <span>{savedToWatchlist ? "Saved" : "Save"}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleShare}
+                            className="flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground transition-colors"
+                        >
+                            <Clipboard className="h-4 w-4" />
+                            <span>Share</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={generateMarkdownExport}
+                            className="flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground transition-colors"
+                        >
+                            <Download className="h-4 w-4" />
+                            <span>MD</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={exportAsPDF}
+                            className="flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground transition-colors"
+                        >
+                            <FileText className="h-4 w-4" />
+                            <span>PDF</span>
+                        </button>
+                    </div>
+
+                    {report.depth !== "deep" && (
+                        <button
+                            type="button"
+                            onClick={() => router.push("/dashboard/validate")}
+                            className="mt-2 flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl border border-primary/30 bg-primary/10 text-[11px] font-mono uppercase tracking-[0.12em] text-primary"
+                        >
+                            <Zap className="h-4 w-4" />
+                            Run deep validation
+                        </button>
                     )}
                 </div>
             </div>

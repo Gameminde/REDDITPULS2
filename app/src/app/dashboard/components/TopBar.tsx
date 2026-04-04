@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, LoaderCircle, PlugZap, RefreshCw } from "lucide-react";
+import { CheckCircle2, ChevronDown, LoaderCircle, LogIn, PlugZap, RefreshCw, Settings } from "lucide-react";
 import { BrandLogo } from "@/app/components/brand-logo";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
 import { BETA_FULL_ACCESS } from "@/lib/beta-access";
@@ -139,14 +139,14 @@ export function TopBar({
 
     return (
         <header
-            className="sticky top-0 z-50 flex h-10 items-center justify-between px-5"
+            className="sticky top-0 z-50 flex h-11 items-center justify-between px-2.5 sm:px-3 md:h-10 md:px-5"
             style={{
                 background: "hsla(0,0%,4%,0.7)",
                 borderBottom: "1px solid hsl(0 0% 100% / 0.07)",
                 backdropFilter: "blur(20px)",
             }}
         >
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2 md:gap-3">
                 <BrandLogo compact uppercase />
 
                 <div className="hidden h-3 w-px bg-border sm:block" />
@@ -173,7 +173,17 @@ export function TopBar({
                 </span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
+                {!isGuest && (
+                    <Link
+                        href="/dashboard/settings"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-muted-foreground transition-colors hover:border-primary/20 hover:text-white lg:hidden"
+                        aria-label="Open settings"
+                        title="Settings"
+                    >
+                        <Settings className="h-4 w-4" />
+                    </Link>
+                )}
                 {isGuest ? (
                     <>
                         <Link
@@ -184,9 +194,11 @@ export function TopBar({
                         </Link>
                         <Link
                             href="/login"
-                            className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3 sm:text-[11px]"
                         >
-                            Log in to unlock actions
+                            <LogIn className="h-3 w-3" />
+                            <span className="sm:hidden">Log in</span>
+                            <span className="hidden sm:inline">Log in to unlock actions</span>
                         </Link>
                     </>
                 ) : FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED && (
@@ -358,7 +370,7 @@ export function TopBar({
                     </div>
                 )}
 
-                <div className="flex items-center gap-1.5">
+                <div className="hidden items-center gap-1.5 sm:flex">
                     {Array.from({ length: Math.max(modelCount, 1) }).slice(0, 5).map((_, index) => (
                         <div
                             key={index}
@@ -367,8 +379,8 @@ export function TopBar({
                         />
                     ))}
                 </div>
-                <div className="h-3 w-px bg-border" />
-                <span className="tabular-nums text-[11px] font-mono text-muted-foreground">{clock}</span>
+                <div className="hidden h-3 w-px bg-border sm:block" />
+                <span className="hidden tabular-nums text-[11px] font-mono text-muted-foreground sm:inline">{clock}</span>
             </div>
         </header>
     );

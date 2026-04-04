@@ -228,17 +228,17 @@ export default function SettingsPage() {
         : "—";
 
     return (
-        <div className="max-w-6xl mx-auto pt-8 px-6">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                <h1 className="text-[32px] font-bold font-display tracking-tight-custom text-white">Settings</h1>
+        <div className="mx-auto max-w-6xl px-0 pt-2 pb-6 sm:pt-4">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-5 sm:mb-6">
+                <h1 className="text-[28px] font-bold font-display tracking-tight-custom text-white sm:text-[32px]">Settings</h1>
                 <p className="text-muted-foreground mt-1 text-sm font-mono">AI models · Account · Configuration</p>
             </motion.div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-2">
                 {/* LEFT — AI Config */}
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                     {/* Active models */}
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bento-cell rounded-[14px] p-5">
+                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bento-cell rounded-[14px] p-4 sm:p-5">
                         <div className="flex items-center justify-between mb-4">
                             <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                                 Active Agents ({configs.length}/10)
@@ -308,7 +308,7 @@ export default function SettingsPage() {
                                 initial={{ opacity: 0, height: 0 }}
                                 animate={{ opacity: 1, height: "auto" }}
                                 exit={{ opacity: 0, height: 0 }}
-                                className="bento-cell rounded-[14px] p-5 overflow-hidden"
+                                className="bento-cell rounded-[14px] p-4 sm:p-5 overflow-hidden"
                             >
                                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-4">
                                     Add New AI Model
@@ -415,7 +415,7 @@ export default function SettingsPage() {
                     </AnimatePresence>
 
                     {/* Available providers catalog */}
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bento-cell rounded-[14px] p-5">
+                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bento-cell rounded-[14px] p-4 sm:p-5">
                         <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-4">
                             Supported Providers ({providerCatalog.length})
                         </p>
@@ -448,7 +448,7 @@ export default function SettingsPage() {
                 </div>
 
                 {/* RIGHT — Real Profile */}
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="bento-cell rounded-[14px] p-5 h-fit">
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="bento-cell rounded-[14px] p-4 sm:p-5 h-fit">
                     <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-5">Profile</p>
 
                     <div className="flex items-center gap-4 mb-6">

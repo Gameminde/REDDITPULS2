@@ -734,17 +734,19 @@ const ValidatePage = () => {
         { label: "Debate", done: isdone, active: issynth },
         { label: "Report", done: isdone, active: false },
     ];
+    const validationDisabled = isValidating || !idea.trim() || Boolean(storedActiveValidationId);
+    const validationCtaLabel = isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation";
 
     if (!isPremium) return <PremiumGate feature="Validate Idea" />;
 
     return (
-        <div className="max-w-6xl mx-auto px-6 pt-10 pb-32 relative z-10">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
-                <div className="section-kicker mb-4">Validation Engine</div>
-                <h1 className="text-[34px] font-bold font-display tracking-tight-custom text-white md:text-[44px]">
+        <div className="relative z-10 mx-auto max-w-6xl px-0 pt-2 pb-32 sm:pt-4">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6 sm:mb-8">
+                <div className="section-kicker mb-3 sm:mb-4">Validation Engine</div>
+                <h1 className="text-[30px] font-bold font-display tracking-tight-custom text-white sm:text-[34px] md:text-[44px]">
                     Extract the pain. Debate the build. Ship with conviction.
                 </h1>
-                <p className="mt-3 max-w-3xl text-sm leading-8 text-muted-foreground md:text-base">
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground md:text-base md:leading-8">
                     Launch one idea into the full multi-pass pipeline: decompose the wedge, scrape live demand, map competition,
                     then let the debate engine turn raw signal into a final report.
                 </p>
@@ -813,7 +815,7 @@ const ValidatePage = () => {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.05 }}
-                    className="surface-panel p-6 md:p-7"
+                    className="surface-panel p-4 sm:p-5 md:p-7"
                 >
                     <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                         <div>
@@ -832,7 +834,7 @@ const ValidatePage = () => {
                         </div>
                     </div>
 
-                    <div className="surface-panel-soft focus-ring-orange rounded-[20px] p-5">
+                    <div className="surface-panel-soft focus-ring-orange rounded-[20px] p-4 sm:p-5">
                         <label className="mb-3 block text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                             Describe your idea
                         </label>
@@ -841,7 +843,7 @@ const ValidatePage = () => {
                             onChange={(e) => setIdea(e.target.value)}
                             disabled={isValidating}
                             placeholder="e.g. A tool that watches founder complaints across Reddit, clusters recurring workflow pain, and validates whether the wedge is strong enough to build."
-                            className="min-h-[260px] w-full resize-none bg-transparent text-base leading-8 text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono md:min-h-[300px]"
+                            className="min-h-[220px] w-full resize-none bg-transparent text-[15px] leading-7 text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono sm:min-h-[260px] md:min-h-[300px] md:text-base md:leading-8"
                         />
                     </div>
 
@@ -885,9 +887,70 @@ const ValidatePage = () => {
                             />
                         </div>
                     </div>
+
+                    <div className="mt-4 xl:hidden">
+                        <div className="mb-3 text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
+                            Validation depth
+                        </div>
+                        <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1">
+                            {VALIDATION_DEPTHS.map((opt) => {
+                                const isActive = depth === opt.mode;
+                                const Icon = opt.mode === "quick" ? Search : opt.mode === "deep" ? FlaskConical : Telescope;
+                                return (
+                                    <button
+                                        key={`mobile-${opt.mode}`}
+                                        onClick={() => setDepth(opt.mode)}
+                                        disabled={isValidating}
+                                        className={`min-w-[220px] snap-start rounded-[18px] border px-4 py-3 text-left transition-all disabled:opacity-40 ${
+                                            isActive
+                                                ? "border-primary/35 bg-primary/12 text-white shadow-[0_0_22px_rgba(255,69,0,0.12)]"
+                                                : "border-white/8 bg-white/[0.03] text-muted-foreground"
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`flex h-9 w-9 items-center justify-center rounded-2xl ${isActive ? "bg-primary/15 text-primary" : "bg-white/[0.05] text-muted-foreground"}`}>
+                                                <Icon className="h-4 w-4" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className={`text-sm font-semibold ${isActive ? "text-white" : "text-foreground"}`}>{opt.label}</div>
+                                                <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                                    ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`} target runtime
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3 xl:hidden">
+                        <div className="surface-panel-soft p-4 text-center">
+                            <div
+                                className="font-mono text-[30px] font-extrabold leading-none text-primary tabular-nums"
+                                style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.32)" }}
+                            >
+                                {activeValidation
+                                    ? activeValidation.posts_found ||
+                                      Object.values(dataSources as Record<string, number>).reduce((a, b) => a + Number(b), 0) ||
+                                      "-"
+                                    : "-"}
+                            </div>
+                            <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Posts found</p>
+                        </div>
+                        <div className="surface-panel-soft p-4 text-center">
+                            <div
+                                className="font-mono text-[30px] font-extrabold leading-none text-primary tabular-nums"
+                                style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.32)" }}
+                            >
+                                {activeValidation ? Object.keys(dataSources).length || "-" : "-"}
+                            </div>
+                            <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Platforms</p>
+                        </div>
+                    </div>
                 </motion.div>
 
-                <div className="flex flex-col gap-4">
+                <div className="hidden xl:flex xl:flex-col xl:gap-4">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -909,7 +972,7 @@ const ValidatePage = () => {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.12 }}
                             onClick={handleValidate}
-                            disabled={isValidating || !idea.trim() || Boolean(storedActiveValidationId)}
+                            disabled={validationDisabled}
                             whileHover={{ scale: isValidating ? 1 : 1.01, y: isValidating ? 0 : -1 }}
                             whileTap={{ scale: isValidating ? 1 : 0.99 }}
                             className="pulse-button w-full justify-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
@@ -918,7 +981,7 @@ const ValidatePage = () => {
                             data-track-label="launch validation"
                         >
                             {isValidating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5 fill-white" />}
-                            {isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation"}
+                            {validationCtaLabel}
                         </motion.button>
 
                         <p className="mt-3 text-center text-[11px] font-mono text-muted-foreground">
@@ -1130,6 +1193,37 @@ const ValidatePage = () => {
                         ))}
                     </div>
                 </motion.div>
+            </div>
+
+            <div
+                className="fixed inset-x-3 z-40 xl:hidden"
+                style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 86px)" }}
+            >
+                <div className="surface-panel flex items-center gap-3 rounded-[20px] px-3 py-3 sm:px-4">
+                    <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">
+                            {VALIDATION_DEPTHS.find((option) => option.mode === depth)?.label
+                                || VALIDATION_DEPTHS.find((option) => option.mode === DEFAULT_DEPTH)?.label
+                                || "Quick Validation"}
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {storedActiveValidationId
+                                ? "A validation is already running for this account."
+                                : "Launch the full validation flow with one tap."}
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleValidate}
+                        disabled={validationDisabled}
+                        className="pulse-button min-h-[56px] shrink-0 justify-center px-5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                        data-track-event="validate_cta_click_mobile"
+                        data-track-scope="product"
+                        data-track-label="mobile launch validation"
+                    >
+                        {isValidating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5 fill-white" />}
+                        {validationCtaLabel}
+                    </button>
+                </div>
             </div>
 
             <div className="hidden grid-cols-12 gap-2.5" style={{ gridAutoRows: "80px" }}>

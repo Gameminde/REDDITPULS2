@@ -526,7 +526,7 @@ export default function OpportunitiesPage() {
                                             </div>
                                             {opportunity.primary_idea?.suggested_wedge_label && opportunity.primary_idea.suggested_wedge_label !== opportunity.primary_idea.topic && (
                                                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
-                                                    Suggested wedge: {opportunity.primary_idea.suggested_wedge_label}
+                                                    Recommended angle: {opportunity.primary_idea.suggested_wedge_label}
                                                 </div>
                                             )}
                                         </div>

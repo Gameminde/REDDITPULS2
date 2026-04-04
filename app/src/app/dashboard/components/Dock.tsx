@@ -49,6 +49,14 @@ const infoItems: DockNavItem[] = [
     { name: "How It Works", path: "/dashboard/how-it-works", icon: CircleHelp },
 ];
 
+const mobileItems: DockNavItem[] = [
+    ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Market", path: "/dashboard", icon: BarChart3, exact: true }] : []),
+    ...(FEATURE_FLAGS.EXPLORE_ENABLED ? [{ name: "Explore", path: "/dashboard/explore", icon: Compass }] : []),
+    ...(FEATURE_FLAGS.VALIDATE_ENABLED ? [{ name: "Validate", path: "/dashboard/validate", icon: Lightbulb }] : []),
+    ...(FEATURE_FLAGS.REPORTS_ENABLED ? [{ name: "Reports", path: "/dashboard/reports", icon: FileText }] : []),
+    ...(FEATURE_FLAGS.SAVED_ENABLED ? [{ name: "Saved", path: "/dashboard/saved", icon: BookOpen }] : []),
+];
+
 const ACTIVE_VALIDATION_ID_KEY = "activeValidationId";
 const ACTIVE_VALIDATION_IDEA_KEY = "activeValidationIdea";
 const COMPLETED_VALIDATION_ID_KEY = "completedValidationId";
@@ -83,6 +91,13 @@ export function Dock({
         ? [marketItems, infoItems]
         : [marketItems, validateItems, monitorItems, infoItems]
     ).filter((group) => group.length > 0);
+    const mobileDockItems = mobileItems.map((item) => {
+        const guestAllowed = item.path === "/dashboard" || item.path === "/dashboard/explore";
+        if (isGuest && !guestAllowed) {
+            return { ...item, path: "/login", exact: false };
+        }
+        return item;
+    });
 
     const emitValidationStorageChange = useCallback(() => {
         if (typeof window === "undefined") return;
@@ -152,10 +167,59 @@ export function Dock({
     }, [currentPath, emitValidationStorageChange, isGuest]);
 
     return (
-        <div
-            className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[980px] overflow-x-auto"
-            style={{ scrollbarWidth: "none" }}
-        >
+        <>
+            <div className="fixed bottom-3 left-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[420px] -translate-x-1/2 lg:hidden">
+                <nav
+                    className="mx-auto flex items-end justify-between gap-1 rounded-[24px] border px-2 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] pt-2"
+                    style={{
+                        background: "hsla(0,0%,4%,0.9)",
+                        borderColor: "hsl(0 0% 100% / 0.07)",
+                        backdropFilter: "blur(40px) saturate(200%)",
+                        boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.05), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px hsla(16,100%,50%,0.06)",
+                    }}
+                >
+                    {mobileDockItems.map((item) => {
+                        const isActive = item.exact
+                            ? currentPath === item.path
+                            : currentPath === item.path || currentPath?.startsWith(item.path + "/");
+                        const Icon = item.icon;
+                        const isValidate = item.name === "Validate";
+                        return (
+                            <Link
+                                key={`${item.name}-${item.path}-mobile`}
+                                href={item.path}
+                                className={`relative flex min-h-[56px] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[10px] tracking-[0.08em] transition-all duration-150 ${
+                                    isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                                } ${isValidate ? "-mt-5" : ""}`}
+                                style={isValidate
+                                    ? {
+                                        background: isActive ? "linear-gradient(180deg, hsl(16 100% 50% / 0.28), hsl(16 100% 50% / 0.14))" : "linear-gradient(180deg, hsl(16 100% 50% / 0.22), hsl(16 100% 50% / 0.08))",
+                                        border: "1px solid hsl(16 100% 50% / 0.22)",
+                                        boxShadow: "0 0 24px hsla(16,100%,50%,0.18)",
+                                    }
+                                    : isActive
+                                        ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                        : { border: "1px solid transparent" }}
+                            >
+                                <div className={`relative flex items-center justify-center ${isValidate ? "h-10 w-10 rounded-2xl bg-black/20" : ""}`}>
+                                    <Icon className={`${isValidate ? "h-5 w-5" : "h-4 w-4"}`} />
+                                </div>
+                                <span className={`truncate font-medium ${isValidate ? "text-[11px] uppercase" : ""}`}>
+                                    {item.name}
+                                </span>
+                                {isActive && !isValidate && (
+                                    <span className="absolute bottom-1 h-1 w-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
+                                )}
+                            </Link>
+                        );
+                    })}
+                </nav>
+            </div>
+
+            <div
+                className="fixed bottom-3 left-1/2 hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto lg:block"
+                style={{ scrollbarWidth: "none" }}
+            >
             <nav
                 className="mx-auto flex min-w-max items-center gap-1"
                 style={{
@@ -261,6 +325,7 @@ export function Dock({
                     </>
                 )}
             </nav>
-        </div>
+            </div>
+        </>
     );
 }

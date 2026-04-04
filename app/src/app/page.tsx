@@ -13,10 +13,11 @@ import {
 } from "lucide-react";
 
 import { BrandLogo } from "@/app/components/brand-logo";
-import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
 import { buildMarketIdeas, hydrateIdeaForMarket, type MarketHydratedIdea } from "@/lib/market-feed";
 import { extractScraperRunHealth } from "@/lib/scraper-run-health";
 import { createAdmin } from "@/lib/supabase-admin";
+import { summarizeReasonForUser } from "@/lib/user-facing-copy";
 
 export const revalidate = 300;
 
@@ -59,7 +60,7 @@ const featureCards = [
     {
         icon: Activity,
         title: "Idea validation",
-        desc: "Pressure-test one wedge with structured evidence, debate, and recommendation logic.",
+        desc: "Pressure-test one opportunity with structured evidence, debate, and recommendation logic.",
     },
     {
         icon: TrendingUp,
@@ -69,7 +70,7 @@ const featureCards = [
     {
         icon: Shield,
         title: "Competitor pressure",
-        desc: "Surface repeated complaints, workflow friction, and wedge openings against incumbents.",
+        desc: "Surface repeated complaints, workflow friction, and competitor openings against incumbents.",
     },
 ];
 
@@ -143,7 +144,7 @@ const fallbackPainExamples: LandingPainExample[] = [
         score: 14,
         evidenceCount: 3,
         sourceCount: 1,
-        why: "Reliability complaints are specific enough to become a focused wedge instead of a generic automation theme.",
+        why: "Reliability complaints are specific enough to become a focused opportunity instead of a generic automation theme.",
     },
 ];
 
@@ -318,7 +319,7 @@ async function getLandingData() {
                     sourceCount: Number(idea.source_count || 0),
                     why: toSentence(
                         cleanText(idea.market_hint?.why_it_matters_now || idea.market_hint?.missing_proof || idea.signal_contract?.summary || ""),
-                        `${cleanText(idea.suggested_wedge_label || idea.topic)} is showing enough repeated pain to sharpen into a wedge.`,
+                        `${cleanText(idea.suggested_wedge_label || idea.topic)} is showing enough repeated pain to become a focused opportunity.`,
                     ),
                 } satisfies LandingPainExample;
             })
@@ -384,6 +385,9 @@ export default async function LandingPage() {
     const { stats, painExamples, recentWedges } = await getLandingData();
     const heroPain = painExamples[0];
     const heroWedge = recentWedges[0];
+    const exampleCards = painExamples.slice(0, 2);
+    const primarySources = liveSources.slice(0, 4);
+    const secondarySources = liveSources.slice(4);
 
     return (
         <div className="relative min-h-screen overflow-hidden">
@@ -402,18 +406,18 @@ export default async function LandingPage() {
                 className="fixed top-0 left-0 right-0 z-50"
                 style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.07)", background: "hsla(0,0%,4%,0.72)", backdropFilter: "blur(20px)" }}
             >
-                <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+                <div className="mx-auto flex h-12 max-w-7xl items-center justify-between px-4 sm:h-16 sm:px-6">
                     <BrandLogo compact uppercase />
-                    <div className="flex items-center gap-5">
-                        <Link href="/how-it-works" className="text-xs font-semibold text-muted-foreground transition-colors hover:text-white">
+                    <div className="flex items-center gap-3 sm:gap-5">
+                        <Link href="/how-it-works" className="hidden text-xs font-semibold text-muted-foreground transition-colors hover:text-white sm:inline-flex">
                             How it works
                         </Link>
-                        <Link href="/pricing" className="text-xs font-semibold text-muted-foreground transition-colors hover:text-white">
+                        <Link href="/pricing" className="hidden text-xs font-semibold text-muted-foreground transition-colors hover:text-white sm:inline-flex">
                             Pricing
                         </Link>
                         <Link
                             href="/dashboard"
-                            className="inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs font-semibold text-white transition-all hover:-translate-y-0.5"
+                            className="inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[10px] font-semibold text-white transition-all hover:-translate-y-0.5 sm:h-9 sm:px-4 sm:text-xs"
                             data-track-event="open_beta_nav_click"
                             data-track-scope="marketing"
                             data-track-label="nav open beta"
@@ -425,32 +429,31 @@ export default async function LandingPage() {
                 </div>
             </nav>
 
-            <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-16 px-6 pb-24 pt-28">
-                <section className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,470px)] xl:grid-cols-[minmax(0,1.1fr)_500px]">
-                    <div className="max-w-3xl">
-                        <div className="section-kicker mb-6">
+            <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-7 px-4 pb-16 pt-[4.4rem] sm:px-6 sm:pb-20 sm:pt-24 md:gap-12 md:pt-28">
+                <section className="grid items-start gap-5 lg:min-h-[78vh] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1fr)] lg:items-center xl:gap-8">
+                    <div className="max-w-2xl">
+                        <div className="section-kicker mb-4">
                             <span className="h-[6px] w-[6px] rounded-full bg-build status-live" />
                             {APP_NAME} open beta
                         </div>
 
-                        <h1 className="max-w-4xl font-display text-5xl font-extrabold leading-[0.92] tracking-[-0.05em] text-white md:text-7xl xl:text-[5.7rem]">
+                        <h1 className="max-w-3xl font-display text-[2.5rem] font-extrabold leading-[0.9] tracking-[-0.055em] text-white sm:text-5xl lg:text-6xl xl:text-[4.8rem]">
                             Extract.
                             <span className="block orange-text orange-glow-text">Validate.</span>
                             <span className="block">Dominate.</span>
                         </h1>
 
-                        <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300 md:text-xl md:leading-9">
-                            Real-time Reddit intelligence. Multi-brain AI debate engine.
+                        <p className="mt-4 max-w-xl text-sm leading-6 text-slate-300 sm:text-base sm:leading-7 md:text-lg md:leading-8">
+                            Real-time community intelligence for clearer opportunities and faster product conviction.
                         </p>
-                        <p className="mt-4 max-w-2xl text-sm leading-8 text-muted-foreground md:text-base">
-                            CueIdea watches live founder and buyer signal across Reddit, Hacker News, Product Hunt, and Indie Hackers,
-                            then widens the market read with GitHub issue pressure, review complaints, and hiring signal when those lanes are available.
+                        <p className="mt-2 hidden max-w-xl text-sm leading-7 text-muted-foreground sm:block">
+                            CueIdea turns live Reddit pain, launch chatter, founder discussion, and proof from adjacent sources into opportunities you can inspect before you build.
                         </p>
 
-                        <div className="mt-8 flex flex-wrap items-center gap-3">
+                        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                             <Link
                                 href="/dashboard"
-                                className="pulse-button text-sm md:text-base"
+                                className="pulse-button w-full justify-center text-sm md:text-base sm:w-auto"
                                 data-track-event="hero_validate_cta_click"
                                 data-track-scope="marketing"
                                 data-track-label="hero start validating"
@@ -460,7 +463,7 @@ export default async function LandingPage() {
                             </Link>
                             <Link
                                 href="/how-it-works"
-                                className="pulse-button pulse-button--ghost text-sm md:text-base"
+                                className="pulse-button pulse-button--ghost w-full justify-center text-sm md:text-base sm:w-auto"
                                 data-track-event="hero_how_it_works_click"
                                 data-track-scope="marketing"
                                 data-track-label="hero how it works"
@@ -469,192 +472,135 @@ export default async function LandingPage() {
                             </Link>
                         </div>
 
-                        <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:max-w-2xl">
-                            <div className="proof-metric">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Live proof</p>
-                                <p className="mt-3 text-4xl font-display font-black orange-text">{stats.shapedWedges || "12+"}</p>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Wedges taking shape on the live board right now.</p>
-                            </div>
-                            <div className="proof-metric">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Evidence tracked</p>
-                                <p className="mt-3 text-4xl font-display font-black text-white">{stats.evidencePosts || "943"}</p>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Posts already attached to visible market signals.</p>
-                            </div>
-                            <div className="proof-metric">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Current proof loop</p>
-                                <p className="mt-3 text-lg font-semibold text-white">{heroPain.topic}</p>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                    {heroPain.community} {"->"} {heroPain.wedge}
-                                </p>
-                            </div>
-                            <div className="proof-metric">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Beta access</p>
-                                <p className="mt-3 text-lg font-semibold text-white">Read the board. Validate the build.</p>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Signed-in testers can inspect the product end to end.</p>
-                            </div>
-                        </div>
-
-                        <div className="mt-8 flex flex-wrap gap-2.5">
-                            {liveSources.map((source) => (
-                                <div
-                                    key={source.key}
-                                    className="inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-[11px] font-mono"
-                                    style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "hsl(0 0% 8% / 0.72)" }}
-                                >
-                                    <span className="h-2 w-2 rounded-full bg-primary" />
-                                    <span className="text-foreground">{source.name}</span>
+                        <div className="mt-5 grid grid-cols-2 gap-2.5 xl:grid-cols-4">
+                            {[
+                                { label: "Live proof", value: stats.shapedWedges > 0 ? String(stats.shapedWedges) : "12+" },
+                                { label: "Evidence", value: stats.evidencePosts > 0 ? String(stats.evidencePosts) : "943" },
+                                { label: "Live signals", value: stats.visibleSignals > 0 ? String(stats.visibleSignals) : "20" },
+                                { label: "Raw ideas", value: stats.rawIdeas > 0 ? String(stats.rawIdeas) : "151" },
+                            ].map((stat) => (
+                                <div key={stat.label} className="proof-metric px-3 py-2.5 sm:px-4 sm:py-4">
+                                    <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>
+                                    <p className="mt-1 text-lg font-display font-black tracking-tight text-white sm:text-2xl md:text-3xl">{stat.value}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="relative">
-                        <div className="surface-panel overflow-hidden p-5 md:p-6">
-                            <div className="mb-5 flex items-start justify-between gap-4">
+                    <div className="surface-panel overflow-hidden p-4 md:p-5 lg:p-6">
+                        <div className="mb-4 flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Live board preview</p>
+                                <h2 className="mt-1.5 text-lg font-bold text-white sm:text-xl md:text-2xl">What the board sees right now</h2>
+                            </div>
+                            <Link href="/dashboard" className="hidden sm:inline-flex verdict-badge">
+                                Open board
+                            </Link>
+                        </div>
+
+                        <div
+                            className="rounded-[22px] p-4 md:p-5"
+                            style={{ background: "linear-gradient(135deg, hsl(16 100% 50% / 0.16), hsl(16 100% 50% / 0.04))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                        >
+                            <div className="flex items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Public proof</p>
-                                    <h2 className="mt-2 text-2xl font-bold text-white">What the live board sees</h2>
-                                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                                        Keep the raw complaint visible, shape the wedge beside it, then score the signal.
+                                    <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">{heroPain.topic}</p>
+                                    <h3 className="mt-1 text-base font-semibold text-white sm:text-lg md:text-xl">{heroPain.wedge}</h3>
+                                    <p className="mt-2 text-sm leading-6 text-slate-200">
+                                        Clustered from {heroPain.source} pain in {heroPain.community}.
                                     </p>
                                 </div>
-                                <Link href="/dashboard" className="verdict-badge">
-                                    Live board
-                                </Link>
+                                <div className="shrink-0 text-right">
+                                    <div className="text-2xl font-display font-black orange-text sm:text-3xl md:text-4xl">{Math.round(heroWedge.score)}</div>
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-slate-300">signal</div>
+                                </div>
                             </div>
 
-                            <div className="space-y-4">
-                                <div
-                                    className="rounded-[22px] p-5"
-                                    style={{ background: "linear-gradient(135deg, hsl(16 100% 50% / 0.16), hsl(16 100% 50% / 0.04))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
-                                >
-                                    <div className="mb-3 flex items-start justify-between gap-4">
-                                        <div>
-                                            <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">{heroPain.topic}</p>
-                                            <h3 className="mt-1 text-xl font-semibold text-white">{heroPain.wedge}</h3>
-                                            <p className="mt-2 text-sm text-slate-200">Clustered from {heroPain.source} pain in {heroPain.community}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="text-4xl font-display font-black orange-text">{Math.round(heroWedge.score)}</div>
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-slate-300">signal</div>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid gap-3 sm:grid-cols-3">
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Evidence posts</div>
-                                            <div className="mt-2 text-2xl font-display font-black text-white">{heroWedge.evidenceCount}</div>
-                                        </div>
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Sources</div>
-                                            <div className="mt-2 text-2xl font-display font-black text-white">{heroWedge.sourceCount}</div>
-                                        </div>
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Freshness</div>
-                                            <div className="mt-2 text-sm font-semibold text-white">{heroWedge.ageLabel}</div>
-                                        </div>
-                                    </div>
+                            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                                <div className="rounded-2xl border border-white/7 bg-black/20 p-3">
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Evidence posts</div>
+                                    <div className="mt-2 text-xl font-display font-black text-white">{heroWedge.evidenceCount}</div>
                                 </div>
-
-                                <div className="grid gap-4 md:grid-cols-[1fr_44px_1fr]">
-                                    <div className="evidence-card p-4">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
-                                            <MessageSquareQuote className="h-3.5 w-3.5 text-primary" />
-                                            Raw pain
-                                        </div>
-                                        <p className="text-sm leading-7 text-slate-100">{heroPain.pain}</p>
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
-                                                {heroPain.source}
-                                            </span>
-                                            <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
-                                                {heroPain.community}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="hidden items-center justify-center md:flex">
-                                        <div className="verdict-badge justify-center">
-                                            <ArrowRight className="h-3 w-3" />
-                                            Shape
-                                        </div>
-                                    </div>
-
-                                    <div className="evidence-card p-4">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
-                                            <CheckCircle2 className="h-3.5 w-3.5" />
-                                            Suggested wedge
-                                        </div>
-                                        <h3 className="text-lg font-semibold text-white">{heroPain.wedge}</h3>
-                                        <p className="mt-2 text-sm leading-7 text-slate-200">{heroPain.why}</p>
-                                    </div>
+                                <div className="rounded-2xl border border-white/7 bg-black/20 p-3">
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Sources</div>
+                                    <div className="mt-2 text-xl font-display font-black text-white">{heroWedge.sourceCount}</div>
                                 </div>
-
-                                <div className="grid gap-3 sm:grid-cols-3">
-                                    {[
-                                        { icon: Search, title: "Extract", body: "Read raw complaints and founder pain across live communities." },
-                                        { icon: Radar, title: "Debate", body: "Pressure-test the wedge with evidence, timing, and competition." },
-                                        { icon: Shield, title: "Decide", body: "Keep the claim contract visible before you build." },
-                                    ].map(({ icon: Icon, title, body }) => (
-                                        <div key={title} className="rounded-2xl border border-white/7 bg-white/[0.02] p-4">
-                                            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-                                                <Icon className="h-4 w-4 text-primary" />
-                                            </div>
-                                            <div className="text-sm font-semibold text-white">{title}</div>
-                                            <p className="mt-2 text-xs leading-6 text-muted-foreground">{body}</p>
-                                        </div>
-                                    ))}
+                                <div className="rounded-2xl border border-white/7 bg-black/20 p-3">
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Freshness</div>
+                                    <div className="mt-2 text-sm font-semibold text-white">{heroWedge.ageLabel}</div>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="absolute -left-3 bottom-6 hidden rounded-2xl border border-white/8 bg-black/75 px-4 py-3 shadow-2xl backdrop-blur lg:block">
-                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Open beta</div>
-                            <div className="mt-1 text-sm font-semibold text-white">{APP_TAGLINE}</div>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <div className="evidence-card p-4">
+                                <div className="mb-2 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
+                                    <MessageSquareQuote className="h-3.5 w-3.5 text-primary" />
+                                    Raw pain
+                                </div>
+                                <p className="text-sm leading-6 text-slate-100">{heroPain.pain}</p>
+                            </div>
+                            <div className="evidence-card p-4">
+                                <div className="mb-2 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Recommended angle
+                                </div>
+                                <p className="text-base font-semibold text-white">{heroPain.wedge}</p>
+                                <p className="mt-2 text-sm leading-6 text-slate-200">{summarizeReasonForUser(heroPain.why, "The opening is focused enough to inspect further.")}</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 rounded-[20px] border border-white/8 bg-black/30 p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                                {primarySources.map((source) => (
+                                    <span
+                                        key={source.key}
+                                        className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] font-mono uppercase tracking-[0.14em] text-slate-200"
+                                    >
+                                        <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                        {source.name}
+                                    </span>
+                                ))}
+                            </div>
+                            <p className="mt-3 text-xs leading-6 text-muted-foreground">
+                                Extended proof lanes also include {secondarySources.map((source) => source.name).join(", ")} when available.
+                            </p>
+                            <Link
+                                href="/dashboard"
+                                className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-primary sm:hidden"
+                            >
+                                Open board <ArrowRight className="h-3.5 w-3.5" />
+                            </Link>
                         </div>
                     </div>
                 </section>
 
-                <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {[
-                        { label: "Live feed signals", value: stats.visibleSignals > 0 ? String(stats.visibleSignals) : "Live" },
-                        { label: "Raw market ideas", value: stats.rawIdeas > 0 ? String(stats.rawIdeas) : "151" },
-                        { label: "Evidence posts tracked", value: stats.evidencePosts > 0 ? String(stats.evidencePosts) : "943" },
-                        { label: "Wedges taking shape", value: stats.shapedWedges > 0 ? String(stats.shapedWedges) : "12+" },
-                    ].map((stat) => (
-                        <div key={stat.label} className="bento-cell rounded-[14px] p-5 text-center">
-                            <p className="font-mono text-4xl font-extrabold tracking-tight-custom orange-text tabular-nums">{stat.value}</p>
-                            <p className="text-[11px] text-muted-foreground mt-2 uppercase tracking-[0.12em] font-mono font-semibold">{stat.label}</p>
-                        </div>
-                    ))}
-                </section>
-
-                <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+                <section className="grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
                     <div
-                        className="rounded-[28px] p-6"
+                        className="rounded-[26px] p-5 md:p-6"
                         style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "linear-gradient(180deg, hsla(0,0%,8%,0.94), hsla(0,0%,5%,0.97))" }}
                     >
-                        <div className="mb-6 flex items-center justify-between gap-4">
+                        <div className="mb-5 flex items-center justify-between gap-4">
                             <div>
-                                <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Recent wedges</p>
-                                <h2 className="mt-2 text-2xl font-bold text-white">Proof that the feed is alive</h2>
+                                <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Recent opportunities</p>
+                                <h2 className="mt-2 text-2xl font-bold text-white">Proof the feed is moving</h2>
                             </div>
                             <Link href="/dashboard" className="text-xs text-primary transition-colors hover:text-white">
                                 View board
                             </Link>
                         </div>
 
-                        <div className="space-y-4">
-                            {recentWedges.map((card) => (
-                                <div key={card.wedge} className="rounded-[22px] border border-white/7 bg-white/[0.03] p-4">
+                        <div className="space-y-3">
+                            {recentWedges.slice(0, 3).map((card) => (
+                                <div key={card.wedge} className="rounded-[20px] border border-white/7 bg-white/[0.03] p-4">
                                     <div className="flex items-start justify-between gap-4">
-                                        <div>
+                                        <div className="min-w-0">
                                             <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">{card.category}</p>
-                                            <h3 className="mt-1 text-lg font-semibold text-white">{card.wedge}</h3>
+                                            <h3 className="mt-1 text-base font-semibold text-white md:text-lg">{card.wedge}</h3>
                                             <p className="mt-1 text-sm text-muted-foreground">Clustered from {card.topic}</p>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-3xl font-display font-black orange-text">{Math.round(card.score)}</p>
+                                        <div className="shrink-0 text-right">
+                                            <p className="text-2xl font-display font-black orange-text">{Math.round(card.score)}</p>
                                             <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">signal</p>
                                         </div>
                                     </div>
@@ -670,171 +616,128 @@ export default async function LandingPage() {
                                             {card.ageLabel}
                                         </span>
                                     </div>
-
-                                    <p className="mt-3 text-sm leading-7 text-muted-foreground">{card.why}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-1">
-                        {[
-                            {
-                                icon: Search,
-                                title: "Watch live communities",
-                                body: "CueIdea reads raw founder and buyer signal instead of trend-chasing headlines.",
-                            },
-                            {
-                                icon: Radar,
-                                title: "Shape a sharper wedge",
-                                body: "The pipeline clusters repeated pain into something more focused than a broad market theme.",
-                            },
-                            {
-                                icon: CheckCircle2,
-                                title: "Validate before you build",
-                                body: "Pressure-test one wedge with evidence, trend timing, competitor pressure, and source confidence.",
-                            },
-                        ].map(({ icon: Icon, title, body }) => (
-                            <div key={title} className="bento-cell rounded-[22px] p-5">
-                                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-                                    <Icon className="h-5 w-5 text-primary" />
+                    <div className="grid gap-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            {featureCards.map(({ icon: Icon, title, desc }) => (
+                                <div key={title} className="bento-cell rounded-[20px] p-4">
+                                    <div
+                                        className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl"
+                                        style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                                    >
+                                        <Icon className="h-4 w-4 text-primary" />
+                                    </div>
+                                    <h3 className="text-base font-semibold text-white">{title}</h3>
+                                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{desc}</p>
                                 </div>
-                                <h3 className="text-lg font-semibold text-white">{title}</h3>
-                                <p className="mt-2 text-sm leading-7 text-muted-foreground">{body}</p>
+                            ))}
+                        </div>
+
+                        <div className="bento-cell rounded-[22px] p-5">
+                            <div className="mb-4 flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+                                    <Database className="h-4 w-4 text-primary" />
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Source truth</p>
+                                    <h3 className="mt-1 text-lg font-semibold text-white">What powers the board</h3>
+                                </div>
                             </div>
-                        ))}
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                {liveSources.map((source) => (
+                                    <div key={source.key} className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
+                                        <p className="text-sm font-semibold text-white">{source.name}</p>
+                                        <p className="mt-1 text-xs leading-6 text-muted-foreground">{source.detail}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </section>
 
-                <section>
-                    <div className="mb-8 max-w-3xl">
-                        <p className="mb-3 text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">From raw pain to wedge</p>
-                        <h2 className="mb-4 text-3xl font-display font-bold text-foreground md:text-4xl">
-                            Show the complaint, then show the opportunity.
-                        </h2>
-                        <p className="text-sm leading-relaxed text-muted-foreground md:text-base">
-                            These examples keep the raw complaint visible, then place the shaped wedge and the proof score beside it.
-                            That is the product story visitors need to trust immediately.
-                        </p>
-                    </div>
+                <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+                    <div
+                        className="rounded-[26px] p-5 md:p-6"
+                        style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "linear-gradient(180deg, hsla(0,0%,8%,0.94), hsla(0,0%,5%,0.97))" }}
+                    >
+                        <div className="mb-5 max-w-2xl">
+                            <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">From complaint to opportunity</p>
+                            <h2 className="mt-2 text-2xl font-bold text-white">Show the pain. Then show the opening.</h2>
+                        </div>
 
-                    <div className="grid gap-4 lg:grid-cols-3">
-                        {painExamples.map((example) => (
-                            <div
-                                key={`${example.topic}-${example.wedge}`}
-                                className="rounded-[24px] border border-white/8 p-5"
-                                style={{ background: "linear-gradient(180deg, hsla(0,0%,8%,0.92), hsla(0,0%,6%,0.96))" }}
-                            >
-                                <div className="mb-5 flex items-center justify-between gap-4">
-                                    <div>
-                                        <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.16em] text-primary">{example.source}</p>
-                                        <p className="mt-1 text-xs text-muted-foreground">{example.community}</p>
-                                    </div>
-                                    <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-primary">
-                                        <CheckCircle2 className="h-3 w-3" />
-                                        Live proof
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <div className="rounded-[20px] border border-white/7 bg-white/[0.03] p-4">
-                                        <p className="mb-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Raw pain</p>
-                                        <p className="text-sm leading-7 text-slate-100">{example.pain}</p>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            {exampleCards.map((example) => (
+                                <div key={`${example.topic}-${example.wedge}`} className="rounded-[22px] border border-white/7 bg-white/[0.03] p-4">
+                                    <div className="mb-4 flex items-center justify-between gap-3">
+                                        <div>
+                                            <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">{example.source}</p>
+                                            <p className="mt-1 text-xs text-muted-foreground">{example.community}</p>
+                                        </div>
+                                        <div className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-primary">
+                                            Live proof
+                                        </div>
                                     </div>
 
-                                    <div className="flex justify-center">
-                                        <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.03] px-3 py-1 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
-                                            Clustered into <ArrowRight className="h-3 w-3" />
-                                        </span>
+                                    <div className="rounded-[18px] border border-white/7 bg-black/20 p-3.5">
+                                        <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Raw pain</p>
+                                        <p className="mt-2 text-sm leading-6 text-slate-100">{example.pain}</p>
+                                    </div>
+
+                                    <div className="my-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
+                                        <ArrowRight className="h-3 w-3" />
+                                        Clustered into
                                     </div>
 
                                     <div
-                                        className="rounded-[20px] p-4"
+                                        className="rounded-[18px] p-3.5"
                                         style={{ background: "linear-gradient(135deg, hsl(16 100% 50% / 0.16), hsl(16 100% 50% / 0.04))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                                     >
-                                        <p className="mb-2 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">Suggested wedge</p>
-                                        <h3 className="text-base font-semibold text-white">{example.wedge}</h3>
-                                        <p className="mt-2 text-sm leading-7 text-slate-200">{example.why}</p>
-                                    </div>
-
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3 text-center">
-                                            <div className="text-xl font-display font-black orange-text">{Math.round(example.score)}</div>
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">signal</div>
-                                        </div>
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3 text-center">
-                                            <div className="text-xl font-display font-black text-white">{example.evidenceCount}</div>
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">posts</div>
-                                        </div>
-                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3 text-center">
-                                            <div className="text-xl font-display font-black text-white">{example.sourceCount}</div>
-                                            <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">sources</div>
-                                        </div>
+                                        <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">Recommended angle</p>
+                                        <h3 className="mt-2 text-base font-semibold text-white">{example.wedge}</h3>
+                                        <p className="mt-2 text-sm leading-6 text-slate-200">{summarizeReasonForUser(example.why, "The opening is focused enough to review.")}</p>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
-                </section>
 
-                <section>
-                    <div className="mb-8 max-w-3xl">
-                        <p className="mb-3 text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Source truth</p>
-                        <h2 className="mb-4 text-3xl font-display font-bold text-foreground md:text-4xl">
-                            The live feed, plainly listed.
+                    <section
+                        className="rounded-[26px] p-5 md:p-6"
+                        style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "linear-gradient(180deg, hsla(0,0%,8%,0.94), hsla(0,0%,5%,0.96))" }}
+                    >
+                        <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Open beta</p>
+                        <h2 className="mt-2 text-2xl font-display font-bold text-foreground md:text-3xl">
+                            Browse the board. Catch the next opening before the market does.
                         </h2>
-                        <p className="text-sm leading-relaxed text-muted-foreground md:text-base">
-                            Each source adds a different kind of signal, so you can tell whether a wedge is cross-source demand
-                            or just one loud thread.
+                        <p className="mt-4 max-w-xl text-sm leading-7 text-muted-foreground">
+                            The beta is open. Browse live market shifts, inspect source proof, and pressure-test one idea when you want to go deeper.
                         </p>
-                    </div>
 
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        {liveSources.map((source) => (
-                            <div key={source.key} className="bento-cell rounded-[20px] p-5">
-                                <div className="mb-4 flex items-center justify-between gap-4">
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-                                        <Database className="h-4 w-4 text-primary" />
+                        <div className="mt-5 grid gap-3">
+                            {[
+                                { icon: Search, title: "Watch live communities", body: "Read live founder and buyer signal instead of trend-chasing summaries." },
+                                { icon: Radar, title: "Sharpen the angle", body: "Cluster repeated pain into a sharper angle you can actually build for." },
+                                { icon: CheckCircle2, title: "Validate before building", body: "Run the opportunity through evidence, timing, competition, and proof." },
+                            ].map(({ icon: Icon, title, body }) => (
+                                <div key={title} className="rounded-[18px] border border-white/7 bg-white/[0.03] p-4">
+                                    <div className="flex items-start gap-3">
+                                        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+                                            <Icon className="h-4 w-4 text-primary" />
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">{title}</p>
+                                            <p className="mt-1 text-sm leading-6 text-muted-foreground">{body}</p>
+                                        </div>
                                     </div>
                                 </div>
-                                <h3 className="text-lg font-semibold text-white">{source.name}</h3>
-                                <p className="mt-2 text-sm leading-7 text-muted-foreground">{source.detail}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                <section className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-                    {featureCards.map(({ icon: Icon, title, desc }) => (
-                        <div key={title} className="bento-cell rounded-[18px] p-5">
-                            <div
-                                className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl"
-                                style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
-                            >
-                                <Icon className="h-4 w-4 text-primary" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-white">{title}</h3>
-                            <p className="mt-2 text-sm leading-7 text-muted-foreground">{desc}</p>
+                            ))}
                         </div>
-                    ))}
-                </section>
 
-                <section
-                    className="rounded-[30px] p-6 md:p-8"
-                    style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "linear-gradient(180deg, hsla(0,0%,8%,0.94), hsla(0,0%,5%,0.96))" }}
-                >
-                    <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
-                        <div>
-                            <p className="mb-3 text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Open beta</p>
-                            <h2 className="mb-4 text-3xl font-display font-bold text-foreground md:text-4xl">
-                                Browse the board. Catch the wedge before the market does.
-                            </h2>
-                            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground md:text-base">
-                                The beta is open right now. Read the live board, inspect the source proof,
-                                and pressure-test one idea when you want to go deeper.
-                            </p>
-                        </div>
-                        <div className="flex flex-wrap gap-3">
+                        <div className="mt-6 flex flex-wrap gap-3">
                             <Link
                                 href="/dashboard"
                                 className="inline-flex h-12 items-center gap-2 rounded-xl px-7 text-sm font-semibold text-white transition-all hover:-translate-y-0.5"
@@ -855,7 +758,7 @@ export default async function LandingPage() {
                                 See pricing <ArrowRight className="w-3.5 h-3.5" />
                             </Link>
                         </div>
-                    </div>
+                    </section>
                 </section>
             </main>
         </div>
