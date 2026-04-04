@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase-server";
+import { createAdmin } from "@/lib/supabase-admin";
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
         if (executionMode === "external") {
             return NextResponse.json({
-                error: "External scraper worker mode is enabled on this host. Start the scraper from the VPS worker instead.",
+                error: "Market updates run automatically in this environment.",
                 executionMode,
             }, { status: 409 });
         }
@@ -125,6 +126,7 @@ export async function GET() {
     try {
         const executionMode = getScraperExecutionMode();
         const supabase = await createClient();
+        const admin = createAdmin();
 
         const { data: runs } = await supabase
             .from("scraper_runs")
@@ -147,17 +149,22 @@ export async function GET() {
         });
 
         const trackedPostCount = visibleIdeas.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0);
-        const archiveIdeaCount = archiveIdeas.length;
 
-        const { count: archivePostCount } = await supabase
+        const [{ count: archivePostCount }, { count: archiveIdeaCount }] = await Promise.all([
+            admin
             .from("posts")
-            .select("*", { count: "exact", head: true });
+            .select("*", { count: "exact", head: true }),
+            admin
+                .from("ideas")
+                .select("*", { count: "exact", head: true })
+                .neq("confidence_level", "INSUFFICIENT"),
+        ]);
 
         return NextResponse.json({
             latestRun,
             ideaCount: visibleIdeas.length,
             trackedPostCount,
-            archiveIdeaCount,
+            archiveIdeaCount: archiveIdeaCount || archiveIdeas.length,
             archivePostCount: archivePostCount || 0,
             executionMode,
             ...extractScraperRunHealth(latestRun),

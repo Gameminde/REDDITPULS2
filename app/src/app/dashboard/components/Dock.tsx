@@ -153,7 +153,7 @@ export function Dock({
 
     return (
         <div
-            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[1080px] overflow-x-auto"
+            className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[980px] overflow-x-auto"
             style={{ scrollbarWidth: "none" }}
         >
             <nav
@@ -161,8 +161,8 @@ export function Dock({
                 style={{
                     background: "hsla(0,0%,4%,0.85)",
                     border: "1px solid hsl(0 0% 100% / 0.07)",
-                    borderRadius: 16,
-                    padding: "8px 12px",
+                    borderRadius: 15,
+                    padding: "7px 10px",
                     backdropFilter: "blur(40px) saturate(200%)",
                     boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.05), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px hsla(16,100%,50%,0.05)",
                 }}
@@ -187,7 +187,7 @@ export function Dock({
                                             emitValidationStorageChange();
                                         }
                                     }}
-                                    className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
+                                    className={`relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider ${
                                         isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
                                     }`}
                                     style={isActive
@@ -195,7 +195,7 @@ export function Dock({
                                         : { border: "1px solid transparent" }}
                                 >
                                     <div className="relative">
-                                        <Icon className="w-[18px] h-[18px]" />
+                                        <Icon className="w-4 h-4" />
                                         {badgeCount > 0 && (
                                             <span className="absolute -top-2 -right-2 min-w-[16px] h-[16px] px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-mono flex items-center justify-center">
                                                 {badgeCount > 99 ? "99+" : badgeCount}
@@ -219,7 +219,7 @@ export function Dock({
                 {showBetaBadge ? (
                     <>
                         <div
-                            className="relative flex items-center gap-2 px-4 py-2 rounded-xl min-w-[60px] text-[10px] tracking-wider text-primary"
+                            className="relative flex items-center gap-2 px-3 py-1.5 rounded-xl min-w-[54px] text-[10px] tracking-wider text-primary"
                             style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                         >
                             <Sparkles className="w-[16px] h-[16px]" />
@@ -235,24 +235,24 @@ export function Dock({
                 {isGuest ? (
                     <Link
                         href="/login"
-                        className="relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider text-primary"
+                        className="relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider text-primary"
                         style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                     >
-                        <LogIn className="w-[18px] h-[18px]" />
+                        <LogIn className="w-4 h-4" />
                         <span className="font-medium">Log In</span>
                     </Link>
                 ) : (
                     <>
                         <Link
                             href="/dashboard/settings"
-                            className={`relative flex flex-col items-center gap-[3px] px-4 py-2 rounded-xl min-w-[60px] transition-all duration-150 text-[10px] tracking-wider ${
+                            className={`relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider ${
                                 currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
                             }`}
                             style={currentPath?.startsWith("/dashboard/settings")
                                 ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
                                 : { border: "1px solid transparent" }}
                         >
-                            <Settings className="w-[18px] h-[18px]" />
+                            <Settings className="w-4 h-4" />
                             <span className="font-medium">Settings</span>
                             {currentPath?.startsWith("/dashboard/settings") && (
                                 <span className="absolute bottom-1 w-1 h-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />

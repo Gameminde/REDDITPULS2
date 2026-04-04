@@ -103,7 +103,7 @@ export function DashboardLayout({
                         modelCount={modelCount}
                         ideaCount={ideaCount}
                     />
-                    <main className="flex-1 overflow-y-auto relative z-10 p-6 lg:p-8 pb-32">
+                    <main className="flex-1 overflow-y-auto relative z-10 p-5 lg:p-7 pb-28">
                         {children}
                     </main>
                 </div>

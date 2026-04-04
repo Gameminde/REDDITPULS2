@@ -116,9 +116,9 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
     };
 
     return (
-        <div className="sidebar" style={{ width: 240 }}>
+        <div className="sidebar" style={{ width: 216 }}>
             {/* Header */}
-            <div style={{ padding: "20px 18px 12px" }}>
+            <div style={{ padding: "16px 16px 10px" }}>
                 <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
                     <motion.div
                         animate={{
@@ -137,7 +137,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
             </div>
 
             {/* Nav Groups */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px" }}>
                 <NavGroup label="Market"       items={marketItems}       index={0} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Validate"     items={validateItems}     index={1} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Monitor"      items={monitorItems}      index={2} pathname={pathname} isPremium={isPremium} />
@@ -165,13 +165,13 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                 {!isPremium && (
                     <motion.div
                         className="animated-gradient-border"
-                        style={{ borderRadius: 12, margin: "20px 4px 0", overflow: "visible" }}
+                        style={{ borderRadius: 12, margin: "16px 4px 0", overflow: "visible" }}
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.4, duration: 0.5 }}
                     >
                         <div style={{
-                            padding: 16, borderRadius: 12,
+                            padding: 14, borderRadius: 12,
                             background: "var(--bg-sidebar)",
                             position: "relative",
                         }}>
@@ -195,7 +195,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
 
             {/* Footer — Settings + User + Logout */}
             <div style={{
-                padding: "12px 18px 16px",
+                padding: "10px 16px 14px",
                 borderTop: "1px solid rgba(255,255,255,0.06)",
                 display: "flex", flexDirection: "column", gap: 8,
             }}>

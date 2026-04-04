@@ -139,20 +139,20 @@ export function TopBar({
 
     return (
         <header
-            className="sticky top-0 z-50 flex h-11 items-center justify-between px-6"
+            className="sticky top-0 z-50 flex h-10 items-center justify-between px-5"
             style={{
                 background: "hsla(0,0%,4%,0.7)",
                 borderBottom: "1px solid hsl(0 0% 100% / 0.07)",
                 backdropFilter: "blur(20px)",
             }}
         >
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
                 <BrandLogo compact uppercase />
 
                 <div className="hidden h-3 w-px bg-border sm:block" />
 
                 <div
-                    className="hidden items-center gap-1.5 rounded-full px-2.5 py-0.5 sm:flex"
+                    className="hidden items-center gap-1.5 rounded-full px-2 py-0.5 sm:flex"
                     style={isGuest || BETA_FULL_ACCESS
                         ? { background: "hsla(16,100%,50%,0.08)", border: "1px solid hsla(16,100%,50%,0.2)" }
                         : { background: "hsla(134,61%,55%,0.08)", border: "1px solid hsla(134,61%,55%,0.2)" }}
@@ -161,14 +161,14 @@ export function TopBar({
                         className={`status-live h-[5px] w-[5px] rounded-full ${isGuest || BETA_FULL_ACCESS ? "bg-primary" : "bg-build"}`}
                         style={{ animation: `${isGuest || BETA_FULL_ACCESS ? "pulse-orange" : "pulse-green"} 2s ease infinite` }}
                     />
-                    <span className={`text-[11px] font-mono font-medium ${isGuest || BETA_FULL_ACCESS ? "text-primary" : "text-build"}`}>
+                    <span className={`text-[10px] font-mono font-medium ${isGuest || BETA_FULL_ACCESS ? "text-primary" : "text-build"}`}>
                         {isGuest ? "OPEN BETA" : BETA_FULL_ACCESS ? "BETA FULL ACCESS" : "LIVE"}
                     </span>
                 </div>
 
                 <div className="hidden h-3 w-px bg-border md:block" />
 
-                <span className="hidden text-[11px] font-mono text-muted-foreground md:inline">
+                <span className="hidden text-[10px] font-mono text-muted-foreground md:inline">
                     {ideaCount.toLocaleString()} ideas discovered · {postCount.toLocaleString()} posts archived
                 </span>
             </div>

@@ -2022,7 +2022,7 @@ export default function StockMarketDashboard() {
     const usingExternalWorker = executionMode === "external";
 
     return (
-        <div style={{ padding: "24px 32px", maxWidth: 1400, margin: "0 auto" }}>
+        <div style={{ padding: "20px 28px", maxWidth: 1320, margin: "0 auto" }}>
             {/* Header */}
             <div className="surface-panel" style={{ padding: 24, borderRadius: 22, marginBottom: 24 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
@@ -2083,7 +2083,7 @@ export default function StockMarketDashboard() {
                             {usingExternalWorker ? (
                                 <>
                                     <ShieldAlert style={{ width: 15, height: 15 }} />
-                                    Managed by VPS worker
+                                    Auto updates enabled
                                 </>
                             ) : scanning ? (
                                 <>
@@ -2174,11 +2174,11 @@ export default function StockMarketDashboard() {
                         </motion.div>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#f97316" }}>
-                                {usingExternalWorker ? "VPS worker is scanning market sources..." : "Scanning the multi-source market stack..."}
+                                Scanning the multi-source market stack...
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
                                 {usingExternalWorker
-                                    ? "This host is read-only for scraping. Watch the live run status here while the VPS worker pushes fresh data into Supabase."
+                                    ? "Fresh market updates are running automatically for this environment."
                                     : "Reddit (42 subreddits) • Hacker News • ProductHunt • IndieHackers — this takes 3-8 minutes"}
                             </div>
                         </div>
@@ -2220,21 +2220,6 @@ export default function StockMarketDashboard() {
                     </motion.div>
                 )}
             </AnimatePresence>
-
-            {usingExternalWorker && !scanError && (
-                <div style={{
-                    padding: "12px 18px",
-                    borderRadius: 10,
-                    marginBottom: 16,
-                    background: "rgba(148,163,184,0.08)",
-                    border: "1px solid rgba(148,163,184,0.18)",
-                    color: "#cbd5e1",
-                    fontSize: 12,
-                    lineHeight: 1.55,
-                }}>
-                    Scraper execution is managed by the VPS worker for this environment. This host reads market data from Supabase, but local scan launches are intentionally disabled here.
-                </div>
-            )}
 
             <MarketIntelligenceSection
                 intelligence={marketIntelligence}
