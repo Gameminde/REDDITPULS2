@@ -739,9 +739,15 @@ const ValidatePage = () => {
 
     return (
         <div className="max-w-6xl mx-auto px-6 pt-10 pb-32 relative z-10">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                <h1 className="text-[32px] font-bold font-display tracking-tight-custom text-white">Validate Idea</h1>
-                <p className="text-muted-foreground mt-1 text-sm font-mono">AI-powered multi-pass market validation</p>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+                <div className="section-kicker mb-4">Validation Engine</div>
+                <h1 className="text-[34px] font-bold font-display tracking-tight-custom text-white md:text-[44px]">
+                    Extract the pain. Debate the build. Ship with conviction.
+                </h1>
+                <p className="mt-3 max-w-3xl text-sm leading-8 text-muted-foreground md:text-base">
+                    Launch one idea into the full multi-pass pipeline: decompose the wedge, scrape live demand, map competition,
+                    then let the debate engine turn raw signal into a final report.
+                </p>
             </motion.div>
 
             {validationError && (
@@ -802,7 +808,331 @@ const ValidatePage = () => {
             )}
 
             {/* ── Bento Grid ─────────────────────────────────── */}
-            <div className="grid grid-cols-12 gap-2.5" style={{ gridAutoRows: "80px" }}>
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.05 }}
+                    className="surface-panel p-6 md:p-7"
+                >
+                    <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                            <div className="text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
+                                Quick validate
+                            </div>
+                            <h2 className="mt-2 text-2xl font-semibold text-white">Give the engine a wedge to pressure-test.</h2>
+                            <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                                Be concrete about the buyer, the repeated pain, and the workflow gap. The clearer the wedge,
+                                the stronger the claim contract and evidence map you will get back.
+                            </p>
+                        </div>
+                        <div className="verdict-badge">
+                            <Terminal className="h-3 w-3" />
+                            Live debate engine
+                        </div>
+                    </div>
+
+                    <div className="surface-panel-soft focus-ring-orange rounded-[20px] p-5">
+                        <label className="mb-3 block text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            Describe your idea
+                        </label>
+                        <textarea
+                            value={idea}
+                            onChange={(e) => setIdea(e.target.value)}
+                            disabled={isValidating}
+                            placeholder="e.g. A tool that watches founder complaints across Reddit, clusters recurring workflow pain, and validates whether the wedge is strong enough to build."
+                            className="min-h-[260px] w-full resize-none bg-transparent text-base leading-8 text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono md:min-h-[300px]"
+                        />
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <div className="surface-panel-soft rounded-[18px] p-4">
+                            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                Target buyer
+                            </label>
+                            <input
+                                value={target}
+                                onChange={(e) => setTarget(e.target.value)}
+                                disabled={isValidating}
+                                placeholder="SaaS founders"
+                                className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
+                            />
+                        </div>
+
+                        <div className="surface-panel-soft rounded-[18px] p-4">
+                            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                Known competitors
+                            </label>
+                            <input
+                                value={competitors}
+                                onChange={(e) => setCompetitors(e.target.value)}
+                                disabled={isValidating}
+                                placeholder="GummySearch, SparkToro, Exploding Topics"
+                                className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
+                            />
+                        </div>
+
+                        <div className="surface-panel-soft rounded-[18px] p-4 md:col-span-2">
+                            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                Pain hypothesis
+                            </label>
+                            <textarea
+                                value={pain}
+                                onChange={(e) => setPain(e.target.value)}
+                                disabled={isValidating}
+                                placeholder="Manual validation is slow, fragmented, and too weak to justify building fast."
+                                className="min-h-[110px] w-full resize-none bg-transparent text-sm leading-7 text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
+                            />
+                        </div>
+                    </div>
+                </motion.div>
+
+                <div className="flex flex-col gap-4">
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 }}
+                        className="surface-panel p-5"
+                    >
+                        <div className="mb-4">
+                            <div className="text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
+                                Launch
+                            </div>
+                            <h3 className="mt-2 text-xl font-semibold text-white">Run the full validation flow.</h3>
+                            <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                                Scrape. Analyze. Debate. Report. One launch, one verdict.
+                            </p>
+                        </div>
+
+                        <motion.button
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.12 }}
+                            onClick={handleValidate}
+                            disabled={isValidating || !idea.trim() || Boolean(storedActiveValidationId)}
+                            whileHover={{ scale: isValidating ? 1 : 1.01, y: isValidating ? 0 : -1 }}
+                            whileTap={{ scale: isValidating ? 1 : 0.99 }}
+                            className="pulse-button w-full justify-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                            data-track-event="validate_cta_click"
+                            data-track-scope="product"
+                            data-track-label="launch validation"
+                        >
+                            {isValidating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5 fill-white" />}
+                            {isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation"}
+                        </motion.button>
+
+                        <p className="mt-3 text-center text-[11px] font-mono text-muted-foreground">
+                            {storedActiveValidationId
+                                ? "A validation is already running for this account."
+                                : "Full report with evidence, timing, competition, and multi-model debate."}
+                        </p>
+                    </motion.div>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.14 }}
+                        className="surface-panel p-5"
+                    >
+                        <div className="mb-4">
+                            <div className="text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
+                                Validation depth
+                            </div>
+                            <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                                Choose how much time and surface area the engine should spend on this wedge.
+                            </p>
+                        </div>
+
+                        <div className="space-y-2">
+                            {VALIDATION_DEPTHS.map((opt) => {
+                                const isActive = depth === opt.mode;
+                                const Icon = opt.mode === "quick" ? Search : opt.mode === "deep" ? FlaskConical : Telescope;
+                                return (
+                                    <button
+                                        key={opt.mode}
+                                        onClick={() => setDepth(opt.mode)}
+                                        disabled={isValidating}
+                                        className={`w-full rounded-[16px] border px-4 py-3 text-left transition-all disabled:opacity-40 ${
+                                            isActive
+                                                ? "border-primary/35 bg-primary/12 text-white shadow-[0_0_22px_rgba(255,69,0,0.12)]"
+                                                : "border-white/8 bg-white/[0.03] text-muted-foreground hover:border-white/14 hover:bg-white/[0.05]"
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`flex h-9 w-9 items-center justify-center rounded-2xl ${isActive ? "bg-primary/15 text-primary" : "bg-white/[0.05] text-muted-foreground"}`}>
+                                                <Icon className="h-4 w-4" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className={`text-sm font-semibold ${isActive ? "text-white" : "text-foreground"}`}>{opt.label}</div>
+                                                <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                                    ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`} target runtime
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </motion.div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.16 }}
+                            className="surface-panel-soft p-4 text-center"
+                        >
+                            <div
+                                className="font-mono text-[34px] font-extrabold leading-none text-primary tabular-nums"
+                                style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.32)" }}
+                            >
+                                {activeValidation
+                                    ? activeValidation.posts_found ||
+                                      Object.values(dataSources as Record<string, number>).reduce((a, b) => a + Number(b), 0) ||
+                                      "—"
+                                    : "—"}
+                            </div>
+                            <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Posts found</p>
+                        </motion.div>
+
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.18 }}
+                            className="surface-panel-soft p-4 text-center"
+                        >
+                            <div
+                                className="font-mono text-[34px] font-extrabold leading-none text-primary tabular-nums"
+                                style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.32)" }}
+                            >
+                                {activeValidation ? Object.keys(dataSources).length || "—" : "—"}
+                            </div>
+                            <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Platforms</p>
+                        </motion.div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="surface-panel p-5"
+                >
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Active Models</p>
+                    {configuredModels.length > 0 ? (
+                        <div className="space-y-2.5">
+                            {configuredModels.slice(0, 3).map((m: string) => {
+                                const active = isValidating || activeValidation?.status === "done";
+                                return (
+                                    <div key={m} className="flex items-center gap-2 rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                                        <span
+                                            className={`h-[6px] w-[6px] rounded-full ${active ? "bg-build" : "bg-muted-foreground/30"}`}
+                                            style={active ? { animation: "pulse-green 2s ease infinite" } : {}}
+                                        />
+                                        <span className="text-sm font-medium text-foreground">{m}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="flex min-h-[148px] flex-col items-center justify-center gap-2 text-center">
+                            <Settings className="w-4 h-4 text-muted-foreground/40" />
+                            <Link
+                                href="/dashboard/settings"
+                                className="text-[11px] font-mono text-muted-foreground hover:text-primary transition-colors"
+                            >
+                                Configure models →
+                            </Link>
+                        </div>
+                    )}
+                </motion.div>
+
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.24 }}
+                    className="surface-panel p-5 overflow-hidden"
+                >
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">
+                        Recent Validations
+                    </p>
+                    {history.length > 0 ? (
+                        <div className="space-y-2.5">
+                            {history.map((h) => (
+                                <Link key={h.id} href={`/dashboard/reports/${h.id}`} className="block group">
+                                    <div className="rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                                                <span
+                                                    className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold uppercase border shrink-0 ${getVerdictBg(h.verdict)} ${getVerdictColor(h.verdict)}`}
+                                                >
+                                                    {(h.verdict || "?").length > 7
+                                                        ? (h.verdict || "?").slice(0, 5)
+                                                        : h.verdict}
+                                                </span>
+                                                <span className="truncate text-[11px] text-foreground/70 group-hover:text-primary transition-colors">
+                                                    {h.idea_text.length > 42
+                                                        ? h.idea_text.slice(0, 42) + "…"
+                                                        : h.idea_text}
+                                                </span>
+                                            </div>
+                                            <span className="text-[11px] font-mono text-muted-foreground/50 whitespace-nowrap">
+                                                {h.confidence}%
+                                            </span>
+                                        </div>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex min-h-[148px] flex-col items-center justify-center gap-1 opacity-40">
+                            <Clock className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-[11px] font-mono text-muted-foreground">No validations yet</span>
+                        </div>
+                    )}
+                </motion.div>
+
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.28 }}
+                    className="surface-panel p-5"
+                >
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Pipeline</p>
+                    <div className="space-y-2.5">
+                        {pipelinePhases.map((phase, i) => (
+                            <div key={i} className="flex items-center gap-2.5 rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                                <div
+                                    className={`h-[8px] w-[8px] rounded-full flex-shrink-0 transition-all duration-300 ${
+                                        phase.done
+                                            ? "bg-build shadow-[0_0_6px_hsla(142,76%,45%,0.5)]"
+                                            : phase.active
+                                              ? "bg-primary shadow-[0_0_8px_hsla(16,100%,50%,0.5)] animate-pulse"
+                                              : "bg-muted-foreground/20"
+                                    }`}
+                                />
+                                <span
+                                    className={`text-[11px] font-mono transition-colors ${
+                                        phase.done
+                                            ? "text-build"
+                                            : phase.active
+                                              ? "text-primary font-semibold"
+                                              : "text-muted-foreground/40"
+                                    }`}
+                                >
+                                    {phase.label}
+                                </span>
+                                {phase.done && <CheckCircle2 className="ml-auto h-3 w-3 text-build" />}
+                                {phase.active && <Loader2 className="ml-auto h-3 w-3 animate-spin text-primary" />}
+                            </div>
+                        ))}
+                    </div>
+                </motion.div>
+            </div>
+
+            <div className="hidden grid-cols-12 gap-2.5" style={{ gridAutoRows: "80px" }}>
 
                 {/* Idea textarea — 8 cols, 4 rows */}
                 <motion.div
@@ -1140,7 +1470,7 @@ const ValidatePage = () => {
                                 <div className="flex items-center justify-between gap-4">
                                     <div>
                                         <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">
-                                            Searching across Reddit, Hacker News, Product Hunt, and Indie Hackers...
+                                            Searching across Reddit, Hacker News, Product Hunt, Indie Hackers, and deeper repo/review lanes when relevant...
                                         </div>
                                         <div className="mt-1 text-[10px] text-muted-foreground">
                                             Live activity pulse: {scrapingActivityPulse}

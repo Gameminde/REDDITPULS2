@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase-server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { trackServerEvent } from "@/lib/analytics";
 import { buildAlertEvidence, buildEvidenceBackedTrust, buildEvidenceSummary } from "@/lib/evidence";
 
 const supabaseAdmin = createAdminClient(
@@ -95,5 +96,19 @@ export async function POST(req: NextRequest) {
         .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    await trackServerEvent(req, {
+        eventName: "alert_created",
+        scope: "product",
+        userId: user.id,
+        route: "/api/alerts",
+        properties: {
+            validation_id: body.validation_id || null,
+            keyword_count: keywords.length,
+            subreddit_count: subreddits.length,
+            min_score: Number(body.min_score || 10),
+        },
+    });
+
     return NextResponse.json({ id: data.id, created: data.created_at }, { status: 201 });
 }

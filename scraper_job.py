@@ -1,7 +1,7 @@
 """
 Opportunity Engine — Scraper Job (run from your PC)
 Master background script that:
-  1. Scrapes Reddit (15 subs) + HN + PH + IH
+  1. Scrapes Reddit + HN + PH + IH + GitHub Issues (+ optional G2 / Jobs)
   2. Clusters posts into idea topics
   3. Calculates the "stock price" for each idea
   4. Stores results in Supabase (ideas + idea_history)
@@ -210,6 +210,73 @@ def load_user_requested_subreddits():
     all_subs = list(dict.fromkeys(BASE_SUBREDDITS + extra_subs))
     print(f"  [Scraper] Covering {len(all_subs)} subreddits ({len(extra_subs)} user-discovered)")
     return all_subs
+
+
+def _has_market_g2_credentials():
+    return bool(
+        os.environ.get("G2_API_TOKEN", "").strip()
+        or os.environ.get("G2_ACCESS_TOKEN", "").strip()
+        or os.environ.get("G2_TOKEN", "").strip()
+    )
+
+
+def _has_market_job_credentials():
+    return bool(
+        os.environ.get("ADZUNA_APP_ID", "").strip()
+        and os.environ.get("ADZUNA_APP_KEY", "").strip()
+    )
+
+
+def default_market_sources():
+    sources = ["reddit", "hackernews", "producthunt", "indiehackers", "githubissues"]
+    if _has_market_g2_credentials():
+        sources.append("g2_review")
+    if _has_market_job_credentials():
+        sources.append("job_posting")
+    return sources
+
+
+def _rank_market_topic_targets(posts, topic_filter=None):
+    ranked = []
+    seen = set()
+
+    for slug in topic_filter or []:
+        clean = str(slug or "").strip()
+        if clean and clean in TRACKED_TOPICS and clean not in seen:
+            seen.add(clean)
+            ranked.append(clean)
+
+    counts = Counter()
+    for post in posts or []:
+        for slug in classify_post_to_topics(post):
+            if slug in TRACKED_TOPICS:
+                counts[slug] += 1
+
+    for slug, _count in counts.most_common():
+        if slug not in seen:
+            seen.add(slug)
+            ranked.append(slug)
+
+    for slug in TRACKED_TOPICS.keys():
+        if slug not in seen:
+            seen.add(slug)
+            ranked.append(slug)
+
+    return ranked
+
+
+def _filter_market_topic_targets(topic_slugs, allowed_categories=None, limit=4):
+    allowed = set(allowed_categories or [])
+    selected = []
+    for slug in topic_slugs or []:
+        topic_info = TRACKED_TOPICS.get(slug) or {}
+        category = str(topic_info.get("category") or "").strip().lower()
+        if allowed and category not in allowed:
+            continue
+        selected.append(slug)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def reconcile_stale_scraper_runs(max_age_hours=6):
@@ -2358,7 +2425,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     idea_upsert_failures = []
     all_posts = []
     source_counts = Counter()
-    sources = sources or ["reddit", "hackernews", "producthunt", "indiehackers"]
+    sources = sources or default_market_sources()
     if mode == "quick":
         sources = [source for source in sources if source in {"reddit", "hackernews"}]
     elif mode == "trends":
@@ -2460,6 +2527,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     reddit_degraded_reason = ""
     healthy_sources = []
     degraded_sources = []
+    optional_source_notes = []
 
     if "reddit" in sources:
         reddit_primary_stats = {}
@@ -2710,6 +2778,124 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             run_notes.append(note)
             degraded_sources.append("indiehackers")
             print(f"  [!] {note}")
+
+    active_topic_targets = _rank_market_topic_targets(all_posts, topic_filter)
+
+    if "githubissues" in sources:
+        print("\n  [7/9] Enriching GitHub Issues...")
+        github_targets = _filter_market_topic_targets(
+            active_topic_targets,
+            allowed_categories={"dev-tools", "ai", "data", "productivity", "saas"},
+            limit=4,
+        ) or _filter_market_topic_targets(active_topic_targets, limit=4)
+        try:
+            from market_optional_sources import scrape_market_github_posts
+
+            github_result = scrape_market_github_posts(
+                github_targets,
+                TRACKED_TOPICS,
+                max_topics=max(1, len(github_targets)),
+            )
+            github_posts = github_result.get("posts", [])
+            added = _merge(github_posts, bucket="live")
+            optional_source_notes.append(
+                f"GitHub Issues: topics={','.join(github_targets) or 'none'}, posts={added}"
+            )
+            healthy_sources.append("githubissues")
+            if added > 0:
+                print(f"  [OK] GitHub Issues: +{added} posts across {len(github_targets)} topics")
+            else:
+                note = f"GitHub Issues returned 0 posts across {len(github_targets)} topic targets"
+                run_notes.append(note)
+                print(f"  [!] {note}")
+        except Exception as e:
+            note = f"GitHub Issues skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("githubissues")
+            print(f"  [!] {note}")
+
+    if "g2_review" in sources:
+        print("\n  [8/9] Enriching G2 reviews...")
+        g2_targets = _filter_market_topic_targets(
+            active_topic_targets,
+            allowed_categories={"fintech", "productivity", "marketing", "saas", "ecommerce", "data", "hr"},
+            limit=3,
+        )
+        try:
+            from market_optional_sources import scrape_market_g2_posts
+
+            g2_result = scrape_market_g2_posts(
+                g2_targets,
+                TRACKED_TOPICS,
+                max_topics=max(1, len(g2_targets)),
+                timeout_seconds=45,
+            )
+            if not g2_result.get("executed", True):
+                note = f"G2 skipped: {g2_result.get('reason') or 'not configured'}"
+                run_notes.append(note)
+                degraded_sources.append("g2_review")
+                print(f"  [!] {note}")
+            else:
+                g2_posts = g2_result.get("posts", [])
+                added = _merge(g2_posts, bucket="live")
+                optional_source_notes.append(
+                    f"G2 reviews: topics={','.join(g2_targets) or 'none'}, posts={added}"
+                )
+                healthy_sources.append("g2_review")
+                if added > 0:
+                    print(f"  [OK] G2 reviews: +{added} complaint posts")
+                else:
+                    note = f"G2 returned 0 review complaints across {len(g2_targets)} topic targets"
+                    run_notes.append(note)
+                    print(f"  [!] {note}")
+        except Exception as e:
+            note = f"G2 skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("g2_review")
+            print(f"  [!] {note}")
+
+    if "job_posting" in sources:
+        print("\n  [9/9] Enriching job postings...")
+        job_targets = _filter_market_topic_targets(
+            active_topic_targets,
+            allowed_categories={"fintech", "productivity", "marketing", "saas", "ecommerce", "hr", "data", "dev-tools", "ai"},
+            limit=3,
+        )
+        try:
+            from market_optional_sources import scrape_market_job_posts
+
+            job_result = scrape_market_job_posts(
+                job_targets,
+                TRACKED_TOPICS,
+                max_topics=max(1, len(job_targets)),
+                timeout_seconds=35,
+                max_posts=45,
+            )
+            if not job_result.get("executed", True):
+                note = f"Jobs skipped: {job_result.get('reason') or 'not configured'}"
+                run_notes.append(note)
+                degraded_sources.append("job_posting")
+                print(f"  [!] {note}")
+            else:
+                job_posts = job_result.get("posts", [])
+                added = _merge(job_posts, bucket="live")
+                optional_source_notes.append(
+                    f"Jobs: topics={','.join(job_targets) or 'none'}, posts={added}"
+                )
+                healthy_sources.append("job_posting")
+                if added > 0:
+                    print(f"  [OK] Jobs: +{added} postings")
+                else:
+                    note = f"Jobs returned 0 postings across {len(job_targets)} topic targets"
+                    run_notes.append(note)
+                    print(f"  [!] {note}")
+        except Exception as e:
+            note = f"Jobs skipped: {type(e).__name__}: {e}"
+            run_notes.append(note)
+            degraded_sources.append("job_posting")
+            print(f"  [!] {note}")
+
+    run_notes.extend(optional_source_notes[:3])
 
     source_health_note = _format_source_health_note(healthy_sources, degraded_sources)
     if source_health_note not in run_notes:
@@ -3085,7 +3271,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Opportunity Engine — Scraper Job")
     parser.add_argument("--sources", nargs="+", default=None,
-                        choices=["reddit", "hackernews", "producthunt", "indiehackers"],
+                        choices=["reddit", "hackernews", "producthunt", "indiehackers", "githubissues", "g2_review", "job_posting"],
                         help="Which sources to scrape")
     parser.add_argument("--topics", type=str, default=None,
                         help="Comma-separated topic slugs to update (e.g. 'invoice-automation,crm-for-freelancers')")

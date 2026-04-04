@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { buildMarketIdeas } from "@/lib/market-feed";
 
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
+import { IDEA_LIST_SELECT, buildIdeasListPayload } from "@/lib/idea-api";
+import { buildMarketIdeas } from "@/lib/market-feed";
+import { createAdmin } from "@/lib/supabase-admin";
+import { createClient } from "@/lib/supabase-server";
 
 export async function GET(request: Request) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const sort = searchParams.get("sort") || "score";
     const direction = searchParams.get("direction") || "desc";
@@ -15,9 +20,10 @@ export async function GET(request: Request) {
     const includeExploratory = searchParams.get("include_exploratory") === "1";
     const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10) || 50, 200);
 
-    let query = supabase
+    const admin = createAdmin();
+    let query = admin
         .from("ideas")
-        .select("*")
+        .select(IDEA_LIST_SELECT)
         .neq("confidence_level", "INSUFFICIENT");
 
     if (category) {
@@ -50,9 +56,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const ideas = buildMarketIdeas((data || []) as Array<Record<string, unknown>>, {
+    return NextResponse.json(buildIdeasListPayload((data || []) as unknown as Array<Record<string, unknown>>, {
         includeExploratory,
-    });
-
-    return NextResponse.json({ ideas, total: ideas.length });
+    }));
 }

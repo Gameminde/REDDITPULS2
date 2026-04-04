@@ -27,10 +27,22 @@ export default function PublicPricingPage() {
                         <BrandLogo compact uppercase />
                     </Link>
                     <div className="flex items-center gap-5 text-xs font-semibold">
-                        <Link href="/how-it-works" className="text-muted-foreground hover:text-white transition-colors">
+                        <Link
+                            href="/how-it-works"
+                            className="text-muted-foreground hover:text-white transition-colors"
+                            data-track-event="pricing_how_it_works_click"
+                            data-track-scope="marketing"
+                            data-track-label="pricing nav how it works"
+                        >
                             How it works
                         </Link>
-                        <Link href="/login" className="text-white hover:text-primary transition-colors">
+                        <Link
+                            href="/login"
+                            className="text-white hover:text-primary transition-colors"
+                            data-track-event="pricing_signin_click"
+                            data-track-scope="marketing"
+                            data-track-label="pricing nav sign in"
+                        >
                             Sign in
                         </Link>
                     </div>

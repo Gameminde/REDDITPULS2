@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import { Suspense } from "react";
 import './globals.css';
 import { ThreeBackgroundWrapper } from '@/app/components/ThreeBackgroundWrapper';
+import { AnalyticsTracker } from '@/lib/analytics-client';
 import { APP_DESCRIPTION, APP_NAME } from '@/lib/brand';
 
 export const metadata: Metadata = {
@@ -23,6 +25,9 @@ export default function RootLayout({
       <body className="bg-background text-foreground antialiased" suppressHydrationWarning>
         <ThreeBackgroundWrapper />
         <div className="relative z-10 w-full min-h-screen">
+          <Suspense fallback={null}>
+            <AnalyticsTracker />
+          </Suspense>
           {children}
         </div>
       </body>

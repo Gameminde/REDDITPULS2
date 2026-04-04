@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { trackServerEvent } from "@/lib/analytics";
 import { buildValidationTrust } from "@/lib/trust";
 import { loadWatchlist, safeParseJson, watchlistErrorMessage } from "@/lib/watchlist-data";
 
@@ -366,6 +367,17 @@ export async function POST(request: Request) {
                 : undefined,
         }, { status });
     }
+
+    await trackServerEvent(request, {
+        eventName: "watchlist_added",
+        scope: "product",
+        userId: user.id,
+        route: "/api/watchlist",
+        properties: {
+            idea_id: ideaId,
+            validation_id: validationId,
+        },
+    });
 
     return NextResponse.json({ watchlist: data });
 }

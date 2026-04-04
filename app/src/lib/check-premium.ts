@@ -20,6 +20,31 @@ const FOUNDER_EMAILS = [
     "cheriet.samimhamed@gmail.com",
 ];
 
+function hasAdminOverride(user: {
+    email?: string | null;
+    app_metadata?: Record<string, unknown> | null;
+    user_metadata?: Record<string, unknown> | null;
+} | null | undefined) {
+    if (!user) return false;
+
+    const email = String(user.email || "").toLowerCase();
+    if (email && FOUNDER_EMAILS.includes(email)) {
+        return true;
+    }
+
+    const appMetadata = user.app_metadata || {};
+    const userMetadata = user.user_metadata || {};
+
+    return (
+        appMetadata.admin === true
+        || appMetadata.founder === true
+        || appMetadata.role === "admin"
+        || userMetadata.is_admin === true
+        || userMetadata.is_founder === true
+        || userMetadata.app_role === "admin"
+    );
+}
+
 export async function checkPremium(
     supabase: SupabaseClient,
     userId: string
@@ -44,7 +69,7 @@ export async function checkPremium(
         if (!error) {
             // DB worked fine, user just isn't premium
             const { data: { user } } = await supabase.auth.admin.getUserById(userId);
-            if (user?.email && FOUNDER_EMAILS.includes(user.email.toLowerCase())) {
+            if (hasAdminOverride(user)) {
                 return { isPremium: true, plan: "founder" };
             }
             return { isPremium: false, plan: data?.plan || "free" };
@@ -54,7 +79,7 @@ export async function checkPremium(
     // EMERGENCY FALLBACK: DB is unreachable, allow founders through
     try {
         const { data: { user } } = await supabase.auth.admin.getUserById(userId);
-        if (user?.email && FOUNDER_EMAILS.includes(user.email.toLowerCase())) {
+        if (hasAdminOverride(user)) {
             return { isPremium: true, plan: "founder" };
         }
     } catch { /* Auth also failed */ }

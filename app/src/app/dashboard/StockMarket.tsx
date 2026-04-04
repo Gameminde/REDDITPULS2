@@ -241,6 +241,9 @@ function formatSourceName(platform?: string | null) {
     if (value === "hackernews") return "Hacker News";
     if (value === "producthunt") return "Product Hunt";
     if (value === "indiehackers") return "Indie Hackers";
+    if (value === "githubissues") return "GitHub Issues";
+    if (value === "g2_review") return "G2 Reviews";
+    if (value === "job_posting") return "Job Signals";
     return platform || "Unknown";
 }
 
@@ -250,6 +253,9 @@ function formatSourceShort(platform?: string | null) {
     if (value === "hackernews") return "HN";
     if (value === "producthunt") return "PH";
     if (value === "indiehackers") return "IH";
+    if (value === "githubissues") return "GH";
+    if (value === "g2_review") return "G2";
+    if (value === "job_posting") return "JB";
     return String(platform || "?").slice(0, 2).toUpperCase();
 }
 
@@ -1305,28 +1311,29 @@ function StatCard({ label, value, icon: Icon, color, subtitle }: {
 }) {
     return (
         <motion.div
-            className="glass-card"
+            className="surface-panel-soft"
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{ padding: 20, borderRadius: 12, flex: 1, minWidth: 160 }}
+            style={{ padding: 22, borderRadius: 16, minWidth: 180 }}
         >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <div style={{
-                    width: 32, height: 32, borderRadius: 8,
-                    background: `${color}15`, display: "flex",
-                    alignItems: "center", justifyContent: "center",
-                }}>
-                    <Icon style={{ width: 16, height: 16, color }} />
-                </div>
-                <span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
                     {label}
                 </span>
+                <div style={{
+                    width: 38, height: 38, borderRadius: 12,
+                    background: `${color}15`, display: "flex",
+                    alignItems: "center", justifyContent: "center",
+                    border: `1px solid ${color}30`,
+                }}>
+                    <Icon style={{ width: 18, height: 18, color }} />
+                </div>
             </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#f1f5f9", fontFamily: "var(--font-mono)", lineHeight: 1 }}>
+            <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", fontFamily: "var(--font-display)", lineHeight: 1 }}>
                 {value}
             </div>
             {subtitle && (
-                <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{subtitle}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8, lineHeight: 1.6 }}>{subtitle}</div>
             )}
         </motion.div>
     );
@@ -1728,30 +1735,31 @@ function MarketIntelligenceSection({
 
     return (
         <div style={{ marginBottom: 24 }}>
-            <div className="glass-card" style={{ padding: 20, borderRadius: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 16 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="surface-panel" style={{ padding: 24, borderRadius: 22 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 20, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 20 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 620 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 10,
+                                width: 42,
+                                height: 42,
+                                borderRadius: 14,
                                 background: "rgba(249,115,22,0.12)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
+                                border: "1px solid rgba(249,115,22,0.2)",
                             }}>
-                                <Radar style={{ width: 16, height: 16, color: "#f97316" }} />
+                                <Radar style={{ width: 18, height: 18, color: "#f97316" }} />
                             </div>
                             <div>
-                                <div style={{ fontSize: 13, color: "#f8fafc", fontWeight: 800 }}>Market Intelligence</div>
-                                <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                                <div style={{ fontSize: 18, color: "#f8fafc", fontWeight: 800 }}>Market Intelligence</div>
+                                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
                                     Analyst-assist view on top of the raw market feed. It highlights sharper wedges without rewriting the feed itself.
                                 </div>
                             </div>
                         </div>
                         {intelligence?.summary && (
-                            <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55 }}>
+                            <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.7 }}>
                                 {intelligence.summary.emerging_wedge_count} emerging wedge{intelligence.summary.emerging_wedge_count === 1 ? "" : "s"} from {intelligence.summary.new_72h_count} new signal{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
                             </div>
                         )}
@@ -1768,9 +1776,9 @@ function MarketIntelligenceSection({
                                         display: "inline-flex",
                                         alignItems: "center",
                                         gap: 6,
-                                        padding: "8px 12px",
+                                        padding: "10px 14px",
                                         borderRadius: 999,
-                                        border: "none",
+                                        border: tab === entry.key ? `1px solid ${entry.color}33` : "1px solid rgba(255,255,255,0.08)",
                                         background: tab === entry.key ? `${entry.color}18` : "rgba(255,255,255,0.03)",
                                         color: tab === entry.key ? entry.color : "#94a3b8",
                                         cursor: "pointer",
@@ -1789,25 +1797,24 @@ function MarketIntelligenceSection({
                 {intelligence?.summary && (
                     <div style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                        gap: 10,
-                        marginBottom: 16,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                        gap: 12,
+                        marginBottom: 18,
                     }}>
                         <DetailMetric label="Raw ideas" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
                         <DetailMetric label="Feed visible" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
                         <DetailMetric label="New 72h" value={intelligence.summary.new_72h_count} accent="#fbbf24" />
-                        <DetailMetric label="Run health" value={intelligence.summary.run_health.toUpperCase()} accent={intelligence.summary.run_health === "healthy" ? "#86efac" : intelligence.summary.run_health === "degraded" ? "#fbbf24" : "#fca5a5"} />
                     </div>
                 )}
 
                 {loading ? (
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>Loading market intelligence...</div>
                 ) : currentRows.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
+                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, padding: "6px 2px" }}>
                         No derived signals are ready in this lane right now. The raw market feed below is still live.
                     </div>
                 ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
                         {tab === "emerging" && (currentRows as EmergingWedgeCard[]).map((card) => (
                             <EmergingWedgeTile key={card.slug} card={card} isGuest={isGuest} />
                         ))}
@@ -2011,137 +2018,96 @@ export default function StockMarketDashboard() {
     const postsInFeed = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
     const activePostCount = Math.max(scanStatus?.trackedPostCount || 0, postsInFeed);
     const archivePostCount = Math.max(scanStatus?.archivePostCount || 0, activePostCount);
-    const runHealth = scanStatus?.run_health || "healthy";
     const executionMode = scanStatus?.executionMode || "local";
     const usingExternalWorker = executionMode === "external";
-    const degradedSources = scanStatus?.degraded_sources || [];
-    const healthySources = scanStatus?.healthy_sources || [];
-    const runnerLabel = scanStatus?.runner_label || null;
-    const redditAccessMode = scanStatus?.reddit_access_mode || "unknown";
-    const redditAccessModeLabel = redditAccessMode === "provider_api"
-        ? "provider API"
-        : redditAccessMode === "authenticated_app"
-            ? "authenticated app"
-            : redditAccessMode === "anonymous_public"
-                ? "anonymous public"
-                : redditAccessMode === "connected_user"
-                    ? "connected user"
-                    : "unknown";
-    const redditPostCount = scanStatus?.reddit_post_count || 0;
-    const redditSuccessfulRequests = scanStatus?.reddit_successful_requests || 0;
-    const redditFailedRequests = scanStatus?.reddit_failed_requests || 0;
-    const redditDegradedReason = scanStatus?.reddit_degraded_reason || "";
-    const redditSourceDegraded = degradedSources.includes("reddit");
-    const marketIndicatorColor = scanning
-        ? "#f97316"
-        : runHealth === "failed"
-            ? "#ef4444"
-            : runHealth === "degraded"
-                ? "#f59e0b"
-                : "#22c55e";
-    const marketIndicatorLabel = scanning
-        ? "SCANNING"
-        : runHealth === "failed"
-            ? "FAILED"
-            : runHealth === "degraded"
-                ? "DEGRADED"
-                : "LIVE";
 
     return (
         <div style={{ padding: "24px 32px", maxWidth: 1400, margin: "0 auto" }}>
             {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
-                <div>
-                    <h1 style={{
-                        fontSize: 24, fontWeight: 800, color: "#f1f5f9",
-                        fontFamily: "var(--font-display)", marginBottom: 4, letterSpacing: "-0.02em",
-                    }}>
-                        Market Feed
-                    </h1>
-                    <p style={{ fontSize: 13, color: "#64748b" }}>
-                        Live market signals from Reddit, HN, ProductHunt and IndieHackers
-                    </p>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    {scanStatus && (scanStatus.archiveIdeaCount > 0 || scanStatus.ideaCount > 0) && (
-                        <span style={{
-                            fontSize: 11, color: "#64748b", display: "flex",
-                            alignItems: "center", gap: 4, background: "rgba(255,255,255,0.03)",
-                            padding: "4px 10px", borderRadius: 6,
+            <div className="surface-panel" style={{ padding: 24, borderRadius: 22, marginBottom: 24 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+                    <div style={{ maxWidth: 620 }}>
+                        <div className="section-kicker" style={{ marginBottom: 14 }}>Live market feed</div>
+                        <h1 style={{
+                            fontSize: 32, fontWeight: 900, color: "#f8fafc",
+                            fontFamily: "var(--font-display)", marginBottom: 8, letterSpacing: "-0.03em",
                         }}>
-                            <Activity style={{ width: 11, height: 11 }} />
-                            {liveIdeaCount.toLocaleString()} live signals
-                        </span>
-                    )}
+                            Read the market before you shape the wedge.
+                        </h1>
+                        <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.8 }}>
+                            Real-time market signals from Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
+                            Review complaints and hiring proof can widen the feed when those lanes are configured.
+                        </p>
+                    </div>
 
-                    {/* Scan Button */}
-                    <motion.button
-                        onClick={launchScan}
-                        disabled={scanning || usingExternalWorker}
-                        whileHover={scanning || usingExternalWorker ? {} : { scale: 1.03 }}
-                        whileTap={scanning || usingExternalWorker ? {} : { scale: 0.97 }}
-                        style={{
-                            display: "flex", alignItems: "center", gap: 6,
-                            padding: "8px 16px", borderRadius: 8,
-                            border: usingExternalWorker
-                                ? "1px solid rgba(148,163,184,0.24)"
-                                : "1px solid rgba(249,115,22,0.3)",
-                            background: usingExternalWorker
-                                ? "rgba(148,163,184,0.08)"
-                                : scanning
-                                ? "rgba(249,115,22,0.08)"
-                                : "linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.1))",
-                            color: usingExternalWorker ? "#cbd5e1" : scanning ? "#f97316" : "#fb923c",
-                            cursor: scanning ? "wait" : usingExternalWorker ? "not-allowed" : "pointer",
-                            fontSize: 13, fontWeight: 600,
-                            transition: "all 0.2s ease",
-                        }}
-                    >
-                        {usingExternalWorker ? (
-                            <>
-                                <ShieldAlert style={{ width: 14, height: 14 }} />
-                                Managed by VPS worker
-                            </>
-                        ) : scanning ? (
-                            <>
-                                <motion.div
-                                    animate={{ rotate: 360 }}
-                                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                                >
-                                    <Activity style={{ width: 14, height: 14 }} />
-                                </motion.div>
-                                Scanning...
-                            </>
-                        ) : isGuest ? (
-                            <>
-                                <Zap style={{ width: 14, height: 14 }} />
-                                Sign in to run scans
-                            </>
-                        ) : (
-                            <>
-                                <Zap style={{ width: 14, height: 14 }} />
-                                Scan for Opportunities
-                            </>
-                        )}
-                    </motion.button>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {scanStatus && (scanStatus.archiveIdeaCount > 0 || scanStatus.ideaCount > 0) && (
+                                <span style={{
+                                    fontSize: 11, color: "#94a3b8", display: "flex",
+                                    alignItems: "center", gap: 6, background: "rgba(255,255,255,0.03)",
+                                    padding: "7px 12px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)",
+                                }}>
+                                    <Activity style={{ width: 12, height: 12 }} />
+                                    {liveIdeaCount.toLocaleString()} live signals
+                                </span>
+                            )}
 
-                    {lastUpdated && (
-                        <span style={{ fontSize: 11, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
-                            <Clock style={{ width: 11, height: 11 }} /> {lastUpdated}
-                        </span>
-                    )}
-                    <motion.div
-                        animate={{ opacity: [1, 0.4, 1] }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                        style={{
-                            width: 8, height: 8, borderRadius: "50%",
-                            background: marketIndicatorColor,
-                            boxShadow: `0 0 8px ${marketIndicatorColor}88`,
-                        }}
-                    />
-                    <span style={{ fontSize: 11, color: marketIndicatorColor, fontWeight: 600 }}>
-                        {marketIndicatorLabel}
-                    </span>
+                            {lastUpdated && (
+                                <span style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+                                    <Clock style={{ width: 11, height: 11 }} /> {lastUpdated}
+                                </span>
+                            )}
+                        </div>
+
+                        <motion.button
+                            onClick={launchScan}
+                            disabled={scanning || usingExternalWorker}
+                            whileHover={scanning || usingExternalWorker ? {} : { scale: 1.02 }}
+                            whileTap={scanning || usingExternalWorker ? {} : { scale: 0.98 }}
+                            className="pulse-button"
+                            style={{
+                                border: usingExternalWorker
+                                    ? "1px solid rgba(148,163,184,0.24)"
+                                    : undefined,
+                                background: usingExternalWorker
+                                    ? "rgba(148,163,184,0.08)"
+                                    : scanning
+                                        ? "rgba(249,115,22,0.12)"
+                                        : undefined,
+                                color: usingExternalWorker ? "#cbd5e1" : undefined,
+                                cursor: scanning ? "wait" : usingExternalWorker ? "not-allowed" : "pointer",
+                                opacity: scanning || usingExternalWorker ? 0.95 : 1,
+                            }}
+                        >
+                            {usingExternalWorker ? (
+                                <>
+                                    <ShieldAlert style={{ width: 15, height: 15 }} />
+                                    Managed by VPS worker
+                                </>
+                            ) : scanning ? (
+                                <>
+                                    <motion.div
+                                        animate={{ rotate: 360 }}
+                                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                    >
+                                        <Activity style={{ width: 15, height: 15 }} />
+                                    </motion.div>
+                                    Scanning...
+                                </>
+                            ) : isGuest ? (
+                                <>
+                                    <Zap style={{ width: 15, height: 15 }} />
+                                    Sign in to run scans
+                                </>
+                            ) : (
+                                <>
+                                    <Zap style={{ width: 15, height: 15 }} />
+                                    Scan for Opportunities
+                                </>
+                            )}
+                        </motion.button>
+                    </div>
                 </div>
             </div>
 
@@ -2208,7 +2174,7 @@ export default function StockMarketDashboard() {
                         </motion.div>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#f97316" }}>
-                                {usingExternalWorker ? "VPS worker is scanning market sources..." : "Scanning 4 platforms for opportunities..."}
+                                {usingExternalWorker ? "VPS worker is scanning market sources..." : "Scanning the multi-source market stack..."}
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
                                 {usingExternalWorker
@@ -2266,48 +2232,7 @@ export default function StockMarketDashboard() {
                     fontSize: 12,
                     lineHeight: 1.55,
                 }}>
-                    Scraper execution is managed by the VPS worker for this environment. This host reads market data from Supabase and shows run health, but local scan launches are intentionally disabled here.
-                    {runnerLabel && ` Latest runner: ${runnerLabel}.`}
-                    {redditAccessMode !== "unknown" && ` Reddit lane: ${redditAccessModeLabel}.`}
-                </div>
-            )}
-
-            {!scanning && runHealth === "failed" && (
-                <div style={{
-                    padding: "12px 18px",
-                    borderRadius: 10,
-                    marginBottom: 16,
-                    background: "rgba(239,68,68,0.08)",
-                    border: "1px solid rgba(239,68,68,0.18)",
-                    color: "#fecaca",
-                    fontSize: 12,
-                    lineHeight: 1.55,
-                }}>
-                    Latest market refresh failed. The feed below is showing older stored signals and may be stale or incomplete.
-                    {healthySources.length > 0 && ` Healthy sources from the last recorded run: ${healthySources.join(", ")}.`}
-                    {degradedSources.length > 0 && ` Degraded sources: ${degradedSources.join(", ")}.`}
-                    {redditSourceDegraded && ` Reddit lane: ${redditAccessModeLabel}, ${redditPostCount} posts, ${redditSuccessfulRequests} successful requests, ${redditFailedRequests} failed requests.`}
-                    {redditDegradedReason && ` Reddit issue: ${redditDegradedReason}.`}
-                </div>
-            )}
-
-            {!scanning && runHealth === "degraded" && degradedSources.length > 0 && (
-                <div style={{
-                    padding: "12px 18px",
-                    borderRadius: 10,
-                    marginBottom: 16,
-                    background: "rgba(245,158,11,0.08)",
-                    border: "1px solid rgba(245,158,11,0.18)",
-                    color: "#fde68a",
-                    fontSize: 12,
-                    lineHeight: 1.55,
-                }}>
-                    Latest scan completed in a degraded state. Healthy sources: {healthySources.length > 0 ? healthySources.join(", ") : "none"}.
-                    Degraded sources: {degradedSources.join(", ")}.
-                    {redditSourceDegraded && (
-                        <> Reddit lane: {redditAccessModeLabel}, {redditPostCount} posts, {redditSuccessfulRequests} successful requests, {redditFailedRequests} failed requests.</>
-                    )}
-                    {redditDegradedReason && <> Reddit issue: {redditDegradedReason}.</>}
+                    Scraper execution is managed by the VPS worker for this environment. This host reads market data from Supabase, but local scan launches are intentionally disabled here.
                 </div>
             )}
 
@@ -2320,7 +2245,7 @@ export default function StockMarketDashboard() {
             />
 
             {/* Stats Row */}
-            <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 24 }}>
                 <StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" />
                 <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
                 <StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
@@ -2329,14 +2254,14 @@ export default function StockMarketDashboard() {
             </div>
 
             <div style={{
-                marginBottom: 18,
-                padding: "10px 14px",
-                borderRadius: 10,
+                marginBottom: 20,
+                padding: "14px 16px",
+                borderRadius: 16,
                 background: "rgba(148,163,184,0.07)",
                 border: "1px solid rgba(148,163,184,0.14)",
                 color: "#cbd5e1",
                 fontSize: 12,
-                lineHeight: 1.55,
+                lineHeight: 1.65,
             }}>
                 Archive memory: {archiveIdeaCount.toLocaleString()} non-junk signals discovered over time and {archivePostCount.toLocaleString()} posts archived.
                 The cards below are the live market feed, not a curated board.
@@ -2345,7 +2270,11 @@ export default function StockMarketDashboard() {
             {/* Tabs + Category Filter */}
             <div style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
-                marginBottom: 16, flexWrap: "wrap", gap: 12,
+                marginBottom: 18, flexWrap: "wrap", gap: 14,
+                padding: "12px 14px",
+                borderRadius: 16,
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.08)",
             }}>
                 <div style={{ display: "flex", gap: 4 }}>
                     {TABS.map((t) => {
@@ -2356,7 +2285,7 @@ export default function StockMarketDashboard() {
                                 onClick={() => setTab(t.key)}
                                 style={{
                                     display: "flex", alignItems: "center", gap: 6,
-                                    padding: "8px 16px", borderRadius: 8, border: "none",
+                                    padding: "9px 16px", borderRadius: 999, border: tab === t.key ? `1px solid ${t.color}33` : "1px solid rgba(255,255,255,0.06)",
                                     background: tab === t.key ? `${t.color}20` : "transparent",
                                     color: tab === t.key ? t.color : "#64748b",
                                     cursor: "pointer", fontSize: 13, fontWeight: 600,
@@ -2376,7 +2305,7 @@ export default function StockMarketDashboard() {
                             key={c.key}
                             onClick={() => setCategory(c.key)}
                             style={{
-                                padding: "4px 10px", borderRadius: 6, border: "none",
+                                padding: "6px 11px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.06)",
                                 background: category === c.key ? "rgba(249,115,22,0.15)" : "transparent",
                                 color: category === c.key ? "#f97316" : "#475569",
                                 cursor: "pointer", fontSize: 11, fontWeight: 500,
@@ -2392,7 +2321,7 @@ export default function StockMarketDashboard() {
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 6,
-                            padding: "4px 10px",
+                            padding: "6px 11px",
                             borderRadius: 999,
                             border: `1px solid ${showEarlySignals ? "rgba(245,158,11,0.22)" : "rgba(255,255,255,0.08)"}`,
                             background: showEarlySignals ? "rgba(245,158,11,0.12)" : "rgba(255,255,255,0.02)",
@@ -2413,10 +2342,13 @@ export default function StockMarketDashboard() {
             {/* Table Header */}
             <div style={{
                 display: "grid", gridTemplateColumns: "40px 1.5fr 100px 100px 100px 80px 80px",
-                gap: 12, padding: "8px 18px",
-                fontSize: 10, color: "#475569", fontWeight: 600,
+                gap: 12, padding: "12px 18px",
+                fontSize: 10, color: "#64748b", fontWeight: 700,
                 textTransform: "uppercase", letterSpacing: "0.08em",
-                borderBottom: "1px solid rgba(255,255,255,0.06)",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.02)",
+                borderTopLeftRadius: 14,
+                borderTopRightRadius: 14,
             }}>
                 <div style={{ textAlign: "center" }}>#</div>
                 <div>Market Signal</div>

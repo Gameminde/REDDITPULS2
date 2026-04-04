@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { trackServerEvent } from "@/lib/analytics";
+import { createAdmin } from "@/lib/supabase-admin";
 import { buildEnrichedValidationView } from "@/lib/validation-insights";
 import { getValidationJobStatus } from "@/lib/queue";
 
 const TERMINAL_STATUSES = new Set(["done", "error", "failed"]);
+
+function analyticsTableMissing(error: { code?: string | null; message?: string | null } | null | undefined) {
+    const code = String(error?.code || "").toUpperCase();
+    const message = String(error?.message || "").toLowerCase();
+    return code === "PGRST205"
+        || message.includes("analytics_events")
+        || message.includes("relation")
+        || message.includes("does not exist");
+}
 
 function parseFallbackReport(report: unknown): Record<string, unknown> {
     if (typeof report === "string") {
@@ -19,8 +30,44 @@ function parseFallbackReport(report: unknown): Record<string, unknown> {
     return report && typeof report === "object" ? report as Record<string, unknown> : {};
 }
 
+async function maybeTrackValidationTerminalEvent(
+    request: NextRequest,
+    userId: string | null | undefined,
+    jobId: string,
+    status: string,
+) {
+    const eventName = status === "done" ? "validation_completed" : "validation_failed";
+    const route = `/api/validate/${jobId}/status`;
+    const admin = createAdmin();
+    const { data, error } = await admin
+        .from("analytics_events")
+        .select("id")
+        .eq("event_name", eventName)
+        .eq("route", route)
+        .eq("user_id", userId || null)
+        .limit(1)
+        .maybeSingle();
+
+    if (error) {
+        if (analyticsTableMissing(error)) return;
+        throw error;
+    }
+    if (data) return;
+
+    await trackServerEvent(request, {
+        eventName,
+        scope: "product",
+        userId: userId || null,
+        route,
+        properties: {
+            validation_id: jobId,
+            terminal_status: status,
+        },
+    });
+}
+
 export async function GET(
-    _req: NextRequest,
+    req: NextRequest,
     { params }: { params: Promise<{ jobId: string }> },
 ) {
     try {
@@ -103,6 +150,10 @@ export async function GET(
             (queueFailed && !isTerminal) ||
             (queueJob?.state === "completed" && !isTerminal);
         const workerFailed = queueFailed || derivedReport.failure_stage === "worker";
+
+        if (derivedStatus === "done" || derivedStatus === "failed" || derivedStatus === "error") {
+            await maybeTrackValidationTerminalEvent(req, user?.id || null, jobId, derivedStatus);
+        }
 
         return NextResponse.json({
             job_id: jobId,

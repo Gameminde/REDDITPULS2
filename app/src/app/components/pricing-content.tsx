@@ -196,6 +196,9 @@ function PlanCard({
             <Link
                 href={href}
                 className="group inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all"
+                data-track-event={title === "Free" ? "pricing_free_cta_click" : "pricing_trial_cta_click"}
+                data-track-scope="marketing"
+                data-track-label={`${title} ${cta}`}
                 style={{
                     background: featured ? "linear-gradient(135deg, rgba(249,115,22,0.22), rgba(234,88,12,0.12))" : "rgba(255,255,255,0.05)",
                     border: `1px solid ${featured ? "rgba(249,115,22,0.28)" : "rgba(255,255,255,0.08)"}`,

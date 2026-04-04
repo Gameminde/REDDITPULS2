@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
+import { useDashboardViewer } from "@/app/dashboard/viewer-context";
 
 interface IdeaRow {
     id: string;
@@ -216,6 +217,7 @@ function MetricCard({
 
 export default function ExplorePage() {
     const supabase = useMemo(() => createClient(), []);
+    const { isGuest } = useDashboardViewer();
     const [ideas, setIdeas] = useState<IdeaRow[]>([]);
     const [filter, setFilter] = useState("All");
     const [sort, setSort] = useState("score");
@@ -227,7 +229,8 @@ export default function ExplorePage() {
         const load = async () => {
             try {
                 const sortParam = sort === "trending" ? "trending" : sort === "new" ? "new" : "score";
-                const res = await fetch(`/api/ideas?sort=${sortParam}&limit=50`, { cache: "no-store" });
+                const endpoint = isGuest ? "/api/public/ideas" : "/api/ideas";
+                const res = await fetch(`${endpoint}?sort=${sortParam}&limit=50`, { cache: "no-store" });
                 const data = await res.json();
                 if (data.ideas) setIdeas(data.ideas);
             } catch (err) {
@@ -237,7 +240,7 @@ export default function ExplorePage() {
             }
         };
         load();
-    }, [sort]);
+    }, [isGuest, sort]);
 
     useEffect(() => {
         const channel = supabase

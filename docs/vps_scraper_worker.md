@@ -71,6 +71,7 @@ Recommended:
 - `REDDIT_CLIENT_SECRET`
 - `SCRAPECREATORS_API_KEY` if you want provider-backed Reddit as the first lane
 - `REDDIT_OAUTH_REDIRECT_URI` if the same server also hosts the app and Reddit Connection Lab
+- `GITHUB_TOKEN` for higher GitHub Issues rate limits
 
 Optional:
 
@@ -79,6 +80,10 @@ Optional:
 - `PROXY_LIST`
 - `PRODUCTHUNT_API_KEY`
 - `PRODUCTHUNT_API_SECRET`
+- `G2_API_TOKEN` for buyer-review enrichment
+- `ADZUNA_APP_ID`
+- `ADZUNA_APP_KEY`
+- `ADZUNA_COUNTRY`
 - `SCRAPER_SOURCES`
 
 ## 5. Test one manual run

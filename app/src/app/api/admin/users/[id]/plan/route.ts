@@ -1,0 +1,20 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { requireAdmin } from "@/lib/admin-auth";
+import { updateUserPlanAsAdmin } from "@/lib/admin-data";
+
+export async function POST(
+    request: NextRequest,
+    { params }: { params: Promise<{ id: string }> },
+) {
+    const context = await requireAdmin("/admin/users");
+    const body = await request.json().catch(() => ({}));
+    const plan = String(body?.plan || "free").trim().toLowerCase();
+    const { id } = await params;
+    await updateUserPlanAsAdmin(id, plan, {
+        id: context.user.id,
+        email: context.user.email || context.profile?.email || "admin",
+        role: context.role,
+    });
+    return NextResponse.json({ ok: true });
+}

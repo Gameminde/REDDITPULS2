@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { trackClientEvent } from "@/lib/analytics-client";
 import { createClient } from "@/lib/supabase-browser";
 import { APP_NAME } from "@/lib/brand";
 
@@ -13,6 +14,7 @@ function LoginForm() {
     const searchParams = useSearchParams();
     const modeParam = searchParams.get("mode");
     const messageParam = searchParams.get("message");
+    const nextPath = searchParams.get("next") || "/dashboard";
     const googleAuthEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
     const initialMode: AuthMode = modeParam === "signup" ? "signup" : "login";
@@ -68,7 +70,7 @@ function LoginForm() {
                     setPassword("");
                     setConfirmPassword("");
                 } else {
-                    window.location.href = "/dashboard";
+                    window.location.href = nextPath;
                 }
                 return;
             }
@@ -84,7 +86,12 @@ function LoginForm() {
                 return;
             }
 
-            window.location.href = "/dashboard";
+            void trackClientEvent("login_success", "auth", {
+                method: "password",
+                redirect_to: nextPath,
+            }, "/login");
+
+            window.location.href = nextPath;
         } catch {
             setMessageTone("error");
             setMessage("Network error - please try again.");
@@ -106,9 +113,13 @@ function LoginForm() {
         const { error } = await supabase.auth.signInWithOAuth({
             provider: "google",
             options: {
-                redirectTo: `${window.location.origin}/auth/callback`,
+                redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
             },
         });
+
+        void trackClientEvent("google_oauth_start", "auth", {
+            redirect_to: nextPath,
+        }, "/login");
 
         if (error) {
             setLoading(false);
@@ -164,6 +175,8 @@ function LoginForm() {
                     <button
                         onClick={handleGoogle}
                         disabled={loading}
+                        data-track-event="google_oauth_click"
+                        data-track-scope="auth"
                         className="w-full flex items-center justify-center gap-3 border border-zinc-700 hover:border-zinc-500 rounded-lg py-3 mb-2 transition text-sm disabled:opacity-50"
                     >
                         <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -233,6 +246,8 @@ function LoginForm() {
                         <button
                             type="submit"
                             disabled={loading}
+                            data-track-event={mode === "login" ? "login_submit_click" : "signup_submit_click"}
+                            data-track-scope="auth"
                             className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3 rounded-lg font-semibold transition"
                         >
                             {loading ? "..." : mode === "login" ? "Log In" : "Create Account"}

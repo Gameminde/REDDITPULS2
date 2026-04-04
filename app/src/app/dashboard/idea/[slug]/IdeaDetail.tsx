@@ -10,6 +10,7 @@ import {
     Sparkles, BookmarkPlus, AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
+import { useDashboardViewer } from "@/app/dashboard/viewer-context";
 
 interface HistoryPoint {
     score: number;
@@ -255,6 +256,7 @@ export default function IdeaDetailPage() {
     const params = useParams();
     const router = useRouter();
     const slug = params?.slug as string;
+    const { isGuest } = useDashboardViewer();
 
     const [idea, setIdea] = useState<IdeaDetail | null>(null);
     const [history, setHistory] = useState<HistoryPoint[]>([]);
@@ -264,7 +266,8 @@ export default function IdeaDetailPage() {
     useEffect(() => {
         if (!slug) return;
         setLoading(true);
-        fetch(`/api/ideas/${slug}`)
+        const endpoint = isGuest ? `/api/public/ideas/${slug}` : `/api/ideas/${slug}`;
+        fetch(endpoint)
             .then((r) => r.json())
             .then((data) => {
                 setIdea(data.idea);
@@ -272,7 +275,7 @@ export default function IdeaDetailPage() {
             })
             .catch(console.error)
             .finally(() => setLoading(false));
-    }, [slug]);
+    }, [isGuest, slug]);
 
     const addToWatchlist = async () => {
         if (!idea) return;

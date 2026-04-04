@@ -14,6 +14,7 @@ import re
 import argparse
 import traceback
 import requests
+from datetime import datetime, timedelta, timezone
 from html import unescape as html_unescape
 from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
@@ -111,8 +112,16 @@ except ImportError:
     DEATHWATCH_AVAILABLE = False
 
 # ── Supabase config ──
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
+SUPABASE_URL = (
+    os.environ.get("SUPABASE_URL")
+    or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+)
+SUPABASE_KEY = (
+    os.environ.get("SUPABASE_SERVICE_KEY")
+    or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or os.environ.get("SUPABASE_SECRET_KEY")
+    or os.environ.get("SUPABASE_KEY", "")
+)
 _VALIDATION_WRITE_SUPPRESSED = False
 
 
@@ -192,6 +201,32 @@ def _supabase_rpc(function_name, payload, timeout=10):
     return response
 
 
+def _supabase_select_rows(table, params=None, timeout=15):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+
+    headers = dict(_supabase_headers())
+    headers.pop("Prefer", None)
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    response = requests.get(url, params=params or {}, headers=headers, timeout=timeout)
+    if response.status_code >= 400:
+        raise ValidationPersistenceError(
+            f"Supabase select {table} failed with {response.status_code}: {response.text[:200]}"
+        )
+    payload = response.json()
+    return payload if isinstance(payload, list) else []
+
+
+def _parse_isoish_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
 def _estimate_pain_count(posts):
     if not posts:
         return 0
@@ -211,6 +246,139 @@ def _estimate_pain_count(posts):
         if any(phrase in text for phrase in pain_phrases):
             total += 1
     return total
+
+
+def _normalize_db_history_post(row, matched_keywords):
+    permalink = str(row.get("permalink") or row.get("url") or "").strip()
+    url = str(row.get("url") or permalink).strip()
+    source = str(row.get("source") or "unknown").strip().lower()
+    external_id = str(row.get("id") or "").strip()
+    return {
+        "id": external_id,
+        "external_id": external_id,
+        "title": str(row.get("title") or "").strip(),
+        "selftext": str(row.get("selftext") or "").strip(),
+        "body": str(row.get("selftext") or "").strip(),
+        "full_text": str(row.get("full_text") or "").strip(),
+        "score": int(row.get("score", 0) or 0),
+        "num_comments": int(row.get("num_comments", 0) or 0),
+        "created_utc": str(row.get("created_utc") or row.get("scraped_at") or "").strip(),
+        "source": source,
+        "subreddit": str(row.get("subreddit") or "").strip(),
+        "author": str(row.get("author") or "").strip(),
+        "url": url,
+        "permalink": permalink or url,
+        "matched_keywords": matched_keywords,
+        "history_origin": "db_recent_30d",
+    }
+
+
+def _fetch_recent_db_history_posts(keywords, required_subreddits=None, days_back=30, max_posts=120, max_scan_rows=2500):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+
+    from engine.keyword_scraper import _keyword_matches
+
+    required_subs = {
+        str(sub).strip().lower().replace("r/", "").replace("/r/", "")
+        for sub in (required_subreddits or [])
+        if str(sub).strip()
+    }
+    keyword_tokens = {
+        token
+        for keyword in (keywords or [])
+        for token in re.findall(r"[a-z0-9]{4,}", str(keyword).lower())
+        if token not in {"with", "from", "that", "this", "your", "have", "will", "just"}
+    }
+    source_filter = "in.(reddit,reddit_comment,reddit_connected,hackernews,producthunt,indiehackers,githubissues,g2_review,job_posting,stackoverflow,vendor_blog)"
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+
+    rows = []
+    batch_size = 500
+    offset = 0
+    while offset < max_scan_rows:
+        batch = _supabase_select_rows(
+            "posts",
+            params={
+                "select": "id,title,selftext,full_text,score,num_comments,created_utc,source,subreddit,url,permalink,author,scraped_at,matched_phrases",
+                "scraped_at": f"gte.{cutoff_iso}",
+                "source": source_filter,
+                "order": "scraped_at.desc",
+                "limit": min(batch_size, max_scan_rows - offset),
+                "offset": offset,
+            },
+            timeout=20,
+        )
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < batch_size:
+            break
+        offset += len(batch)
+
+    candidates = []
+    seen_ids = set()
+    for row in rows:
+        external_id = str(row.get("id") or "").strip()
+        if not external_id or external_id in seen_ids:
+            continue
+
+        subreddit = str(row.get("subreddit") or "").strip().lower().replace("r/", "").replace("/r/", "")
+        title = str(row.get("title") or "").strip()
+        full_text = " ".join([
+            title,
+            str(row.get("selftext") or "").strip(),
+            str(row.get("full_text") or "").strip(),
+        ]).strip()
+        haystack = full_text.lower()
+        matched_keywords = [
+            str(keyword).strip()
+            for keyword in (keywords or [])
+            if str(keyword).strip() and _keyword_matches(str(keyword).strip(), haystack)
+        ]
+        token_overlap = sorted({token for token in keyword_tokens if token in haystack})
+
+        matched_phrases = [
+            str(item).strip()
+            for item in (row.get("matched_phrases") or [])
+            if str(item).strip()
+        ]
+        phrase_overlap = [
+            phrase for phrase in matched_phrases
+            if any(_keyword_matches(str(keyword).strip(), phrase.lower()) for keyword in (keywords or []) if str(keyword).strip())
+        ]
+
+        if not matched_keywords and not phrase_overlap and len(token_overlap) < 2:
+            continue
+
+        seen_ids.add(external_id)
+        relevance = len(matched_keywords) * 4 + len(phrase_overlap) * 2 + len(token_overlap) * 1.25
+        relevance += 2 if subreddit and subreddit in required_subs else 0
+        relevance += min(int(row.get("score", 0) or 0), 30) / 10
+        relevance += min(int(row.get("num_comments", 0) or 0), 20) / 5
+        if str(row.get("source") or "").strip().lower() in {"g2_review", "job_posting", "githubissues"}:
+            relevance += 1
+        if relevance < 2.5:
+            continue
+
+        normalized = _normalize_db_history_post(
+            row,
+            matched_keywords or phrase_overlap[:3] or token_overlap[:4],
+        )
+        normalized["_db_history_relevance"] = round(relevance, 2)
+        normalized["_db_history_scraped_at"] = str(row.get("scraped_at") or "").strip()
+        candidates.append(normalized)
+
+    candidates.sort(
+        key=lambda post: (
+            float(post.get("_db_history_relevance", 0) or 0),
+            int(post.get("score", 0) or 0),
+            int(post.get("num_comments", 0) or 0),
+            _parse_isoish_timestamp(post.get("_db_history_scraped_at") or post.get("created_utc")),
+        ),
+        reverse=True,
+    )
+    return candidates[:max_posts]
 
 
 def log_progress(validation_id, event):
@@ -2148,6 +2316,23 @@ def phase2_scrape(
             "issue": "GitHub Issues: scraper not available. Coverage may be reduced.",
         })
 
+    history_keywords = list(dict.fromkeys(
+        [str(keyword).strip() for keyword in (reddit_keywords + scrape_keywords[:6]) if str(keyword).strip()]
+    ))[:10]
+    db_history_posts = _fetch_recent_db_history_posts(
+        history_keywords,
+        required_subreddits=required_subreddits,
+        days_back=30,
+        max_posts=120 if mode in ("deep", "investigation") else 60,
+    )
+    scrape_audit["db_history_posts"] = len(db_history_posts)
+    print(f"  [DB] Recent history: {len(db_history_posts)} posts from the last 30 days")
+    log_progress(validation_id, {
+        "phase": "scraping",
+        "count": len(db_history_posts),
+        "message": f"Recent DB history: {len(db_history_posts)} posts from the last 30 days",
+    })
+
     all_posts = (
         reddit_posts
         + connected_reddit_posts
@@ -2160,6 +2345,7 @@ def phase2_scrape(
         + ih_posts
         + so_posts
         + gh_posts
+        + db_history_posts
     )
 
     # Apply signal weighting before dedup
@@ -2195,6 +2381,15 @@ def phase2_scrape(
     # Sort by weighted score — AI sees highest-signal posts first
     unique_posts.sort(key=lambda p: p.get("weighted_score", 0), reverse=True)
     unique_posts = _normalize_posts_with_taxonomy(unique_posts, idea_icp, required_subreddits)
+    source_counts = dict(
+        sorted(
+            Counter(
+                str(post.get("source") or "unknown").lower().strip()
+                for post in unique_posts
+                if str(post.get("source") or "").strip()
+            ).items()
+        )
+    )
     scrape_audit["source_taxonomy"] = summarize_taxonomy(unique_posts)
     log_progress(validation_id, {
         "phase": "dedup",

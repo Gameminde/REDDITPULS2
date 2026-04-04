@@ -1,6 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+
+import { trackServerEvent } from "@/lib/analytics";
+import { sanitizeNextPath } from "@/lib/auth-redirect";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
 function resolvePublicOrigin(request: Request): string {
@@ -30,26 +33,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const origin = resolvePublicOrigin(request);
     const code = searchParams.get("code");
-    const next = searchParams.get("next") ?? "/dashboard";
-
-    // ── SECURITY: Validate redirect target to prevent open redirect ──
-    // Must start with /, must not contain // (protocol-relative), must not start with /\
-    const isValidRedirect = (path: string): boolean => {
-        if (!path.startsWith("/")) return false;
-        if (path.startsWith("//")) return false;
-        if (path.startsWith("/\\")) return false;
-        if (path.includes("://")) return false;
-        // Only allow paths starting with /dashboard, /login, or /reset-password
-        if (
-            !path.startsWith("/dashboard")
-            && !path.startsWith("/login")
-            && !path.startsWith("/reset-password")
-            && path !== "/"
-        ) return false;
-        return true;
-    };
-
-    const safePath = isValidRedirect(next) ? next : "/dashboard";
+    const safePath = sanitizeNextPath(searchParams.get("next"), "/dashboard");
 
     if (code) {
         const cookieStore = await cookies();
@@ -66,7 +50,7 @@ export async function GET(request: Request) {
                             cookiesToSet.forEach(({ name, value, options }) =>
                                 cookieStore.set(name, value, options)
                             );
-                        } catch { }
+                        } catch {}
                     },
                 },
             }
@@ -81,7 +65,29 @@ export async function GET(request: Request) {
                 } catch (profileError) {
                     console.error("OAuth profile sync error:", profileError);
                 }
+
+                await trackServerEvent(request, {
+                    eventName: "google_oauth_success",
+                    scope: "auth",
+                    userId: user.id,
+                    route: safePath,
+                    properties: {
+                        provider: "google",
+                        redirect_to: safePath,
+                    },
+                });
+
+                await trackServerEvent(request, {
+                    eventName: "login_success",
+                    scope: "auth",
+                    userId: user.id,
+                    route: safePath,
+                    properties: {
+                        method: "oauth_google",
+                    },
+                });
             }
+
             return NextResponse.redirect(`${origin}${safePath}`);
         }
     }

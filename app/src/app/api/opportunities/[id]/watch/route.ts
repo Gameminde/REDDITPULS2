@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { trackServerEvent } from "@/lib/analytics";
 import { createClient } from "@/lib/supabase-server";
 import { createAdmin } from "@/lib/supabase-admin";
 import { hydrateIdeaForMarket } from "@/lib/market-feed";
@@ -54,6 +55,7 @@ async function loadOpportunityWithIdea(userId: string, opportunityId: string) {
 }
 
 export async function POST(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+    const request = _req;
     const user = await getAuthedUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -95,6 +97,17 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
         }
         return NextResponse.json({ error: upsertError.message }, { status: 500 });
     }
+
+    await trackServerEvent(request, {
+        eventName: "opportunity_watch_added",
+        scope: "product",
+        userId: user.id,
+        route: `/api/opportunities/${opportunityId}/watch`,
+        properties: {
+            opportunity_id: opportunityId,
+            source_slug: String(opportunity.primary_idea_slug || ""),
+        },
+    });
 
     return NextResponse.json({
         watching: true,

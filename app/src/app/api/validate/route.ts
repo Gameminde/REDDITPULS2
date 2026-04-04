@@ -1,11 +1,14 @@
-import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
+
+import { trackServerEvent } from "@/lib/analytics";
 import { checkPremium } from "@/lib/check-premium";
-import { enqueueValidationJob } from "@/lib/queue";
-import { isValidDepth, DEFAULT_DEPTH, type ValidationDepth } from "@/lib/validation-depth";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
+import { enqueueValidationJob } from "@/lib/queue";
 import { hasRedditLabOptions, type RedditLabValidationOptions } from "@/lib/reddit-lab";
 import { getRedditConnectionSummary, loadSourcePackForUser, resolveRedditLabContextForValidation } from "@/lib/reddit-lab-server";
+import { createClient } from "@/lib/supabase-server";
+import { getRuntimeSettings } from "@/lib/runtime-settings";
+import { DEFAULT_DEPTH, isValidDepth, type ValidationDepth } from "@/lib/validation-depth";
 
 const validateTimestamps = new Map<string, number[]>();
 const MAX_VALIDATIONS_PER_HOUR = 5;
@@ -32,17 +35,52 @@ export async function POST(req: NextRequest) {
         }
 
         if (!checkRateLimit(user.id)) {
-            return NextResponse.json({ error: "Rate limit exceeded — max 5 validations per hour" }, { status: 429 });
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "rate_limited" },
+            });
+            return NextResponse.json({ error: "Rate limit exceeded - max 5 validations per hour" }, { status: 429 });
         }
 
         const { isPremium } = await checkPremium(supabase, user.id);
         if (!isPremium) {
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "not_premium" },
+            });
             return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
+        }
+
+        const runtimeSettings = await getRuntimeSettings();
+        if (runtimeSettings.validations_paused) {
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "validations_paused" },
+            });
+            return NextResponse.json({
+                error: runtimeSettings.maintenance_note || "Validations are temporarily paused by the operator.",
+            }, { status: 503 });
         }
 
         const body = await req.json();
         const idea = typeof body?.idea === "string" ? body.idea : "";
         if (idea.trim().length < 10) {
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "idea_too_short" },
+            });
             return NextResponse.json({ error: "Idea must be at least 10 characters" }, { status: 400 });
         }
 
@@ -89,9 +127,19 @@ export async function POST(req: NextRequest) {
 
         if (error || !validation) {
             console.error("Validation insert error:", error?.code, error?.message);
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: {
+                    reason: error?.message || "insert_failed",
+                    code: error?.code || null,
+                },
+            });
             return NextResponse.json({
                 error: error?.code === "42P01"
-                    ? "idea_validations table not found — run schema_validations.sql in Supabase SQL Editor first!"
+                    ? "idea_validations table not found - run schema_validations.sql in Supabase SQL Editor first!"
                     : error?.message || "Could not create validation job",
             }, { status: 500 });
         }
@@ -104,6 +152,19 @@ export async function POST(req: NextRequest) {
                 depth,
                 origin: req.nextUrl.origin,
                 redditLab: redditLabOptions,
+            });
+
+            await trackServerEvent(req, {
+                eventName: "validation_queued",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: {
+                    validation_id: validation.id,
+                    job_id: jobId,
+                    depth,
+                    has_reddit_lab: Boolean(redditLabOptions),
+                },
             });
 
             return NextResponse.json({
@@ -128,10 +189,27 @@ export async function POST(req: NextRequest) {
             }
 
             console.error("[Validate] Queue enqueue error:", message);
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: {
+                    reason: "queue_enqueue",
+                    message,
+                    validation_id: validation.id,
+                },
+            });
             return NextResponse.json({ error: message }, { status: 500 });
         }
     } catch (error) {
         console.error("Validate POST error:", error);
+        await trackServerEvent(req, {
+            eventName: "validation_failed",
+            scope: "product",
+            route: "/dashboard/validate",
+            properties: { reason: "internal_server_error" },
+        });
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }

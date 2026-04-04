@@ -94,6 +94,21 @@ const liveSources = [
         name: "Indie Hackers",
         detail: "Operator pain, founder experiments, and build-in-public signals around emerging workflows.",
     },
+    {
+        key: "githubissues",
+        name: "GitHub Issues",
+        detail: "Open issue backlogs, feature requests, and product friction from the tools people already rely on.",
+    },
+    {
+        key: "g2_review",
+        name: "Review complaints",
+        detail: "Buyer-native frustration, missing features, and competitor weakness after teams have already paid.",
+    },
+    {
+        key: "job_posting",
+        name: "Hiring signals",
+        detail: "Teams hiring around a workflow or stack, which often reveals urgency, budget, and operational pain.",
+    },
 ];
 
 const fallbackPainExamples: LandingPainExample[] = [
@@ -156,6 +171,12 @@ function formatPlatform(value: string) {
             return "Product Hunt";
         case "indiehackers":
             return "Indie Hackers";
+        case "githubissues":
+            return "GitHub Issues";
+        case "g2_review":
+            return "G2 Reviews";
+        case "job_posting":
+            return "Job Signals";
         case "reddit":
             return "Reddit";
         default:
@@ -337,7 +358,7 @@ async function getLandingData() {
     } catch {
         return {
             sourceHealth: {
-                healthy_sources: ["reddit", "hackernews", "producthunt", "indiehackers"],
+                healthy_sources: ["reddit", "hackernews", "producthunt", "indiehackers", "githubissues"],
                 degraded_sources: [],
                 run_health: "healthy" as const,
                 runner_label: null,
@@ -360,7 +381,7 @@ async function getLandingData() {
 }
 
 export default async function LandingPage() {
-    const { sourceHealth, stats, painExamples, recentWedges } = await getLandingData();
+    const { stats, painExamples, recentWedges } = await getLandingData();
     const heroPain = painExamples[0];
     const heroWedge = recentWedges[0];
 
@@ -393,6 +414,9 @@ export default async function LandingPage() {
                         <Link
                             href="/dashboard"
                             className="inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs font-semibold text-white transition-all hover:-translate-y-0.5"
+                            data-track-event="open_beta_nav_click"
+                            data-track-scope="marketing"
+                            data-track-label="nav open beta"
                             style={{ background: "hsl(16 100% 50%)", boxShadow: "0 0 24px hsla(16,100%,50%,0.3)" }}
                         >
                             Open beta <ArrowRight className="w-3 h-3" />
@@ -402,154 +426,191 @@ export default async function LandingPage() {
             </nav>
 
             <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-16 px-6 pb-24 pt-28">
-                <section className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.02fr)_460px] xl:grid-cols-[minmax(0,1.08fr)_500px]">
-                    <div className="max-w-2xl">
-                        <div
-                            className="mb-6 inline-flex items-center gap-2 rounded-full px-3 py-1.5"
-                            style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
-                        >
-                            <span className="w-[5px] h-[5px] rounded-full bg-build status-live" style={{ animation: "pulse-green 2s ease infinite" }} />
-                            <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">
-                                {APP_NAME} open beta
-                            </span>
+                <section className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,470px)] xl:grid-cols-[minmax(0,1.1fr)_500px]">
+                    <div className="max-w-3xl">
+                        <div className="section-kicker mb-6">
+                            <span className="h-[6px] w-[6px] rounded-full bg-build status-live" />
+                            {APP_NAME} open beta
                         </div>
 
-                        <h1 className="mb-6 max-w-4xl font-display text-5xl font-extrabold leading-[0.94] tracking-[-0.05em] text-white md:text-7xl xl:text-[5.3rem]">
-                            Turn raw complaints into
-                            <span className="block orange-text">clear startup wedges.</span>
+                        <h1 className="max-w-4xl font-display text-5xl font-extrabold leading-[0.92] tracking-[-0.05em] text-white md:text-7xl xl:text-[5.7rem]">
+                            Extract.
+                            <span className="block orange-text orange-glow-text">Validate.</span>
+                            <span className="block">Dominate.</span>
                         </h1>
 
-                        <p className="mb-8 max-w-xl text-base leading-8 text-muted-foreground md:text-[1.05rem]">
+                        <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300 md:text-xl md:leading-9">
+                            Real-time Reddit intelligence. Multi-brain AI debate engine.
+                        </p>
+                        <p className="mt-4 max-w-2xl text-sm leading-8 text-muted-foreground md:text-base">
                             CueIdea watches live founder and buyer signal across Reddit, Hacker News, Product Hunt, and Indie Hackers,
-                            then shapes repeated pain into sharper wedges you can inspect before you build.
+                            then widens the market read with GitHub issue pressure, review complaints, and hiring signal when those lanes are available.
                         </p>
 
-                        <div className="mb-8 flex flex-wrap items-center gap-3">
+                        <div className="mt-8 flex flex-wrap items-center gap-3">
                             <Link
                                 href="/dashboard"
-                                className="inline-flex h-12 items-center gap-2 rounded-xl px-7 text-sm font-semibold text-white transition-all hover:-translate-y-0.5"
-                                style={{ background: "hsl(16 100% 50%)", boxShadow: "0 0 24px hsla(16,100%,50%,0.3)" }}
+                                className="pulse-button text-sm md:text-base"
+                                data-track-event="hero_validate_cta_click"
+                                data-track-scope="marketing"
+                                data-track-label="hero start validating"
                             >
-                                <Zap className="w-4 h-4 fill-white" />
-                                Open live board
+                                <Zap className="h-4 w-4 fill-white" />
+                                Start validating
                             </Link>
                             <Link
                                 href="/how-it-works"
-                                className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/10 px-6 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                                className="pulse-button pulse-button--ghost text-sm md:text-base"
+                                data-track-event="hero_how_it_works_click"
+                                data-track-scope="marketing"
+                                data-track-label="hero how it works"
                             >
-                                See the workflow <ArrowRight className="w-3.5 h-3.5" />
+                                See how it works <ArrowRight className="h-4 w-4" />
                             </Link>
                         </div>
 
-                        <div className="mb-8 grid gap-3 sm:grid-cols-3">
-                            <div className="bento-cell rounded-[18px] p-4">
+                        <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:max-w-2xl">
+                            <div className="proof-metric">
                                 <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Live proof</p>
-                                <p className="mt-2 text-3xl font-display font-black orange-text">{stats.shapedWedges || "12+"}</p>
-                                <p className="mt-1 text-sm text-muted-foreground">wedges taking shape right now</p>
+                                <p className="mt-3 text-4xl font-display font-black orange-text">{stats.shapedWedges || "12+"}</p>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Wedges taking shape on the live board right now.</p>
                             </div>
-                            <div className="bento-cell rounded-[18px] p-4">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Evidence volume</p>
-                                <p className="mt-2 text-3xl font-display font-black text-white">{stats.evidencePosts || "943"}</p>
-                                <p className="mt-1 text-sm text-muted-foreground">posts behind the visible board</p>
+                            <div className="proof-metric">
+                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Evidence tracked</p>
+                                <p className="mt-3 text-4xl font-display font-black text-white">{stats.evidencePosts || "943"}</p>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Posts already attached to visible market signals.</p>
                             </div>
-                            <div className="bento-cell rounded-[18px] p-4">
-                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Open beta</p>
-                                <p className="mt-2 text-3xl font-display font-black text-white">Full</p>
-                                <p className="mt-1 text-sm text-muted-foreground">signed-in testers get full access</p>
+                            <div className="proof-metric">
+                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Current proof loop</p>
+                                <p className="mt-3 text-lg font-semibold text-white">{heroPain.topic}</p>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                                    {heroPain.community} {"->"} {heroPain.wedge}
+                                </p>
+                            </div>
+                            <div className="proof-metric">
+                                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Beta access</p>
+                                <p className="mt-3 text-lg font-semibold text-white">Read the board. Validate the build.</p>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">Signed-in testers can inspect the product end to end.</p>
                             </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                            {liveSources.map((source) => {
-                                const healthy = sourceHealth.healthy_sources.includes(source.key);
-                                const degraded = sourceHealth.degraded_sources.includes(source.key);
-                                const label = degraded ? "degraded" : healthy ? "live" : "tracked";
-
-                                return (
-                                    <div
-                                        key={source.key}
-                                        className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-mono"
-                                        style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "hsl(0 0% 8% / 0.72)" }}
-                                    >
-                                        <span className={`w-2 h-2 rounded-full ${degraded ? "bg-yellow-400" : "bg-emerald-400"}`} />
-                                        <span className="text-foreground">{source.name}</span>
-                                        <span className="text-muted-foreground uppercase">{label}</span>
-                                    </div>
-                                );
-                            })}
+                        <div className="mt-8 flex flex-wrap gap-2.5">
+                            {liveSources.map((source) => (
+                                <div
+                                    key={source.key}
+                                    className="inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-[11px] font-mono"
+                                    style={{ border: "1px solid hsl(0 0% 100% / 0.08)", background: "hsl(0 0% 8% / 0.72)" }}
+                                >
+                                    <span className="h-2 w-2 rounded-full bg-primary" />
+                                    <span className="text-foreground">{source.name}</span>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
                     <div className="relative">
-                        <div
-                            className="card-glow rounded-[30px] p-5 md:p-6"
-                            style={{ boxShadow: "0 32px 90px rgba(0,0,0,0.4)" }}
-                        >
-                            <div className="mb-5 flex items-center justify-between gap-4">
+                        <div className="surface-panel overflow-hidden p-5 md:p-6">
+                            <div className="mb-5 flex items-start justify-between gap-4">
                                 <div>
-                                    <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">
-                                        Live signal loop
+                                    <p className="text-[11px] font-mono font-semibold uppercase tracking-[0.18em] text-primary">Public proof</p>
+                                    <h2 className="mt-2 text-2xl font-bold text-white">What the live board sees</h2>
+                                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                                        Keep the raw complaint visible, shape the wedge beside it, then score the signal.
                                     </p>
-                                    <h2 className="mt-2 text-xl font-bold text-white">From complaint to wedge</h2>
                                 </div>
-                                <div className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.14em] text-primary">
-                                    Public proof
-                                </div>
+                                <Link href="/dashboard" className="verdict-badge">
+                                    Live board
+                                </Link>
                             </div>
 
                             <div className="space-y-4">
-                                <div className="rounded-[22px] border border-white/7 bg-white/[0.03] p-4">
-                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
-                                        <MessageSquareQuote className="h-3.5 w-3.5 text-primary" />
-                                        Raw pain
-                                    </div>
-                                    <p className="text-sm leading-7 text-slate-100">{heroPain.pain}</p>
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                        <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
-                                            {heroPain.source}
-                                        </span>
-                                        <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
-                                            {heroPain.community}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div className="flex justify-center">
-                                    <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
-                                        Cluster into wedge
-                                        <ArrowRight className="h-3 w-3" />
-                                    </div>
-                                </div>
-
                                 <div
-                                    className="rounded-[22px] p-4"
+                                    className="rounded-[22px] p-5"
                                     style={{ background: "linear-gradient(135deg, hsl(16 100% 50% / 0.16), hsl(16 100% 50% / 0.04))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                                 >
-                                    <div className="mb-2 text-[10px] font-mono font-semibold uppercase tracking-[0.16em] text-primary">Shaped wedge</div>
-                                    <h3 className="text-lg font-semibold text-white">{heroPain.wedge}</h3>
-                                    <p className="mt-2 text-sm leading-7 text-slate-200">{heroPain.why}</p>
+                                    <div className="mb-3 flex items-start justify-between gap-4">
+                                        <div>
+                                            <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-primary">{heroPain.topic}</p>
+                                            <h3 className="mt-1 text-xl font-semibold text-white">{heroPain.wedge}</h3>
+                                            <p className="mt-2 text-sm text-slate-200">Clustered from {heroPain.source} pain in {heroPain.community}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-4xl font-display font-black orange-text">{Math.round(heroWedge.score)}</div>
+                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-slate-300">signal</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid gap-3 sm:grid-cols-3">
+                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
+                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Evidence posts</div>
+                                            <div className="mt-2 text-2xl font-display font-black text-white">{heroWedge.evidenceCount}</div>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
+                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Sources</div>
+                                            <div className="mt-2 text-2xl font-display font-black text-white">{heroWedge.sourceCount}</div>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/7 bg-black/20 p-3.5">
+                                            <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Freshness</div>
+                                            <div className="mt-2 text-sm font-semibold text-white">{heroWedge.ageLabel}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid gap-4 md:grid-cols-[1fr_44px_1fr]">
+                                    <div className="evidence-card p-4">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
+                                            <MessageSquareQuote className="h-3.5 w-3.5 text-primary" />
+                                            Raw pain
+                                        </div>
+                                        <p className="text-sm leading-7 text-slate-100">{heroPain.pain}</p>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
+                                                {heroPain.source}
+                                            </span>
+                                            <span className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] font-mono text-muted-foreground">
+                                                {heroPain.community}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="hidden items-center justify-center md:flex">
+                                        <div className="verdict-badge justify-center">
+                                            <ArrowRight className="h-3 w-3" />
+                                            Shape
+                                        </div>
+                                    </div>
+
+                                    <div className="evidence-card p-4">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
+                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                            Suggested wedge
+                                        </div>
+                                        <h3 className="text-lg font-semibold text-white">{heroPain.wedge}</h3>
+                                        <p className="mt-2 text-sm leading-7 text-slate-200">{heroPain.why}</p>
+                                    </div>
                                 </div>
 
                                 <div className="grid gap-3 sm:grid-cols-3">
-                                    <div className="rounded-2xl border border-white/7 bg-black/20 p-4">
-                                        <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Signal</div>
-                                        <div className="mt-2 text-3xl font-display font-black orange-text">{Math.round(heroWedge.score)}</div>
-                                    </div>
-                                    <div className="rounded-2xl border border-white/7 bg-black/20 p-4">
-                                        <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Evidence</div>
-                                        <div className="mt-2 text-3xl font-display font-black text-white">{heroWedge.evidenceCount}</div>
-                                    </div>
-                                    <div className="rounded-2xl border border-white/7 bg-black/20 p-4">
-                                        <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Sources</div>
-                                        <div className="mt-2 text-3xl font-display font-black text-white">{heroWedge.sourceCount}</div>
-                                    </div>
+                                    {[
+                                        { icon: Search, title: "Extract", body: "Read raw complaints and founder pain across live communities." },
+                                        { icon: Radar, title: "Debate", body: "Pressure-test the wedge with evidence, timing, and competition." },
+                                        { icon: Shield, title: "Decide", body: "Keep the claim contract visible before you build." },
+                                    ].map(({ icon: Icon, title, body }) => (
+                                        <div key={title} className="rounded-2xl border border-white/7 bg-white/[0.02] p-4">
+                                            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+                                                <Icon className="h-4 w-4 text-primary" />
+                                            </div>
+                                            <div className="text-sm font-semibold text-white">{title}</div>
+                                            <p className="mt-2 text-xs leading-6 text-muted-foreground">{body}</p>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         </div>
 
                         <div className="absolute -left-3 bottom-6 hidden rounded-2xl border border-white/8 bg-black/75 px-4 py-3 shadow-2xl backdrop-blur lg:block">
                             <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Open beta</div>
-                            <div className="mt-1 text-sm font-semibold text-white">Read the board. Validate the build.</div>
+                            <div className="mt-1 text-sm font-semibold text-white">{APP_TAGLINE}</div>
                         </div>
                     </div>
                 </section>
@@ -729,25 +790,17 @@ export default async function LandingPage() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        {liveSources.map((source) => {
-                            const healthy = sourceHealth.healthy_sources.includes(source.key);
-                            const degraded = sourceHealth.degraded_sources.includes(source.key);
-
-                            return (
-                                <div key={source.key} className="bento-cell rounded-[20px] p-5">
-                                    <div className="mb-4 flex items-center justify-between gap-4">
-                                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-                                            <Database className="h-4 w-4 text-primary" />
-                                        </div>
-                                        <span className={`text-[10px] font-mono uppercase tracking-[0.14em] ${degraded ? "text-yellow-300" : healthy ? "text-emerald-300" : "text-muted-foreground"}`}>
-                                            {degraded ? "degraded" : healthy ? "live" : "tracked"}
-                                        </span>
+                        {liveSources.map((source) => (
+                            <div key={source.key} className="bento-cell rounded-[20px] p-5">
+                                <div className="mb-4 flex items-center justify-between gap-4">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+                                        <Database className="h-4 w-4 text-primary" />
                                     </div>
-                                    <h3 className="text-lg font-semibold text-white">{source.name}</h3>
-                                    <p className="mt-2 text-sm leading-7 text-muted-foreground">{source.detail}</p>
                                 </div>
-                            );
-                        })}
+                                <h3 className="text-lg font-semibold text-white">{source.name}</h3>
+                                <p className="mt-2 text-sm leading-7 text-muted-foreground">{source.detail}</p>
+                            </div>
+                        ))}
                     </div>
                 </section>
 
@@ -785,6 +838,9 @@ export default async function LandingPage() {
                             <Link
                                 href="/dashboard"
                                 className="inline-flex h-12 items-center gap-2 rounded-xl px-7 text-sm font-semibold text-white transition-all hover:-translate-y-0.5"
+                                data-track-event="open_beta_footer_click"
+                                data-track-scope="marketing"
+                                data-track-label="footer open beta board"
                                 style={{ background: "hsl(16 100% 50%)", boxShadow: "0 0 24px hsla(16,100%,50%,0.3)" }}
                             >
                                 Open beta board <Radar className="w-4 h-4" />
@@ -792,6 +848,9 @@ export default async function LandingPage() {
                             <Link
                                 href="/pricing"
                                 className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/10 px-6 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                                data-track-event="pricing_cta_click"
+                                data-track-scope="marketing"
+                                data-track-label="footer see pricing"
                             >
                                 See pricing <ArrowRight className="w-3.5 h-3.5" />
                             </Link>

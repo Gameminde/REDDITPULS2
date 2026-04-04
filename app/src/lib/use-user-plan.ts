@@ -1,27 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase-browser";
-import { BETA_FULL_ACCESS } from "@/lib/beta-access";
 
-// ── Founder emergency fallback — DO NOT ADD CUSTOMER EMAILS HERE ──
-// These only trigger if the profiles DB query fails entirely.
-// To grant premium: update `profiles.plan` to 'pro' or 'enterprise' in Supabase.
-const FOUNDER_EMAILS = [
-    "youcefneoyoucef@gmail.com",
-    "chikhinazim@gmail.com",
-    "cheriet.samimhamed@gmail.com",
-];
+import { hasAdminOverrideFromAuthUser, normalizeProfileRole } from "@/lib/admin-access";
+import { BETA_FULL_ACCESS } from "@/lib/beta-access";
+import { createClient } from "@/lib/supabase-browser";
 
 /**
  * Hook that checks the current user's plan from the `profiles` table.
- * Returns `{ isPremium, plan, loading }`.
+ * Returns `{ isPremium, isAdmin, plan, loading }`.
  *
- * PRIMARY: Reads profiles.plan from Supabase.
- * FALLBACK: Founder email whitelist (only if DB query fails).
+ * PRIMARY: Reads profiles.plan + profiles.role from Supabase.
+ * FALLBACK: founder/admin metadata override if the DB lookup fails.
  */
 export function useUserPlan() {
     const [plan, setPlan] = useState<string>("free");
+    const [isAdmin, setIsAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -29,7 +23,14 @@ export function useUserPlan() {
 
         async function fetchPlan() {
             const { data: { user } } = await supabase.auth.getUser();
-            if (!user) { setLoading(false); return; }
+            if (!user) {
+                setLoading(false);
+                return;
+            }
+
+            if (hasAdminOverrideFromAuthUser(user)) {
+                setIsAdmin(true);
+            }
 
             if (BETA_FULL_ACCESS) {
                 setPlan("beta");
@@ -37,24 +38,30 @@ export function useUserPlan() {
                 return;
             }
 
-            // PRIMARY: check profiles.plan from database
             try {
                 const { data, error } = await supabase
                     .from("profiles")
-                    .select("plan")
+                    .select("plan, role")
                     .eq("id", user.id)
                     .single();
 
-                if (!error && data?.plan) {
-                    setPlan(data.plan);
+                if (!error && data) {
+                    if (data.plan) {
+                        setPlan(data.plan);
+                    }
+                    if (normalizeProfileRole(data.role) !== "user") {
+                        setIsAdmin(true);
+                    }
                     setLoading(false);
                     return;
                 }
-            } catch { /* DB query failed — fall through to founder fallback */ }
+            } catch {
+                // DB lookup failed; fall back to auth metadata below.
+            }
 
-            // FALLBACK: founder emails only (when DB is unreachable)
-            if (user.email && FOUNDER_EMAILS.includes(user.email.toLowerCase())) {
+            if (hasAdminOverrideFromAuthUser(user)) {
                 setPlan("founder");
+                setIsAdmin(true);
             }
 
             setLoading(false);
@@ -63,6 +70,5 @@ export function useUserPlan() {
         fetchPlan();
     }, []);
 
-    return { isPremium: plan !== "free", plan, loading };
+    return { isPremium: plan !== "free", isAdmin, plan, loading };
 }
-

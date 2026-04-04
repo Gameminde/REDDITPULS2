@@ -9,7 +9,7 @@ import {
     Search, DollarSign, Radar,
     Bookmark, LogOut, Lock, ArrowRight, FileText,
     TrendingUp, Globe, Mail, Lightbulb, Settings,
-    BarChart3, BellRing, Compass, Sparkles, BadgeDollarSign, Waypoints,
+    BarChart3, BellRing, Compass, Sparkles, BadgeDollarSign, Waypoints, Shield,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import { useUserPlan } from "@/lib/use-user-plan";
@@ -107,7 +107,7 @@ function NavGroup({ label, items, index, pathname, isPremium }: {
 
 export function AppSidebar({ userEmail }: { userEmail?: string }) {
     const pathname = usePathname();
-    const { isPremium } = useUserPlan();
+    const { isPremium, isAdmin } = useUserPlan();
 
     const handleLogout = async () => {
         const supabase = createClient();
@@ -143,6 +143,23 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                 <NavGroup label="Monitor"      items={monitorItems}      index={2} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Intelligence" items={intelligenceItems} index={3} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Learn"        items={learnItems}        index={4} pathname={pathname} isPremium={isPremium} />
+                {isAdmin ? (
+                    <>
+                        <motion.div custom={5} variants={labelVariants} initial="hidden" animate="visible">
+                            <div style={{
+                                fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
+                                color: "#475569", padding: "20px 14px 6px", fontWeight: 600,
+                            }}>
+                                Control
+                            </div>
+                        </motion.div>
+                        <NavItem
+                            item={{ title: "Admin", url: "/admin", icon: Shield }}
+                            isActive={pathname.startsWith("/admin")}
+                            isPremium
+                        />
+                    </>
+                ) : null}
 
                 {/* Upgrade CTA */}
                 {!isPremium && (
