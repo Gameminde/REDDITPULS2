@@ -1,5 +1,5 @@
 export const APP_NAME = "CueIdea";
 export const APP_NAME_UPPER = "CUEIDEA";
-export const APP_TAGLINE = "Catch the next opportunity before the market does.";
+export const APP_TAGLINE = "Find startup ideas people already want.";
 export const APP_DESCRIPTION =
-    "CueIdea turns live market signal into clearer opportunities, validation reports, and recurring market memory.";
+    "CueIdea turns public complaints from Reddit, Hacker News, GitHub, and founder communities into startup ideas you can validate before you build.";
