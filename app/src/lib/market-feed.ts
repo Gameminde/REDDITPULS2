@@ -7,7 +7,7 @@ import {
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
 import { buildMarketOpportunityPresentation } from "@/lib/market-opportunity-presentation";
-import { getApprovedMarketEditorial, parseMarketEditorial, type MarketEditorialPayload } from "@/lib/market-editorial";
+import { getVisibleMarketEditorial, parseMarketEditorial, type MarketEditorialPayload } from "@/lib/market-editorial";
 import { buildMarketHint, type MarketHint } from "@/lib/opportunity-actionability";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
@@ -442,7 +442,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
 
     const public_title = getPublicOpportunityTitle(withHint);
     const public_summary = getSafePublicSummary(withHint);
-    const approvedEditorial = getApprovedMarketEditorial(parsedMarketEditorial);
+    const approvedEditorial = getVisibleMarketEditorial(parsedMarketEditorial);
 
     return {
         ...withHint,

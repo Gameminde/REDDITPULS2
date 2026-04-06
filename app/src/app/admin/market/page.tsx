@@ -21,6 +21,19 @@ export default async function AdminMarketPage() {
             </div>
 
             <AdminSection
+                title="Editorial shadow mode"
+                description="AI output is stored for internal comparison first. Public cards still use heuristic copy until publish mode is enabled."
+                action={<AdminPill tone={data.summary.publishMode === "publish" ? "warning" : "healthy"}>{data.summary.publishMode}</AdminPill>}
+            >
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <AdminStatCard label="Editorial reviewed" value={data.summary.editorialReviewed} />
+                    <AdminStatCard label="Visible ideas" value={data.summary.visibleIdeas} />
+                    <AdminStatCard label="Rising ideas" value={data.summary.risingIdeas} tone="healthy" />
+                    <AdminStatCard label="Suppressed ideas" value={data.summary.suppressedIdeas} tone={data.summary.suppressedIdeas > 0 ? "warning" : "neutral"} />
+                </div>
+            </AdminSection>
+
+            <AdminSection
                 title="Source health"
                 description="Derived from the most recent scraper run."
                 action={
@@ -57,6 +70,44 @@ export default async function AdminMarketPage() {
                     </div>
                 ) : (
                     <EmptyAdminState title="No market signals yet" body="Once ideas are available in the ideas table, the admin market view will populate automatically." />
+                )}
+            </AdminSection>
+
+            <AdminSection title="Heuristic vs AI" description="Review AI editorial output before allowing it to replace public market copy.">
+                {data.editorialComparisons.length > 0 ? (
+                    <div className="space-y-3">
+                        {data.editorialComparisons.map((item) => (
+                            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="text-sm font-medium text-white">{item.heuristic_title}</div>
+                                    <AdminPill tone={item.status === "success" ? "healthy" : "warning"}>{item.status}</AdminPill>
+                                    <AdminPill tone={item.critic_visibility_decision === "public" ? "healthy" : item.critic_visibility_decision === "duplicate" ? "warning" : "neutral"}>
+                                        {item.critic_visibility_decision}
+                                    </AdminPill>
+                                    <AdminPill>{item.quality_score} quality</AdminPill>
+                                </div>
+
+                                <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                                        <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Heuristic</div>
+                                        <div className="mt-2 text-sm font-medium text-white">{item.heuristic_title}</div>
+                                        <p className="mt-2 text-sm text-muted-foreground">{item.heuristic_summary || "No heuristic summary."}</p>
+                                        <p className="mt-3 text-xs text-muted-foreground">Verdict: {item.heuristic_verdict || "No heuristic verdict."}</p>
+                                    </div>
+
+                                    <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-3">
+                                        <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-orange-200/80">AI shadow output</div>
+                                        <div className="mt-2 text-sm font-medium text-white">{item.ai_title || "No AI title yet."}</div>
+                                        <p className="mt-2 text-sm text-muted-foreground">{item.ai_summary || "No AI summary yet."}</p>
+                                        <p className="mt-3 text-xs text-muted-foreground">Verdict: {item.ai_verdict || "No AI verdict."}</p>
+                                        <p className="mt-1 text-xs text-muted-foreground">Next step: {item.ai_next_step || "No AI next step."}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <EmptyAdminState title="No editorial comparisons yet" body="Once shadow-mode runs complete, this page will show heuristic vs AI copy for review." />
                 )}
             </AdminSection>
         </div>

@@ -5,6 +5,7 @@ import { MODEL_CATALOG } from "@/app/api/settings/ai/route";
 import { normalizeProfileRole, type AdminProfileRole } from "@/lib/admin-access";
 import { recordAdminEvent } from "@/lib/admin-events";
 import { trackServerEvent } from "@/lib/analytics";
+import { getApprovedMarketEditorial, getMarketEditorialPublishMode, parseMarketEditorial } from "@/lib/market-editorial";
 import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
 import { explainPublicOpportunityEligibility, type PublicOpportunityRejectionReason } from "@/lib/public-idea-eligibility";
 import { enqueueValidationJob } from "@/lib/queue";
@@ -765,7 +766,7 @@ export async function getAdminMarketData() {
     const [ideaRows, runs] = await Promise.all([
         admin
             .from("ideas")
-            .select("id, topic, slug, current_score, change_24h, change_7d, trend_direction, confidence_level, post_count_total, post_count_7d, source_count, sources, category, competition_data, icp_data, top_posts, keywords, pain_count, pain_summary, first_seen, last_updated, score_breakdown")
+            .select(MARKET_AUDIT_IDEA_SELECT)
             .neq("confidence_level", "INSUFFICIENT")
             .order("current_score", { ascending: false })
             .limit(60),
@@ -773,6 +774,46 @@ export async function getAdminMarketData() {
     ]);
 
     const ideas = ideaRows.error ? [] : buildMarketIdeas((ideaRows.data || []) as unknown as Array<Record<string, unknown>>, { includeExploratory: true, surface: "admin" });
+    const editorialComparisons = ideas
+        .map((idea) => {
+            const editorial = parseMarketEditorial(idea.market_editorial);
+            const approved = getApprovedMarketEditorial(idea.market_editorial);
+            if (!editorial) return null;
+            return {
+                id: String(idea.id || idea.slug || ""),
+                slug: String(idea.slug || ""),
+                category: String(idea.category || "general"),
+                heuristic_title: String(idea.public_title || idea.topic || ""),
+                heuristic_summary: String(idea.public_summary || idea.pain_summary || ""),
+                heuristic_verdict: String(idea.market_hint?.recommended_board_action || ""),
+                ai_title: approved?.edited_title || String(editorial.edited_title || ""),
+                ai_summary: approved?.edited_summary || String(editorial.edited_summary || ""),
+                ai_verdict: approved?.verdict || String(editorial.verdict || ""),
+                ai_next_step: approved?.next_step || String(editorial.next_step || ""),
+                critic_visibility_decision: String(editorial.visibility_decision || "unknown"),
+                quality_score: toNumber(editorial.quality_score),
+                status: String(editorial.status || "unknown"),
+                updated_at: String(editorial.updated_at || idea.market_editorial_updated_at || ""),
+            };
+        })
+        .filter((item): item is {
+            id: string;
+            slug: string;
+            category: string;
+            heuristic_title: string;
+            heuristic_summary: string;
+            heuristic_verdict: string;
+            ai_title: string;
+            ai_summary: string;
+            ai_verdict: string;
+            ai_next_step: string;
+            critic_visibility_decision: string;
+            quality_score: number;
+            status: string;
+            updated_at: string;
+        } => Boolean(item))
+        .slice(0, 10);
+
     return {
         summary: {
             visibleIdeas: ideas.filter((row) => String(row.market_status || "") === "visible").length,
@@ -780,9 +821,12 @@ export async function getAdminMarketData() {
             fallingIdeas: ideas.filter((row) => String(row.trend_direction || "").toLowerCase() === "falling").length,
             needsWedge: ideas.filter((row) => String(row.market_status || "") === "needs_wedge").length,
             suppressedIdeas: Math.max(0, toRows(ideaRows.data).length - ideas.length),
+            editorialReviewed: editorialComparisons.length,
+            publishMode: getMarketEditorialPublishMode(),
         },
         sourceHealth: extractScraperRunHealth(runs[0] || null),
         topIdeas: ideas.slice(0, 12),
+        editorialComparisons,
     };
 }
 

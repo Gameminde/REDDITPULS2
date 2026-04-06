@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from market_editorial.client import CerebrasClientError, CerebrasRateLimitError, CerebrasStructuredClient
@@ -40,6 +41,11 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_str(name: str, default: str = "") -> str:
     return str(os.environ.get(name, default) or "").strip()
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = _env_str(name)
+    return Path(raw) if raw else default
 
 
 def _clean_text(value: Any) -> str:
@@ -134,6 +140,90 @@ def _is_public_editorial(editorial: Dict[str, Any] | None) -> bool:
         _clean_text(editorial.get("status")).lower() == "success"
         and _clean_text(editorial.get("visibility_decision")).lower() == "public"
     )
+
+
+def _default_budget_state_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / "market_editorial_budget.json"
+
+
+def _budget_day_key(now: datetime | None = None) -> str:
+    current = now or datetime.now(timezone.utc)
+    return current.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _load_budget_state(path: Path) -> Dict[str, Any]:
+    try:
+        if path.exists():
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                return raw
+    except Exception:
+        pass
+    return {}
+
+
+def _read_daily_tokens(path: Path, now: datetime | None = None) -> int:
+    state = _load_budget_state(path)
+    day_key = _budget_day_key(now)
+    if _clean_text(state.get("day")) != day_key:
+        return 0
+    return int(_safe_number(state.get("tokens_used"), 0))
+
+
+def _write_daily_tokens(path: Path, used_tokens: int, now: datetime | None = None) -> None:
+    current = now or datetime.now(timezone.utc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "day": _budget_day_key(current),
+        "tokens_used": int(max(0, used_tokens)),
+        "updated_at": current.isoformat(),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _build_source_mix_status(runtime_context: Dict[str, Any] | None) -> Dict[str, Any]:
+    if runtime_context is None:
+        return {
+            "status": "unknown",
+            "active_sources": [],
+            "healthy_sources": [],
+            "degraded_sources": [],
+            "note": "",
+        }
+
+    context = runtime_context or {}
+    source_counts = context.get("source_counts")
+    healthy_sources = [_clean_text(item) for item in (context.get("healthy_sources") or []) if _clean_text(item)]
+    degraded_sources = [_clean_text(item) for item in (context.get("degraded_sources") or []) if _clean_text(item)]
+
+    active_sources: List[str] = []
+    if isinstance(source_counts, dict):
+        for source, count in source_counts.items():
+            if _safe_number(count, 0) > 0:
+                active_sources.append(_clean_text(source))
+    active_sources = [item for item in active_sources if item]
+    if not active_sources:
+        active_sources = healthy_sources[:]
+
+    status = "healthy"
+    note = ""
+    if not active_sources:
+        status = "empty"
+        note = "No active sources produced posts in this run."
+    elif len(active_sources) < 2 or len(degraded_sources) >= len(active_sources):
+        status = "degraded"
+        note = (
+            f"Active sources={','.join(active_sources) or 'none'}; "
+            f"degraded={','.join(degraded_sources) or 'none'}"
+        )
+
+    return {
+        "status": status,
+        "active_sources": active_sources,
+        "healthy_sources": healthy_sources,
+        "degraded_sources": degraded_sources,
+        "note": note,
+    }
 
 
 def _build_signal_contract(input_row: Dict[str, Any], top_posts: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -366,10 +456,12 @@ def run_market_editorial_pass(
     existing_rows: Iterable[Dict[str, Any]],
     *,
     persist_enabled: bool,
+    runtime_context: Dict[str, Any] | None = None,
     logger=print,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     telemetry = {
         "enabled": False,
+        "publish_mode": "shadow",
         "considered": 0,
         "processed": 0,
         "approved_public": 0,
@@ -377,6 +469,11 @@ def run_market_editorial_pass(
         "duplicates": 0,
         "fallback_count": 0,
         "tokens_used": 0,
+        "daily_tokens_before": 0,
+        "daily_tokens_after": 0,
+        "daily_budget_limit": 0,
+        "source_mix_status": "unknown",
+        "source_mix_note": "",
         "rate_limited": False,
         "errors": [],
     }
@@ -397,11 +494,35 @@ def run_market_editorial_pass(
         return current_rows, [], telemetry
 
     model = _env_str("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct-2507")
-    top_n = _env_int("MARKET_AGENT_TOP_N", 15)
-    max_posts = _env_int("MARKET_AGENT_MAX_INPUT_POSTS", 12)
-    max_tokens_per_run = _env_int("MARKET_AGENT_MAX_TOKENS_PER_RUN", 250000)
+    publish_mode = _env_str("MARKET_AGENT_PUBLISH_MODE", "shadow").lower()
+    top_n = _env_int("MARKET_AGENT_TOP_N", 20)
+    max_posts = _env_int("MARKET_AGENT_MAX_INPUT_POSTS", 10)
+    max_tokens_per_run = _env_int("MARKET_AGENT_MAX_TOKENS_PER_RUN", 100000)
+    max_daily_tokens = _env_int("MARKET_AGENT_MAX_DAILY_TOKENS", 700000)
     refresh_hours = _env_int("MARKET_AGENT_REFRESH_HOURS", 24)
+    budget_state_path = _env_path("MARKET_AGENT_BUDGET_STATE_FILE", _default_budget_state_path())
     telemetry["enabled"] = True
+    telemetry["publish_mode"] = "publish" if publish_mode == "publish" else "shadow"
+    telemetry["daily_budget_limit"] = max_daily_tokens
+
+    source_mix = _build_source_mix_status(runtime_context)
+    telemetry["source_mix_status"] = source_mix["status"]
+    telemetry["source_mix_note"] = source_mix["note"]
+    if source_mix["status"] != "healthy" and source_mix["note"]:
+        telemetry["errors"].append(f"source_mix_{source_mix['status']}: {source_mix['note']}")
+    if source_mix["status"] == "empty":
+        logger("  [Editorial] Skipped: empty source mix")
+        return current_rows, [], telemetry
+
+    daily_tokens_before = _read_daily_tokens(budget_state_path)
+    telemetry["daily_tokens_before"] = daily_tokens_before
+    remaining_daily_budget = max(0, max_daily_tokens - daily_tokens_before)
+    effective_run_budget = min(max_tokens_per_run, remaining_daily_budget)
+    if effective_run_budget < 1000:
+        telemetry["errors"].append("daily_budget_exhausted")
+        telemetry["daily_tokens_after"] = daily_tokens_before
+        logger("  [Editorial] Skipped: daily budget exhausted")
+        return current_rows, [], telemetry
 
     candidates, _stale_pool = _collect_candidates(
         current_rows,
@@ -413,6 +534,7 @@ def run_market_editorial_pass(
     telemetry["considered"] = len(candidates)
     if not candidates:
         logger("  [Editorial] No candidates needed refresh")
+        telemetry["daily_tokens_after"] = daily_tokens_before
         return current_rows, [], telemetry
 
     client = CerebrasStructuredClient(api_key=api_key, model=model)
@@ -421,10 +543,10 @@ def run_market_editorial_pass(
     consecutive_non_public = 0
 
     for candidate in candidates:
-        if telemetry["tokens_used"] >= max_tokens_per_run:
+        if telemetry["tokens_used"] >= effective_run_budget or (effective_run_budget - telemetry["tokens_used"]) < 1000:
             telemetry["errors"].append("token_budget_exhausted")
             break
-        if telemetry["processed"] >= 3 and consecutive_non_public >= 3 and telemetry["tokens_used"] >= int(max_tokens_per_run * 0.7):
+        if telemetry["processed"] >= 3 and consecutive_non_public >= 3 and telemetry["tokens_used"] >= int(effective_run_budget * 0.7):
             telemetry["errors"].append("diminishing_returns_stop")
             break
 
@@ -514,5 +636,12 @@ def run_market_editorial_pass(
                 updated_current[slug] = merged
             else:
                 stale_updates.append(update_row)
+
+    if telemetry["tokens_used"] > 0:
+        try:
+            _write_daily_tokens(budget_state_path, daily_tokens_before + telemetry["tokens_used"])
+        except Exception as exc:
+            telemetry["errors"].append(f"budget_state_write_failed: {exc}")
+    telemetry["daily_tokens_after"] = daily_tokens_before + telemetry["tokens_used"]
 
     return list(updated_current.values()), stale_updates, telemetry

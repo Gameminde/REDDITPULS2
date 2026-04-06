@@ -14,6 +14,7 @@ function safeParseJson<T = unknown>(value: unknown): T | unknown {
 }
 
 export type MarketEditorialVisibility = "public" | "internal" | "duplicate" | "needs_more_proof";
+export type MarketEditorialPublishMode = "shadow" | "publish";
 
 export interface MarketEditorialPayload {
     status?: string | null;
@@ -46,6 +47,11 @@ export interface ApprovedMarketEditorial {
     product_angle: string;
     ideal_buyer: string;
     pain_statement: string;
+}
+
+export function getMarketEditorialPublishMode(): MarketEditorialPublishMode {
+    const raw = cleanText(process.env.MARKET_AGENT_PUBLISH_MODE).toLowerCase();
+    return raw === "publish" ? "publish" : "shadow";
 }
 
 export function parseMarketEditorial(value: unknown): MarketEditorialPayload | null {
@@ -91,4 +97,18 @@ export function getMarketEditorialVisibility(value: unknown): MarketEditorialVis
         return visibility;
     }
     return "";
+}
+
+export function getVisibleMarketEditorial(value: unknown): ApprovedMarketEditorial | null {
+    if (getMarketEditorialPublishMode() !== "publish") {
+        return null;
+    }
+    return getApprovedMarketEditorial(value);
+}
+
+export function getPublicMarketEditorialVisibility(value: unknown): MarketEditorialVisibility | "" {
+    if (getMarketEditorialPublishMode() !== "publish") {
+        return "";
+    }
+    return getMarketEditorialVisibility(value);
 }

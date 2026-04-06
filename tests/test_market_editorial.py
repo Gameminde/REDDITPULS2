@@ -118,3 +118,60 @@ def test_market_editorial_pass_fail_soft_without_columns(monkeypatch):
     assert rows[0]["slug"] == "async-video-updates"
     assert stale_updates == []
     assert telemetry["enabled"] is False
+
+
+def test_market_editorial_respects_daily_budget(monkeypatch, tmp_path):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.setenv("CEREBRAS_MODEL", "qwen-test")
+    monkeypatch.setenv("MARKET_AGENT_TOP_N", "5")
+    monkeypatch.setenv("MARKET_AGENT_MAX_INPUT_POSTS", "4")
+    monkeypatch.setenv("MARKET_AGENT_MAX_TOKENS_PER_RUN", "5000")
+    monkeypatch.setenv("MARKET_AGENT_MAX_DAILY_TOKENS", "1000")
+    monkeypatch.setenv("MARKET_AGENT_REFRESH_HOURS", "24")
+    monkeypatch.setenv("MARKET_AGENT_BUDGET_STATE_FILE", str(tmp_path / "market_editorial_budget.json"))
+    monkeypatch.setattr(orchestrator, "CerebrasStructuredClient", FakeClient)
+
+    updated_rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [_idea_row()],
+        [],
+        persist_enabled=True,
+        runtime_context={"healthy_sources": ["reddit", "hackernews"], "source_counts": {"reddit": 6, "hackernews": 3}},
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert len(updated_rows) == 1
+    assert stale_updates == []
+    assert telemetry["tokens_used"] == 950
+    assert telemetry["daily_tokens_after"] == 950
+
+    second_rows, second_stale, second_telemetry = orchestrator.run_market_editorial_pass(
+        [_idea_row(slug="follow-up-opportunity")],
+        [],
+        persist_enabled=True,
+        runtime_context={"healthy_sources": ["reddit", "hackernews"], "source_counts": {"reddit": 6, "hackernews": 3}},
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert second_rows[0]["slug"] == "follow-up-opportunity"
+    assert second_stale == []
+    assert second_telemetry["tokens_used"] == 0
+    assert "daily_budget_exhausted" in second_telemetry["errors"]
+
+
+def test_market_editorial_skips_empty_source_mix(monkeypatch):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+
+    rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [_idea_row()],
+        [],
+        persist_enabled=True,
+        runtime_context={"healthy_sources": [], "degraded_sources": ["reddit"], "source_counts": {}},
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert rows[0]["slug"] == "async-video-updates"
+    assert stale_updates == []
+    assert telemetry["processed"] == 0
+    assert telemetry["source_mix_status"] == "empty"

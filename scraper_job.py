@@ -3342,17 +3342,29 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             editorial_seed_rows,
             list(existing_ideas.values()) + editorial_seed_rows,
             persist_enabled=persist_editorial,
+            runtime_context={
+                "healthy_sources": healthy_sources,
+                "degraded_sources": degraded_sources,
+                "source_counts": dict(source_counts),
+            },
             logger=print,
         )
         if editorial_telemetry.get("enabled"):
             run_notes.append(
                 "Market editorial: "
+                f"mode={editorial_telemetry.get('publish_mode', 'shadow')}, "
                 f"{editorial_telemetry.get('processed', 0)} processed, "
                 f"{editorial_telemetry.get('approved_public', 0)} public, "
                 f"{editorial_telemetry.get('duplicates', 0)} duplicates, "
                 f"{editorial_telemetry.get('fallback_count', 0)} fallback, "
-                f"{editorial_telemetry.get('tokens_used', 0)} tokens"
+                f"{editorial_telemetry.get('tokens_used', 0)} tokens, "
+                f"daily={editorial_telemetry.get('daily_tokens_after', 0)}/{editorial_telemetry.get('daily_budget_limit', 0)}"
             )
+            if editorial_telemetry.get("source_mix_status") not in {"", "healthy", "unknown"}:
+                run_notes.append(
+                    f"Market editorial source mix: {editorial_telemetry.get('source_mix_status')}"
+                    + (f" ({editorial_telemetry.get('source_mix_note')})" if editorial_telemetry.get("source_mix_note") else "")
+                )
             if editorial_telemetry.get("errors"):
                 run_notes.append(
                     f"Market editorial warnings: {', '.join(str(item) for item in editorial_telemetry['errors'][:4])}"

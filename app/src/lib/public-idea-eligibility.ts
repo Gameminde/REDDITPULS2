@@ -1,5 +1,5 @@
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
-import { getApprovedMarketEditorial, getMarketEditorialVisibility } from "@/lib/market-editorial";
+import { getApprovedMarketEditorial, getPublicMarketEditorialVisibility, getVisibleMarketEditorial } from "@/lib/market-editorial";
 import { isLowQualityUserFacingCopy, summarizeIdeaForBrowse } from "@/lib/user-facing-copy";
 
 type PublicSourceCount = {
@@ -89,7 +89,7 @@ export function isBlockedPublicOpportunityTitle(value?: string | null) {
 }
 
 export function getPublicOpportunityTitle(input: PublicIdeaInput) {
-    const approvedEditorial = getApprovedMarketEditorial(input.market_editorial);
+    const approvedEditorial = getVisibleMarketEditorial(input.market_editorial);
     if (approvedEditorial && !isBlockedPublicOpportunityTitle(approvedEditorial.edited_title)) {
         return approvedEditorial.edited_title;
     }
@@ -112,7 +112,7 @@ export function getPublicDirectBuyerProofCount(input: PublicIdeaInput) {
 }
 
 export function getSafePublicSummary(input: PublicIdeaInput) {
-    const approvedEditorial = getApprovedMarketEditorial(input.market_editorial);
+    const approvedEditorial = getVisibleMarketEditorial(input.market_editorial);
     if (approvedEditorial && !isLowQualityUserFacingCopy(approvedEditorial.edited_summary)) {
         return approvedEditorial.edited_summary;
     }
@@ -147,7 +147,7 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
     if (cleanText(input.market_status).toLowerCase() === "suppressed") {
         return { eligible: false, reason: "suppressed_market_status" };
     }
-    const editorialVisibility = getMarketEditorialVisibility(input.market_editorial);
+    const editorialVisibility = getPublicMarketEditorialVisibility(input.market_editorial);
     if (editorialVisibility && editorialVisibility !== "public") {
         return { eligible: false, reason: "editorial_hidden" };
     }

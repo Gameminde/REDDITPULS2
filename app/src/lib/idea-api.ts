@@ -1,5 +1,5 @@
 import { buildOpportunityEvidence, buildEvidenceSummary } from "@/lib/evidence";
-import { getApprovedMarketEditorial } from "@/lib/market-editorial";
+import { getVisibleMarketEditorial } from "@/lib/market-editorial";
 import { buildMarketIdeas } from "@/lib/market-feed";
 import { buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { getPublicOpportunityTitle, getSafePublicSummary } from "@/lib/public-idea-eligibility";
@@ -97,7 +97,7 @@ export function buildIdeaDetailPayload(
     const parsedKeywords = safeParseJson(idea.keywords);
     const parsedIcpData = safeParseJson(idea.icp_data);
     const parsedCompetitionData = safeParseJson(idea.competition_data);
-    const approvedEditorial = getApprovedMarketEditorial(idea.market_editorial);
+    const approvedEditorial = getVisibleMarketEditorial(idea.market_editorial);
     const normalizedSources = normalizeSources(idea.sources);
     const trust = buildOpportunityTrust({
         ...idea,
