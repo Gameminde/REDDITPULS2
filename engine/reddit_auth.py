@@ -1,7 +1,7 @@
 """
-RedditPulse — PRAW Authenticated Reddit Scraper (Layer 4)
+RedditPulse - PRAW Authenticated Reddit Scraper (Layer 4)
 Uses Reddit's official API via PRAW for authenticated access.
-100 req/min (vs ~10/min anonymous). Optional — falls back to Layer 1 if no credentials.
+100 req/min (vs ~10/min anonymous). Optional - falls back to Layer 1 if no credentials.
 
 Setup:
     1. Go to https://www.reddit.com/prefs/apps
@@ -16,7 +16,6 @@ Usage:
 import os
 import time
 from collections import Counter
-from datetime import datetime
 
 try:
     import praw
@@ -60,7 +59,7 @@ def is_available() -> bool:
     if has_creds:
         print("[Reddit] Using authenticated app credentials")
     else:
-        print("[Reddit] ⚠ No official API credentials — using proxy scraping")
+        print("[Reddit] WARNING: No official API credentials, using proxy scraping")
         print("[Reddit] Apply for commercial access: reddit.com/wiki/api")
     return has_creds
 
@@ -181,7 +180,7 @@ def scrape_all_authenticated(
 ) -> list[dict]:
     """
     Scrape multiple subreddits using authenticated API.
-    Much faster than anonymous — no 2.5s delay needed.
+    Much faster than anonymous - no 2.5s delay needed.
     """
     reddit = _get_reddit()
     if not reddit:
@@ -194,7 +193,7 @@ def scrape_all_authenticated(
     request_stats = Counter()
     subreddit_counts = Counter()
 
-    print(f"  [PRAW] Authenticated scrape: {len(subreddits)} subs × {len(sort_modes)} sorts")
+    print(f"  [PRAW] Authenticated scrape: {len(subreddits)} subs x {len(sort_modes)} sorts")
 
     for sub in subreddits:
         for sort in sort_modes:
@@ -226,24 +225,20 @@ def scrape_all_authenticated(
     return all_posts
 
 
-# ═══════════════════════════════════════════════════════
-# STANDALONE TEST
-# ═══════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("  PRAW Authenticated Scraper — Test")
+    print("  PRAW Authenticated Scraper - Test")
     print("=" * 60)
 
     if not is_available():
-        print("\n  ⚠ PRAW not available. Set env vars:")
+        print("\n  WARNING: PRAW not available. Set env vars:")
         print("    REDDIT_CLIENT_ID=your_client_id")
         print("    REDDIT_CLIENT_SECRET=your_client_secret")
         print("\n  To register: https://www.reddit.com/prefs/apps")
         print("  (Create a 'script' type app)")
     else:
-        print("\n  ✅ PRAW available — testing authenticated access")
+        print("\n  OK: PRAW available - testing authenticated access")
         posts = search_authenticated(["invoice", "billing"], subreddit="SaaS", limit=10)
         print(f"\n  Search results: {len(posts)} posts")
-        for p in posts[:3]:
-            print(f"    [{p['score']}⬆] r/{p['subreddit']} — {p['title'][:60]}")
+        for post in posts[:3]:
+            print(f"    [{post['score']} up] r/{post['subreddit']} - {post['title'][:60]}")

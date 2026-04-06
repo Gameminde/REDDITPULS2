@@ -7,6 +7,7 @@ import {
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
 import { buildMarketOpportunityPresentation } from "@/lib/market-opportunity-presentation";
+import { getApprovedMarketEditorial, parseMarketEditorial, type MarketEditorialPayload } from "@/lib/market-editorial";
 import { buildMarketHint, type MarketHint } from "@/lib/opportunity-actionability";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
@@ -55,7 +56,11 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     board_stale_reason: string | null;
     public_title: string;
     public_summary: string;
+    public_verdict: string;
+    public_next_step: string;
     public_browse_eligible: boolean;
+    market_editorial: MarketEditorialPayload | null;
+    market_editorial_updated_at: string | null;
 }
 
 const SHARE_THREAD_PATTERNS = [
@@ -324,6 +329,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
     const parsedIcpData = safeParseJson(idea.icp_data);
     const parsedCompetitionData = safeParseJson(idea.competition_data);
     const parsedScoreBreakdown = safeParseJson(idea.score_breakdown);
+    const parsedMarketEditorial = parseMarketEditorial(idea.market_editorial);
     const normalizedSources = normalizeSources(idea.sources);
     const topPosts = Array.isArray(parsedTopPosts) ? parsedTopPosts as OpportunityTopPost[] : [];
     const keywords = Array.isArray(parsedKeywords) ? parsedKeywords.map(String).filter(Boolean) : [];
@@ -422,7 +428,11 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         board_stale_reason: boardState.boardStaleReason,
         public_title: "",
         public_summary: "",
+        public_verdict: "",
+        public_next_step: "",
         public_browse_eligible: false,
+        market_editorial: parsedMarketEditorial,
+        market_editorial_updated_at: typeof idea.market_editorial_updated_at === "string" ? idea.market_editorial_updated_at : null,
     } satisfies Omit<MarketHydratedIdea, "market_hint">;
 
     const withHint = {
@@ -432,11 +442,14 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
 
     const public_title = getPublicOpportunityTitle(withHint);
     const public_summary = getSafePublicSummary(withHint);
+    const approvedEditorial = getApprovedMarketEditorial(parsedMarketEditorial);
 
     return {
         ...withHint,
         public_title,
         public_summary,
+        public_verdict: approvedEditorial?.verdict || "",
+        public_next_step: approvedEditorial?.next_step || "",
         public_browse_eligible: isPublicOpportunityEligible({
             ...withHint,
             suggested_wedge_label: public_title || withHint.suggested_wedge_label,

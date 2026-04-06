@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { IDEA_LIST_SELECT, buildIdeasListPayload } from "@/lib/idea-api";
+import {
+    IDEA_LIST_SELECT,
+    IDEA_LIST_SELECT_LEGACY,
+    buildIdeasListPayload,
+    isMissingMarketEditorialColumnError,
+} from "@/lib/idea-api";
 import { buildMarketIdeas } from "@/lib/market-feed";
 import { createAdmin } from "@/lib/supabase-admin";
 import { createClient } from "@/lib/supabase-server";
@@ -51,7 +56,42 @@ export async function GET(request: Request) {
     }
 
     const fetchLimit = Math.min(Math.max(limit * 4, limit), 500);
-    const { data, error } = await query.limit(fetchLimit);
+    let { data, error } = await query.limit(fetchLimit);
+
+    if (error && isMissingMarketEditorialColumnError(error)) {
+        let fallbackQuery = admin
+            .from("ideas")
+            .select(IDEA_LIST_SELECT_LEGACY)
+            .neq("confidence_level", "INSUFFICIENT");
+
+        if (category) {
+            fallbackQuery = fallbackQuery.eq("category", category);
+        }
+
+        switch (sort) {
+            case "change_24h":
+                fallbackQuery = fallbackQuery.order("change_24h", { ascending: direction === "asc" });
+                break;
+            case "change_7d":
+                fallbackQuery = fallbackQuery.order("change_7d", { ascending: direction === "asc" });
+                break;
+            case "trending":
+                fallbackQuery = fallbackQuery.eq("trend_direction", "rising").order("change_24h", { ascending: false });
+                break;
+            case "dying":
+                fallbackQuery = fallbackQuery.eq("trend_direction", "falling").order("change_24h", { ascending: true });
+                break;
+            case "new":
+                fallbackQuery = fallbackQuery.order("first_seen", { ascending: false });
+                break;
+            default:
+                fallbackQuery = fallbackQuery.order("current_score", { ascending: direction === "asc" });
+        }
+
+        const fallbackResponse = await fallbackQuery.limit(fetchLimit);
+        data = fallbackResponse.data;
+        error = fallbackResponse.error;
+    }
 
     if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });

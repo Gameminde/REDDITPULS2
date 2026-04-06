@@ -192,11 +192,15 @@ async def _fetch_subreddit(
                 elif resp.status == 403:
                     # BLOCKED — exponential backoff + rotate proxy
                     _rotator.health.record_block()
+                    using_proxy = bool(proxy)
                     if proxy:
                         _rotator.cull_proxy(proxy)
 
                     backoff = BACKOFF_BASE * (2 ** attempt) + random.uniform(JITTER_MIN, JITTER_MAX)
-                    print(f"    [ASYNC] r/{subreddit} 403 BLOCKED — rotating proxy, backoff {backoff:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT + 1})")
+                    if using_proxy:
+                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - rotating proxy, backoff {backoff:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT + 1})")
+                    else:
+                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - direct mode, backoff {backoff:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT + 1})")
                     limiter.release()
                     await asyncio.sleep(backoff)
                     continue

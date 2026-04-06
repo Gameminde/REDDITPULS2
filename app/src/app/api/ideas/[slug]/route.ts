@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { IDEA_DETAIL_SELECT, IDEA_HISTORY_SELECT, buildIdeaDetailPayload } from "@/lib/idea-api";
+import {
+    IDEA_DETAIL_SELECT,
+    IDEA_DETAIL_SELECT_LEGACY,
+    IDEA_HISTORY_SELECT,
+    buildIdeaDetailPayload,
+    isMissingMarketEditorialColumnError,
+} from "@/lib/idea-api";
 import { createAdmin } from "@/lib/supabase-admin";
 import { createClient } from "@/lib/supabase-server";
 
@@ -18,11 +24,21 @@ export async function GET(
     const { slug } = await params;
     const admin = createAdmin();
 
-    const { data: idea, error: ideaError } = await admin
+    let { data: idea, error: ideaError } = await admin
         .from("ideas")
         .select(IDEA_DETAIL_SELECT)
         .eq("slug", slug)
         .single();
+
+    if (ideaError && isMissingMarketEditorialColumnError(ideaError)) {
+        const fallbackResponse = await admin
+            .from("ideas")
+            .select(IDEA_DETAIL_SELECT_LEGACY)
+            .eq("slug", slug)
+            .single();
+        idea = fallbackResponse.data;
+        ideaError = fallbackResponse.error;
+    }
 
     if (ideaError || !idea) {
         return NextResponse.json({ error: "Idea not found" }, { status: 404 });

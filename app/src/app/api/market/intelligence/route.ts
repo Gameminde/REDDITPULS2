@@ -91,8 +91,10 @@ export async function GET(req: NextRequest) {
     if (trendError) return NextResponse.json({ error: trendError.message }, { status: 500 });
 
     const hydratedIdeas = (ideaRows || []).map((row) => hydrateIdeaForMarket(row as Record<string, unknown>));
+    const laneIdeas = category ? hydratedIdeas.filter((idea) => idea.category === category) : hydratedIdeas;
     const userFacingIdeas = hydratedIdeas.filter((idea) => idea.public_browse_eligible);
     const feedVisible = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, { includeExploratory: false, surface: "user" });
+    const laneFeedVisible = category ? feedVisible.filter((idea) => idea.category === category) : feedVisible;
 
     const recentIdeaIds = userFacingIdeas
         .filter((idea) => {
@@ -157,8 +159,8 @@ export async function GET(req: NextRequest) {
         summary: {
             generated_at: new Date().toISOString(),
             ...sourceHealth,
-            raw_idea_count: userFacingIdeas.length,
-            feed_visible_count: category ? feedVisible.filter((idea) => idea.category === category).length : feedVisible.length,
+            raw_idea_count: laneIdeas.length,
+            feed_visible_count: laneFeedVisible.length,
             new_72h_count: new72hCount,
             emerging_wedge_count: emergingWedges.length,
         } satisfies MarketIntelligenceSummary,

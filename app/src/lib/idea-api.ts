@@ -1,10 +1,11 @@
 import { buildOpportunityEvidence, buildEvidenceSummary } from "@/lib/evidence";
+import { getApprovedMarketEditorial } from "@/lib/market-editorial";
 import { buildMarketIdeas } from "@/lib/market-feed";
 import { buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { getPublicOpportunityTitle, getSafePublicSummary } from "@/lib/public-idea-eligibility";
 import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 
-export const IDEA_LIST_SELECT = [
+const IDEA_LIST_BASE_FIELDS = [
     "id",
     "topic",
     "slug",
@@ -29,7 +30,19 @@ export const IDEA_LIST_SELECT = [
     "first_seen",
     "last_updated",
     "score_breakdown",
+];
+
+const IDEA_EDITORIAL_FIELDS = [
+    "market_editorial",
+    "market_editorial_updated_at",
+];
+
+export const IDEA_LIST_SELECT = [
+    ...IDEA_LIST_BASE_FIELDS,
+    ...IDEA_EDITORIAL_FIELDS,
 ].join(", ");
+
+export const IDEA_LIST_SELECT_LEGACY = IDEA_LIST_BASE_FIELDS.join(", ");
 
 export const IDEA_DETAIL_SELECT = [
     IDEA_LIST_SELECT,
@@ -40,7 +53,21 @@ export const IDEA_DETAIL_SELECT = [
     "cross_platform_multiplier",
 ].join(", ");
 
+export const IDEA_DETAIL_SELECT_LEGACY = [
+    IDEA_LIST_SELECT_LEGACY,
+    "reddit_velocity",
+    "google_trend_score",
+    "google_trend_growth",
+    "competition_score",
+    "cross_platform_multiplier",
+].join(", ");
+
 export const IDEA_HISTORY_SELECT = "score, post_count, source_count, recorded_at";
+
+export function isMissingMarketEditorialColumnError(error: unknown) {
+    const message = String((error as { message?: unknown })?.message || error || "").toLowerCase();
+    return message.includes("market_editorial");
+}
 
 export function safeParseJson<T = unknown>(value: unknown) {
     if (typeof value === "string") {
@@ -70,6 +97,7 @@ export function buildIdeaDetailPayload(
     const parsedKeywords = safeParseJson(idea.keywords);
     const parsedIcpData = safeParseJson(idea.icp_data);
     const parsedCompetitionData = safeParseJson(idea.competition_data);
+    const approvedEditorial = getApprovedMarketEditorial(idea.market_editorial);
     const normalizedSources = normalizeSources(idea.sources);
     const trust = buildOpportunityTrust({
         ...idea,
@@ -110,6 +138,8 @@ export function buildIdeaDetailPayload(
                 sources: normalizedSources,
                 top_posts: Array.isArray(parsedTopPosts) ? parsedTopPosts : [],
             }),
+            public_verdict: approvedEditorial?.verdict || "",
+            public_next_step: approvedEditorial?.next_step || "",
             sources: normalizedSources,
             top_posts: parsedTopPosts,
             keywords: parsedKeywords,

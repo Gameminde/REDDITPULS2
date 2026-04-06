@@ -23,6 +23,8 @@ import math
 import hashlib
 import argparse
 import traceback
+import atexit
+import signal
 import requests
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
@@ -41,6 +43,7 @@ from competitor_deathwatch import scan_for_complaints, save_complaints
 from competition import KNOWN_COMPETITORS
 from trends_aggregator import aggregate_trends
 from evidence_taxonomy import apply_evidence_taxonomy, summarize_taxonomy
+from market_editorial.orchestrator import run_market_editorial_pass
 import random
 
 # ── Supabase config ──
@@ -57,6 +60,15 @@ _humor_re = [re.compile(p, re.IGNORECASE) for p in HUMOR_INDICATORS]
 BASE_SUBREDDITS = list(TARGET_SUBREDDITS)
 _SCHEMA_CACHE = {}
 _ACTIVE_SCRAPER_CONTEXT = {}
+SCRAPER_RUN_SOURCE_ALIASES = {
+    "reddit": "reddit",
+    "hackernews": "hn",
+    "producthunt": "ph",
+    "indiehackers": "ih",
+    "githubissues": "github",
+    "g2_review": "g2",
+    "job_posting": "jobs",
+}
 
 
 # ═══════════════════════════════════════════════════════
@@ -158,8 +170,17 @@ def _bulk_upsert_rows(table, rows, *, on_conflict="", chunk_size=25, id_fn=None)
     success_count = 0
     failure_ids = []
     identify = id_fn or (lambda row: str(row.get("slug") or row.get("id") or "unknown"))
+    all_keys = []
+    seen_keys = set()
+    for row in rows:
+        for key in row.keys():
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            all_keys.append(key)
+    normalized_rows = [{key: row.get(key) for key in all_keys} for row in rows]
 
-    for chunk in _chunk_rows(rows, chunk_size):
+    for chunk in _chunk_rows(normalized_rows, chunk_size):
         response = sb_upsert(table, chunk, on_conflict=on_conflict)
         if response.status_code < 400:
             success_count += len(chunk)
@@ -175,6 +196,62 @@ def _bulk_upsert_rows(table, rows, *, on_conflict="", chunk_size=25, id_fn=None)
                 failure_ids.append(identify(row))
 
     return success_count, failure_ids
+
+
+def _format_scraper_run_source_value(sources):
+    full_value = ",".join(str(source or "").strip() for source in (sources or []) if str(source or "").strip())
+    if len(full_value) <= 50:
+        return full_value
+
+    compact_value = ",".join(
+        SCRAPER_RUN_SOURCE_ALIASES.get(str(source or "").strip(), str(source or "").strip())
+        for source in (sources or [])
+        if str(source or "").strip()
+    )
+    if len(compact_value) <= 50:
+        return compact_value
+
+    return compact_value[:50]
+
+
+def _finalize_active_scraper_context(status="failed", note="Process exited before finalizing scraper run"):
+    run_id = _ACTIVE_SCRAPER_CONTEXT.get("run_id")
+    if not run_id:
+        return
+
+    start_time = _ACTIVE_SCRAPER_CONTEXT.get("start_time", time.time())
+    posts_collected = int(_ACTIVE_SCRAPER_CONTEXT.get("posts_collected", 0) or 0)
+    ideas_updated = int(_ACTIVE_SCRAPER_CONTEXT.get("ideas_updated", 0) or 0)
+    finalize_scraper_run_record(
+        run_id,
+        status,
+        start_time,
+        posts_collected=posts_collected,
+        ideas_updated=ideas_updated,
+        notes=[note],
+    )
+    _ACTIVE_SCRAPER_CONTEXT.clear()
+
+
+def _handle_scraper_signal(signum, _frame):
+    signal_name = getattr(signal, "Signals", lambda value: value)(signum)
+    if hasattr(signal_name, "name"):
+        signal_name = signal_name.name
+    _finalize_active_scraper_context(
+        "failed",
+        f"Received signal {signal_name}",
+    )
+    raise SystemExit(128 + int(signum))
+
+
+atexit.register(_finalize_active_scraper_context)
+for _sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+    if _sig is None:
+        continue
+    try:
+        signal.signal(_sig, _handle_scraper_signal)
+    except Exception:
+        pass
 
 
 def table_has_column(table, column):
@@ -379,11 +456,26 @@ def _format_reddit_health_note(access_mode, post_count, successful_requests, fai
     )
 
 
+def _format_market_funnel_note(funnel):
+    return (
+        "Market funnel: "
+        f"scraped={int(funnel.get('scraped_posts', 0) or 0)}; "
+        f"matched={int(funnel.get('matched_posts', 0) or 0)}; "
+        f"unmatched={int(funnel.get('unmatched_posts', 0) or 0)}; "
+        f"builder_meta={int(funnel.get('builder_meta_filtered_posts', 0) or 0)}; "
+        f"dynamic={int(funnel.get('dynamic_topics', 0) or 0)}; "
+        f"buckets={int(funnel.get('subreddit_bucket_topics', 0) or 0)}; "
+        f"invalid={int(funnel.get('invalid_topic_skips', 0) or 0)}; "
+        f"weak={int(funnel.get('weak_topic_skips', 0) or 0)}; "
+        f"ideas={int(funnel.get('final_ideas', 0) or 0)}"
+    )
+
+
 def finalize_scraper_run_record(run_id, status, start_time, posts_collected=0, ideas_updated=0, notes=None):
     if not run_id or not SUPABASE_URL:
         return
 
-    structured_prefixes = ("Source health:", "Run metadata:", "Reddit health:")
+    structured_prefixes = ("Source health:", "Run metadata:", "Reddit health:", "Market funnel:")
     structured_notes = [note for note in (notes or []) if str(note or "").startswith(structured_prefixes)]
     regular_notes = [note for note in (notes or []) if not str(note or "").startswith(structured_prefixes)]
     budget = max(0, 8 - len(structured_notes))
@@ -2157,6 +2249,10 @@ def _discover_dynamic_market_topics(unmatched_posts, unmatched_signal_posts):
 
 
 def classify_post_to_topics(post):
+    return _classify_post_to_topics_with_meta(post)["topics"]
+
+
+def _classify_post_to_topics_with_meta(post):
     """Match a post to one or more tracked topics. Returns list of topic slugs."""
     text = _compose_post_text(post).lower()
     subreddit = (post.get("subreddit", "") or "").lower().strip()
@@ -2166,6 +2262,7 @@ def classify_post_to_topics(post):
     builder_meta_post = _market_post_support_rank(post) == 1 and source in {"hackernews", "indiehackers", "producthunt"}
     subreddit_category = SUBREDDIT_CATEGORIES.get(subreddit, "")
     matches = []
+    builder_meta_filtered = False
 
     for slug, topic_info in TRACKED_TOPICS.items():
         score = 0
@@ -2194,6 +2291,8 @@ def classify_post_to_topics(post):
             score += 1
 
         if builder_meta_post and not phrase_hit and keyword_hits < 2:
+            if keyword_hits > 0:
+                builder_meta_filtered = True
             continue
 
         if phrase_hit or score >= 2:
@@ -2201,7 +2300,11 @@ def classify_post_to_topics(post):
 
     # Sort by match score, return top 2 strongest themes.
     matches.sort(key=lambda x: x[1], reverse=True)
-    return [match[0] for match in matches[:2]]
+    return {
+        "topics": [match[0] for match in matches[:2]],
+        "builder_meta_filtered": bool(builder_meta_filtered and not matches),
+        "builder_meta_post": builder_meta_post,
+    }
 
 
 # ═══════════════════════════════════════════════════════
@@ -2440,8 +2543,9 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
     if SUPABASE_URL:
         reconcile_stale_scraper_runs()
+        run_source_value = _format_scraper_run_source_value(sources)
         resp = sb_upsert("scraper_runs", [{
-            "source": ",".join(sources),
+            "source": run_source_value,
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
         }])
@@ -2964,14 +3068,37 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
     signal_posts_by_topic = defaultdict(list)
     unmatched_all_posts = []
     unmatched_signal_posts = []
+    all_post_keys = {
+        _market_post_key(post)
+        for post in all_posts
+        if _market_post_key(post)
+    }
+    matched_post_keys = set()
+    market_funnel = {
+        "scraped_posts": len(all_post_keys) or len(all_posts),
+        "matched_posts": 0,
+        "unmatched_posts": 0,
+        "builder_meta_filtered_posts": 0,
+        "dynamic_topics": 0,
+        "subreddit_bucket_topics": 0,
+        "invalid_topic_skips": 0,
+        "weak_topic_skips": 0,
+        "final_ideas": 0,
+    }
 
     for post in all_posts:
-        topics = classify_post_to_topics(post)
+        classification = _classify_post_to_topics_with_meta(post)
+        topics = classification["topics"]
         if topics:
+            post_key = _market_post_key(post)
+            if post_key:
+                matched_post_keys.add(post_key)
             for topic in topics:
                 idea_posts[topic].append(post)
         else:
             unmatched_all_posts.append(post)
+            if classification.get("builder_meta_filtered"):
+                market_funnel["builder_meta_filtered_posts"] += 1
 
     for post in signal_posts:
         topics = classify_post_to_topics(post)
@@ -2980,6 +3107,9 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
                 signal_posts_by_topic[topic].append(post)
         else:
             unmatched_signal_posts.append(post)
+
+    market_funnel["matched_posts"] = len(matched_post_keys)
+    market_funnel["unmatched_posts"] = max(0, market_funnel["scraped_posts"] - market_funnel["matched_posts"])
 
     dynamic_topic_meta = {}
     dynamic_idea_posts, dynamic_signal_topics, dynamic_topic_meta, assigned_dynamic_post_keys = _discover_dynamic_market_topics(
@@ -2992,6 +3122,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         signal_posts_by_topic[slug].extend(posts)
     if dynamic_topic_meta:
         print(f"  [Dynamic Themes] {len(dynamic_topic_meta)} recurring unmatched themes promoted into the market")
+    market_funnel["dynamic_topics"] = len(dynamic_topic_meta)
 
     unmatched_signal_keys = {
         _market_post_key(post)
@@ -3021,6 +3152,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
     if dynamic_created:
         print(f"  [Pain Gate] {dynamic_created} dynamic topics qualified (>=6 pain posts each)")
+    market_funnel["subreddit_bucket_topics"] = dynamic_created
 
     # Filter by topic if specified
     if topic_filter:
@@ -3046,6 +3178,8 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         "last_7d_update": table_has_column("ideas", "last_7d_update"),
         "score_breakdown": table_has_column("ideas", "score_breakdown"),
         "competition_data": table_has_column("ideas", "competition_data"),
+        "market_editorial": table_has_column("ideas", "market_editorial"),
+        "market_editorial_updated_at": table_has_column("ideas", "market_editorial_updated_at"),
     }
 
     # ── 4. Calculate scores + upsert ──
@@ -3075,6 +3209,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
 
         if _is_invalid_market_topic_name(topic_name):
             print(f"  [Skip] Rejected invalid market topic name: {topic_name}")
+            market_funnel["invalid_topic_skips"] += 1
             continue
 
         score, breakdown = calculate_idea_score(
@@ -3118,6 +3253,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
                 )
             )
         ):
+            market_funnel["weak_topic_skips"] += 1
             continue
 
         pain_summary, pain_count = _build_pain_summary(posts, topic_name)
@@ -3184,14 +3320,53 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         trend_icon = {"rising": "+", "falling": "-", "stable": "=", "new": "*"}
         print(f"    [{tier_icon.get(confidence, '?')}] {slug:30s} {score:5.1f} {trend_icon.get(trend, '?')} ({len(posts)} posts, {breakdown.get('source_count',1)} sources)")
 
+    market_funnel["final_ideas"] = len(ideas_to_upsert)
+    run_notes.append(_format_market_funnel_note(market_funnel))
+
     # ── 5. Upsert to Supabase ──
-    if SUPABASE_URL and ideas_to_upsert:
-        print(f"\n  Uploading {len(ideas_to_upsert)} ideas to Supabase...")
+    editorial_updates = []
+    if ideas_to_upsert:
+        persist_editorial = idea_optional_columns["market_editorial"] and idea_optional_columns["market_editorial_updated_at"]
+        editorial_seed_rows = []
+        for row in ideas_to_upsert:
+            merged = dict(row)
+            existing_editorial_row = existing_ideas.get(row.get("slug"))
+            if existing_editorial_row:
+                if "market_editorial" in existing_editorial_row:
+                    merged["market_editorial"] = existing_editorial_row.get("market_editorial")
+                if "market_editorial_updated_at" in existing_editorial_row:
+                    merged["market_editorial_updated_at"] = existing_editorial_row.get("market_editorial_updated_at")
+            editorial_seed_rows.append(merged)
+
+        ideas_to_upsert, editorial_updates, editorial_telemetry = run_market_editorial_pass(
+            editorial_seed_rows,
+            list(existing_ideas.values()) + editorial_seed_rows,
+            persist_enabled=persist_editorial,
+            logger=print,
+        )
+        if editorial_telemetry.get("enabled"):
+            run_notes.append(
+                "Market editorial: "
+                f"{editorial_telemetry.get('processed', 0)} processed, "
+                f"{editorial_telemetry.get('approved_public', 0)} public, "
+                f"{editorial_telemetry.get('duplicates', 0)} duplicates, "
+                f"{editorial_telemetry.get('fallback_count', 0)} fallback, "
+                f"{editorial_telemetry.get('tokens_used', 0)} tokens"
+            )
+            if editorial_telemetry.get("errors"):
+                run_notes.append(
+                    f"Market editorial warnings: {', '.join(str(item) for item in editorial_telemetry['errors'][:4])}"
+                )
+
+    idea_rows_to_upsert = ideas_to_upsert + editorial_updates
+
+    if SUPABASE_URL and idea_rows_to_upsert:
+        print(f"\n  Uploading {len(idea_rows_to_upsert)} ideas to Supabase...")
 
         # Upsert ideas in chunks first to cut down the number of round-trips.
         idea_upsert_successes, idea_upsert_failures = _bulk_upsert_rows(
             "ideas",
-            ideas_to_upsert,
+            idea_rows_to_upsert,
             on_conflict="slug",
             chunk_size=25,
             id_fn=lambda row: row.get("slug", "unknown"),
@@ -3230,12 +3405,12 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
             run_notes.append(f"Idea history failures: {', '.join(history_failures[:8])}")
 
         print(
-            f"  [OK] {idea_upsert_successes}/{len(ideas_to_upsert)} ideas upserted + "
+            f"  [OK] {idea_upsert_successes}/{len(idea_rows_to_upsert)} ideas upserted + "
             f"{history_successes}/{len(history_to_insert)} history records"
         )
 
     # ── 6. Update run log ──
-    structured_note_prefixes = ("Source health:", "Run metadata:", "Reddit health:")
+    structured_note_prefixes = ("Source health:", "Run metadata:", "Reddit health:", "Market funnel:", "Market editorial:")
     non_health_notes = [
         note for note in run_notes
         if not str(note or "").startswith(structured_note_prefixes)

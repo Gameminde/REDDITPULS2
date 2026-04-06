@@ -5,14 +5,26 @@ import { MODEL_CATALOG } from "@/app/api/settings/ai/route";
 import { normalizeProfileRole, type AdminProfileRole } from "@/lib/admin-access";
 import { recordAdminEvent } from "@/lib/admin-events";
 import { trackServerEvent } from "@/lib/analytics";
-import { buildMarketIdeas } from "@/lib/market-feed";
+import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
+import { explainPublicOpportunityEligibility, type PublicOpportunityRejectionReason } from "@/lib/public-idea-eligibility";
 import { enqueueValidationJob } from "@/lib/queue";
 import { getRuntimeSettings, updateRuntimeSettings } from "@/lib/runtime-settings";
-import { extractScraperRunHealth } from "@/lib/scraper-run-health";
+import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
 import { createAdmin } from "@/lib/supabase-admin";
 
 const execAsync = promisify(exec);
 const DAY_MS = 86_400_000;
+const MARKET_AUDIT_IDEA_SELECT = "id, topic, slug, current_score, change_24h, change_7d, trend_direction, confidence_level, post_count_total, post_count_7d, source_count, sources, category, competition_data, icp_data, top_posts, keywords, pain_count, pain_summary, first_seen, last_updated, score_breakdown, market_editorial, market_editorial_updated_at";
+const PUBLIC_REJECTION_LABELS: Record<PublicOpportunityRejectionReason, string> = {
+    insufficient_confidence: "Insufficient confidence",
+    suppressed_market_status: "Suppressed by market classification",
+    editorial_hidden: "Blocked by editorial review",
+    score_below_threshold: "Score below public threshold",
+    insufficient_posts: "Not enough evidence posts",
+    insufficient_sources: "Not enough sources or direct proof",
+    invalid_title: "Title is too weak or malformed",
+    invalid_summary: "Summary is too weak or malformed",
+};
 
 export type AdminActor = {
     id: string;
@@ -145,6 +157,22 @@ async function fetchAiConfigs(userIds?: string[]) {
     return toRows(data);
 }
 
+async function fetchIdeasForMarketAudit(limit = 1000) {
+    const admin = createAdmin();
+    const { data, error } = await admin
+        .from("ideas")
+        .select(MARKET_AUDIT_IDEA_SELECT)
+        .order("last_updated", { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        if (isMissingRelation(error)) return [];
+        throw error;
+    }
+
+    return toRows(data);
+}
+
 async function fetchTableCountExact(table: string) {
     const admin = createAdmin();
     const { count, error } = await admin
@@ -246,6 +274,43 @@ function buildRecentActivity(input: {
     return [...validationEntries, ...runEntries, ...analyticsEntries, ...adminEntries]
         .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
         .slice(0, 18);
+}
+
+function buildMarketAuditSummary(rows: Array<Record<string, unknown>>) {
+    const hydratedIdeas = rows.map((row) => hydrateIdeaForMarket(row));
+    const rejectionCounts = new Map<PublicOpportunityRejectionReason, number>();
+    let publicEligible = 0;
+
+    for (const idea of hydratedIdeas) {
+        const eligibility = explainPublicOpportunityEligibility(idea);
+        if (eligibility.eligible) {
+            publicEligible += 1;
+            continue;
+        }
+        if (eligibility.reason) {
+            rejectionCounts.set(eligibility.reason, (rejectionCounts.get(eligibility.reason) || 0) + 1);
+        }
+    }
+
+    const rejectionBreakdown = [...rejectionCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({
+            reason,
+            label: PUBLIC_REJECTION_LABELS[reason],
+            count,
+        }));
+
+    return {
+        totalIdeas: hydratedIdeas.length,
+        publicEligible,
+        publicRejected: Math.max(0, hydratedIdeas.length - publicEligible),
+        userFeedVisible: buildMarketIdeas(rows, { surface: "user" }).length,
+        adminFeedVisible: buildMarketIdeas(rows, { includeExploratory: true, surface: "admin" }).length,
+        visibleMarketStatus: hydratedIdeas.filter((idea) => idea.market_status === "visible").length,
+        needsFocus: hydratedIdeas.filter((idea) => idea.market_status === "needs_wedge").length,
+        suppressed: hydratedIdeas.filter((idea) => idea.market_status === "suppressed").length,
+        rejectionBreakdown,
+    };
 }
 
 export async function getAdminOverviewData() {
@@ -482,17 +547,23 @@ export async function retryValidationAsAdmin(validationId: string, actor: AdminA
 }
 
 export async function getAdminJobsData() {
-    const [runtimeSettings, runs, validations] = await Promise.all([
+    const [runtimeSettings, runs, validations, ideaRows] = await Promise.all([
         getRuntimeSettings(),
         fetchLatestScraperRuns(),
         fetchValidations(),
+        fetchIdeasForMarketAudit(),
     ]);
     const latestRun = runs[0] || null;
+    const latestRunHealth = extractScraperRunHealth(latestRun);
+    const latestRunFunnel = extractMarketFunnel(latestRun);
+    const currentMarketFunnel = buildMarketAuditSummary(ideaRows);
 
     return {
         runtimeSettings,
         latestRun,
-        latestRunHealth: extractScraperRunHealth(latestRun),
+        latestRunHealth,
+        latestRunFunnel,
+        currentMarketFunnel,
         recentRuns: runs,
         queue: {
             queued: validations.filter((row) => mapValidationStatus(row.status) === "queued").length,
@@ -513,8 +584,8 @@ export async function getAdminJobsData() {
             },
             {
                 label: "Reddit lane",
-                value: latestRun ? extractScraperRunHealth(latestRun).reddit_access_mode : "unknown",
-                status: extractScraperRunHealth(latestRun).reddit_degraded_reason ? "degraded" : "healthy",
+                value: latestRun ? latestRunHealth.reddit_access_mode : "unknown",
+                status: latestRunHealth.reddit_degraded_reason ? "degraded" : "healthy",
             },
         ],
     };

@@ -1,4 +1,5 @@
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
+import { getApprovedMarketEditorial, getMarketEditorialVisibility } from "@/lib/market-editorial";
 import { isLowQualityUserFacingCopy, summarizeIdeaForBrowse } from "@/lib/user-facing-copy";
 
 type PublicSourceCount = {
@@ -31,7 +32,18 @@ export interface PublicIdeaInput {
     sources?: PublicSourceCount[] | null;
     top_posts?: PublicTopPost[] | null;
     signal_contract?: PublicSignalContract | null;
+    market_editorial?: unknown;
 }
+
+export type PublicOpportunityRejectionReason =
+    | "insufficient_confidence"
+    | "suppressed_market_status"
+    | "editorial_hidden"
+    | "score_below_threshold"
+    | "insufficient_posts"
+    | "insufficient_sources"
+    | "invalid_title"
+    | "invalid_summary";
 
 const HARD_BLOCK_TOPIC_PATTERNS = [
     /^pain signals from /i,
@@ -77,6 +89,11 @@ export function isBlockedPublicOpportunityTitle(value?: string | null) {
 }
 
 export function getPublicOpportunityTitle(input: PublicIdeaInput) {
+    const approvedEditorial = getApprovedMarketEditorial(input.market_editorial);
+    if (approvedEditorial && !isBlockedPublicOpportunityTitle(approvedEditorial.edited_title)) {
+        return approvedEditorial.edited_title;
+    }
+
     const preferred = normalizePublicOpportunityTitle(input.suggested_wedge_label);
     if (preferred && !isBlockedPublicOpportunityTitle(preferred)) {
         return preferred;
@@ -95,6 +112,11 @@ export function getPublicDirectBuyerProofCount(input: PublicIdeaInput) {
 }
 
 export function getSafePublicSummary(input: PublicIdeaInput) {
+    const approvedEditorial = getApprovedMarketEditorial(input.market_editorial);
+    if (approvedEditorial && !isLowQualityUserFacingCopy(approvedEditorial.edited_summary)) {
+        return approvedEditorial.edited_summary;
+    }
+
     const publicTitle = getPublicOpportunityTitle(input);
     if (!publicTitle) return "";
 
@@ -115,17 +137,42 @@ export function getSafePublicSummary(input: PublicIdeaInput) {
     return summary;
 }
 
-export function isPublicOpportunityEligible(input: PublicIdeaInput) {
-    if (cleanText(input.confidence_level).toUpperCase() === "INSUFFICIENT") return false;
-    if (cleanText(input.market_status).toLowerCase() === "suppressed") return false;
-    if (toFiniteNumber(input.current_score) < 30) return false;
-    if (toFiniteNumber(input.post_count_total) < 5) return false;
+export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
+    eligible: boolean;
+    reason: PublicOpportunityRejectionReason | null;
+} {
+    if (cleanText(input.confidence_level).toUpperCase() === "INSUFFICIENT") {
+        return { eligible: false, reason: "insufficient_confidence" };
+    }
+    if (cleanText(input.market_status).toLowerCase() === "suppressed") {
+        return { eligible: false, reason: "suppressed_market_status" };
+    }
+    const editorialVisibility = getMarketEditorialVisibility(input.market_editorial);
+    if (editorialVisibility && editorialVisibility !== "public") {
+        return { eligible: false, reason: "editorial_hidden" };
+    }
+    if (toFiniteNumber(input.current_score) < 30) {
+        return { eligible: false, reason: "score_below_threshold" };
+    }
+    if (toFiniteNumber(input.post_count_total) < 5) {
+        return { eligible: false, reason: "insufficient_posts" };
+    }
 
     const directBuyerProofCount = getPublicDirectBuyerProofCount(input);
-    if (toFiniteNumber(input.source_count) < 2 && directBuyerProofCount <= 0) return false;
+    if (toFiniteNumber(input.source_count) < 2 && directBuyerProofCount <= 0) {
+        return { eligible: false, reason: "insufficient_sources" };
+    }
 
-    if (!getPublicOpportunityTitle(input)) return false;
-    if (!getSafePublicSummary(input)) return false;
+    if (!getPublicOpportunityTitle(input)) {
+        return { eligible: false, reason: "invalid_title" };
+    }
+    if (!getSafePublicSummary(input)) {
+        return { eligible: false, reason: "invalid_summary" };
+    }
 
-    return true;
+    return { eligible: true, reason: null };
+}
+
+export function isPublicOpportunityEligible(input: PublicIdeaInput) {
+    return explainPublicOpportunityEligibility(input).eligible;
 }

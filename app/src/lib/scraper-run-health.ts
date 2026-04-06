@@ -10,6 +10,18 @@ export type ScraperRunHealth = {
     reddit_degraded_reason: string | null;
 };
 
+export type MarketFunnelSnapshot = {
+    scraped_posts: number;
+    matched_posts: number;
+    unmatched_posts: number;
+    builder_meta_filtered_posts: number;
+    dynamic_topics: number;
+    subreddit_bucket_topics: number;
+    invalid_topic_skips: number;
+    weak_topic_skips: number;
+    final_ideas: number;
+};
+
 type ScraperRunRow = Record<string, unknown> | null;
 
 function parseSourceList(value: unknown) {
@@ -29,6 +41,29 @@ function parseNamedList(value: string) {
 function toCount(value: string | undefined) {
     const parsed = Number(value || 0);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function extractMarketFunnel(latestRun: ScraperRunRow): MarketFunnelSnapshot | null {
+    if (!latestRun) return null;
+
+    const errorText = String(latestRun?.error_text || "");
+    const marketFunnelMatch = errorText.match(
+        /Market funnel:\s*scraped=(\d+);\s*matched=(\d+);\s*unmatched=(\d+);\s*builder_meta=(\d+);\s*dynamic=(\d+);\s*buckets=(\d+);\s*invalid=(\d+);\s*weak=(\d+);\s*ideas=(\d+)/i,
+    );
+
+    if (!marketFunnelMatch) return null;
+
+    return {
+        scraped_posts: toCount(marketFunnelMatch[1]),
+        matched_posts: toCount(marketFunnelMatch[2]),
+        unmatched_posts: toCount(marketFunnelMatch[3]),
+        builder_meta_filtered_posts: toCount(marketFunnelMatch[4]),
+        dynamic_topics: toCount(marketFunnelMatch[5]),
+        subreddit_bucket_topics: toCount(marketFunnelMatch[6]),
+        invalid_topic_skips: toCount(marketFunnelMatch[7]),
+        weak_topic_skips: toCount(marketFunnelMatch[8]),
+        final_ideas: toCount(marketFunnelMatch[9]),
+    };
 }
 
 export function extractScraperRunHealth(latestRun: ScraperRunRow): ScraperRunHealth {
