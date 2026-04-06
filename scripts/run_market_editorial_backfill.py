@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -57,13 +58,26 @@ def main() -> int:
         print("[Editorial backfill] No editorial updates were produced.")
         return 0
 
-    success_count, failure_ids = scraper_job._bulk_upsert_rows(  # noqa: SLF001
-        "ideas",
-        stale_updates,
-        on_conflict="slug",
-        chunk_size=20,
-        id_fn=lambda row: str(row.get("slug") or "unknown"),
-    )
+    success_count = 0
+    failure_ids: list[str] = []
+    for row in stale_updates:
+        slug = str(row.get("slug") or "").strip()
+        if not slug:
+            failure_ids.append("unknown")
+            continue
+        response = scraper_job.sb_patch(
+            "ideas",
+            f"slug=eq.{quote(slug, safe='')}",
+            {
+                "market_editorial": row.get("market_editorial"),
+                "market_editorial_updated_at": row.get("market_editorial_updated_at"),
+            },
+        )
+        if response.status_code < 400:
+            success_count += 1
+        else:
+            failure_ids.append(slug)
+
     print(f"[Editorial backfill] persisted={success_count} failed={len(failure_ids)}")
     if failure_ids:
         print(f"[Editorial backfill] failed_ids={', '.join(failure_ids[:10])}")

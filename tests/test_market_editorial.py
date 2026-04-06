@@ -1,5 +1,6 @@
 import scraper_job  # noqa: F401 - ensures engine/ is on sys.path for market_editorial imports
 import market_editorial.orchestrator as orchestrator
+from market_editorial.schemas import CRITIC_JSON_SCHEMA, EDITOR_JSON_SCHEMA
 
 
 def _idea_row(slug="async-video-updates", score=61, source_count=2):
@@ -201,3 +202,18 @@ def test_market_editorial_can_backfill_existing_rows_without_current_run(monkeyp
     assert stale_updates[0]["market_editorial"]["visibility_decision"] == "public"
     assert telemetry["considered"] == 1
     assert telemetry["existing_candidates"] == 1
+
+
+def test_cerebras_json_schemas_avoid_unsupported_string_length_fields():
+    def walk(value):
+        if isinstance(value, dict):
+            assert "minLength" not in value
+            assert "maxLength" not in value
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(EDITOR_JSON_SCHEMA)
+    walk(CRITIC_JSON_SCHEMA)

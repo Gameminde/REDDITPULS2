@@ -7,13 +7,13 @@ EDITOR_JSON_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "edited_title": {"type": "string", "minLength": 4, "maxLength": 120},
-        "edited_summary": {"type": "string", "minLength": 20, "maxLength": 320},
-        "pain_statement": {"type": "string", "minLength": 12, "maxLength": 220},
-        "ideal_buyer": {"type": "string", "minLength": 4, "maxLength": 160},
-        "product_angle": {"type": "string", "minLength": 6, "maxLength": 180},
-        "verdict": {"type": "string", "minLength": 4, "maxLength": 140},
-        "next_step": {"type": "string", "minLength": 8, "maxLength": 220},
+        "edited_title": {"type": "string"},
+        "edited_summary": {"type": "string"},
+        "pain_statement": {"type": "string"},
+        "ideal_buyer": {"type": "string"},
+        "product_angle": {"type": "string"},
+        "verdict": {"type": "string"},
+        "next_step": {"type": "string"},
     },
     "required": [
         "edited_title",
@@ -37,7 +37,7 @@ CRITIC_JSON_SCHEMA: Dict[str, Any] = {
         },
         "duplicate_of_slug": {
             "anyOf": [
-                {"type": "string", "minLength": 0, "maxLength": 120},
+                {"type": "string"},
                 {"type": "null"},
             ],
         },
@@ -45,19 +45,19 @@ CRITIC_JSON_SCHEMA: Dict[str, Any] = {
         "grounding_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
         "critic_reasons": {
             "type": "array",
-            "items": {"type": "string", "minLength": 2, "maxLength": 200},
+            "items": {"type": "string"},
             "minItems": 1,
             "maxItems": 6,
         },
         "tightened_title": {
             "anyOf": [
-                {"type": "string", "minLength": 0, "maxLength": 120},
+                {"type": "string"},
                 {"type": "null"},
             ],
         },
         "tightened_summary": {
             "anyOf": [
-                {"type": "string", "minLength": 0, "maxLength": 320},
+                {"type": "string"},
                 {"type": "null"},
             ],
         },
