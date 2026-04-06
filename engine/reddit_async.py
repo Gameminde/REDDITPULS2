@@ -154,7 +154,7 @@ async def _fetch_subreddit(
         await limiter.acquire()
 
         # Get a proxy — random selection to avoid sequential patterns
-        proxy = _rotator.random_proxy() if _rotator.has_proxies() else None
+        proxy = _rotator.format_for_aiohttp() if _rotator.has_proxies() else None
 
         try:
             async with session.get(

@@ -141,15 +141,25 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
     eligible: boolean;
     reason: PublicOpportunityRejectionReason | null;
 } {
+    const editorialVisibility = getPublicMarketEditorialVisibility(input.market_editorial);
+    if (editorialVisibility) {
+        if (editorialVisibility !== "public") {
+            return { eligible: false, reason: "editorial_hidden" };
+        }
+        if (!getPublicOpportunityTitle(input)) {
+            return { eligible: false, reason: "invalid_title" };
+        }
+        if (!getSafePublicSummary(input)) {
+            return { eligible: false, reason: "invalid_summary" };
+        }
+        return { eligible: true, reason: null };
+    }
+
     if (cleanText(input.confidence_level).toUpperCase() === "INSUFFICIENT") {
         return { eligible: false, reason: "insufficient_confidence" };
     }
     if (cleanText(input.market_status).toLowerCase() === "suppressed") {
         return { eligible: false, reason: "suppressed_market_status" };
-    }
-    const editorialVisibility = getPublicMarketEditorialVisibility(input.market_editorial);
-    if (editorialVisibility && editorialVisibility !== "public") {
-        return { eligible: false, reason: "editorial_hidden" };
     }
     if (toFiniteNumber(input.current_score) < 30) {
         return { eligible: false, reason: "score_below_threshold" };

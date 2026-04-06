@@ -166,6 +166,14 @@ class ProxyRotator:
                 return None
             return random.choice(self._live_proxies)
 
+    def random_http_proxy(self) -> str | None:
+        with self._lock:
+            self._restore_pool_if_needed()
+            http_like = [proxy for proxy in self._live_proxies if not str(proxy).lower().startswith("socks")]
+            if not http_like:
+                return None
+            return random.choice(http_like)
+
     def format_for_requests(self) -> dict | None:
         proxy = self.next_proxy()
         if not proxy:
@@ -173,7 +181,7 @@ class ProxyRotator:
         return {"http": proxy, "https": proxy}
 
     def format_for_aiohttp(self) -> str | None:
-        return self.next_proxy()
+        return self.random_http_proxy()
 
     def cull_proxy(self, proxy: str | None) -> None:
         if not proxy:
