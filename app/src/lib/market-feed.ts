@@ -7,7 +7,12 @@ import {
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
 import { buildMarketOpportunityPresentation } from "@/lib/market-opportunity-presentation";
-import { getVisibleMarketEditorial, parseMarketEditorial, type MarketEditorialPayload } from "@/lib/market-editorial";
+import {
+    getVisibleMarketEditorial,
+    getVisibleMarketEditorialProductAngle,
+    parseMarketEditorial,
+    type MarketEditorialPayload,
+} from "@/lib/market-editorial";
 import { buildMarketHint, type MarketHint } from "@/lib/opportunity-actionability";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
@@ -58,6 +63,7 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     public_summary: string;
     public_verdict: string;
     public_next_step: string;
+    public_product_angle: string;
     public_browse_eligible: boolean;
     market_editorial: MarketEditorialPayload | null;
     market_editorial_updated_at: string | null;
@@ -430,6 +436,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         public_summary: "",
         public_verdict: "",
         public_next_step: "",
+        public_product_angle: "",
         public_browse_eligible: false,
         market_editorial: parsedMarketEditorial,
         market_editorial_updated_at: typeof idea.market_editorial_updated_at === "string" ? idea.market_editorial_updated_at : null,
@@ -443,6 +450,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
     const public_title = getPublicOpportunityTitle(withHint);
     const public_summary = getSafePublicSummary(withHint);
     const approvedEditorial = getVisibleMarketEditorial(parsedMarketEditorial);
+    const public_product_angle = getVisibleMarketEditorialProductAngle(parsedMarketEditorial);
 
     return {
         ...withHint,
@@ -450,6 +458,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         public_summary,
         public_verdict: approvedEditorial?.verdict || "",
         public_next_step: approvedEditorial?.next_step || "",
+        public_product_angle,
         public_browse_eligible: isPublicOpportunityEligible({
             ...withHint,
             suggested_wedge_label: public_title || withHint.suggested_wedge_label,

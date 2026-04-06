@@ -58,6 +58,17 @@ const HARD_BLOCK_TOPIC_PATTERNS = [
     /^else tired$/i,
 ];
 
+const PAIN_FIRST_TITLE_PATTERNS = [
+    /\bfrustrat(e|es|ed|ing)\b/i,
+    /\bburnout\b/i,
+    /\bdistrust\b/i,
+    /\bgaps?\b/i,
+    /\bstruggl(e|es|ed|ing)\b/i,
+    /\bcomplain(s|ed|ing)?\b/i,
+    /\bexpress\b/i,
+    /\bpain\b/i,
+];
+
 function cleanText(value: unknown) {
     return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -65,6 +76,12 @@ function cleanText(value: unknown) {
 function toFiniteNumber(value: unknown) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function shouldPreferOpportunityAngle(title: string, productAngle: string) {
+    if (!title || !productAngle) return false;
+    if (title.length >= 72) return true;
+    return PAIN_FIRST_TITLE_PATTERNS.some((pattern) => pattern.test(title));
 }
 
 export function normalizePublicOpportunityTitle(value?: string | null) {
@@ -91,8 +108,19 @@ export function isBlockedPublicOpportunityTitle(value?: string | null) {
 
 export function getPublicOpportunityTitle(input: PublicIdeaInput) {
     const approvedEditorial = getVisibleMarketEditorial(input.market_editorial);
-    if (approvedEditorial && !isBlockedPublicOpportunityTitle(approvedEditorial.edited_title)) {
-        return approvedEditorial.edited_title;
+    if (approvedEditorial) {
+        const editorialTitle = normalizePublicOpportunityTitle(approvedEditorial.edited_title);
+        const opportunityAngle = normalizePublicOpportunityTitle(approvedEditorial.product_angle);
+        if (
+            opportunityAngle
+            && !isBlockedPublicOpportunityTitle(opportunityAngle)
+            && shouldPreferOpportunityAngle(editorialTitle, opportunityAngle)
+        ) {
+            return opportunityAngle;
+        }
+        if (editorialTitle && !isBlockedPublicOpportunityTitle(editorialTitle)) {
+            return editorialTitle;
+        }
     }
 
     const preferred = normalizePublicOpportunityTitle(input.suggested_wedge_label);

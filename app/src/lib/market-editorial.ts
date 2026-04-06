@@ -124,6 +124,14 @@ export function getVisibleMarketEditorial(value: unknown): VisibleMarketEditoria
     return buildVisibleMarketEditorial(value, ["public", "needs_more_proof"]);
 }
 
+export function getVisibleMarketEditorialProductAngle(value: unknown) {
+    const editorial = getVisibleMarketEditorial(value);
+    const productAngle = cleanText(editorial?.product_angle);
+    if (!productAngle) return "";
+    if (productAngle === cleanText(editorial?.edited_title)) return "";
+    return productAngle;
+}
+
 export function getPublicMarketEditorialVisibility(value: unknown): MarketEditorialVisibility | "" {
     if (getMarketEditorialPublishMode() !== "publish") {
         return "";

@@ -31,6 +31,9 @@ interface Idea {
     topic: string;
     public_title?: string;
     public_summary?: string;
+    public_verdict?: string;
+    public_next_step?: string;
+    public_product_angle?: string;
     slug: string;
     current_score: number;
     change_24h: number;
@@ -153,8 +156,8 @@ function getIdeaDisplayTopic(idea: Pick<Idea, "topic" | "public_title">) {
     return decodeHtml(idea.public_title || idea.topic);
 }
 
-function getIdeaSuggestedWedge(idea: Pick<Idea, "suggested_wedge_label" | "topic" | "public_title">) {
-    const suggestion = decodeHtml(idea.suggested_wedge_label || "");
+function getIdeaSuggestedWedge(idea: Pick<Idea, "public_product_angle" | "suggested_wedge_label" | "topic" | "public_title">) {
+    const suggestion = decodeHtml(idea.public_product_angle || idea.suggested_wedge_label || "");
     const displayTopic = decodeHtml(idea.public_title || idea.topic);
     return suggestion && suggestion !== displayTopic ? suggestion : "";
 }
@@ -568,7 +571,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
     ].filter((item) => Number.isFinite(item.value)) : [];
     const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const verdictSummary = summarizeReasonForUser(
-        signalContract?.summary,
+        idea.public_verdict || signalContract?.summary,
         hasThinDataWarning
             ? `${displayTopic} is still early and needs stronger proof before you treat it as a real bet`
             : `${displayTopic} has enough repeated proof to deserve a closer look`,
@@ -577,7 +580,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         ? `${formatCountLabel(directBuyerCount, "buyer quote")} and ${formatCountLabel(idea.source_count, "source")} support this idea.`
         : `${formatCountLabel(idea.post_count_total, "post")} and ${formatCountLabel(idea.source_count, "source")} are visible, but stronger buyer proof is still missing.`;
     const nextStepSummary = summarizeReasonForUser(
-        marketHint?.recommended_board_action || "",
+        idea.public_next_step || marketHint?.recommended_board_action || "",
         isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to see whether the proof still holds up under a deeper review.",
     );
 
@@ -691,6 +694,11 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                             <span style={{ fontSize: 9, color: "#64748b" }}>Open details</span>
                         )}
                     </div>
+                    {suggestedWedge && (
+                        <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 6 }}>
+                            Product angle: {suggestedWedge}
+                        </div>
+                    )}
                     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b" }}>
                         <span>{formatCountLabel(idea.post_count_total, "post")}</span>
                         <span>{formatCountLabel(idea.source_count, "source")}</span>
@@ -1499,11 +1507,11 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
     const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
     const verdictSummary = summarizeReasonForUser(
-        signalContract?.summary,
+        idea.public_verdict || signalContract?.summary,
         `${displayTopic} is getting enough repeated discussion to review, but the idea still needs proof.`,
     );
     const nextStepSummary = summarizeReasonForUser(
-        marketHint?.recommended_board_action,
+        idea.public_next_step || marketHint?.recommended_board_action,
         isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next before you commit to it.",
     );
 
@@ -2098,12 +2106,14 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
 
 function MarketIntelligenceSection({
     intelligence,
+    archivePostCount,
     loading,
     tab,
     onTabChange,
     isGuest,
 }: {
     intelligence: MarketIntelligencePayload | null;
+    archivePostCount?: number;
     loading: boolean;
     tab: IntelligenceTab;
     onTabChange: (tab: IntelligenceTab) => void;
@@ -2189,9 +2199,12 @@ function MarketIntelligenceSection({
                         gap: 12,
                         marginBottom: 18,
                     }}>
-                        <DetailMetric label="Raw ideas" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
-                        <DetailMetric label="Feed visible" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
+                        <DetailMetric label="Candidate ideas" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
+                        <DetailMetric label="Visible in board" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
                         <DetailMetric label="New 72h" value={intelligence.summary.new_72h_count} accent="#fbbf24" />
+                        {Number(archivePostCount || 0) > 0 && (
+                            <DetailMetric label="Posts analyzed" value={Number(archivePostCount || 0)} accent="#a78bfa" />
+                        )}
                     </div>
                 )}
 
@@ -2401,9 +2414,9 @@ export default function StockMarketDashboard() {
     const visibleIdeas = filteredIdeas;
     const liveIdeaCount = Math.max(scanStatus?.ideaCount || 0, visibleIdeas.length);
     const visibleIdeaCount = visibleIdeas.length;
-    const avgScore = visibleIdeas.length > 0 ? visibleIdeas.reduce((a, b) => a + b.current_score, 0) / visibleIdeas.length : 0;
+    const candidateIdeaCount = Math.max(marketIntelligence?.summary.raw_idea_count || 0, visibleIdeaCount);
     const postsInFeed = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
-    const activePostCount = Math.max(scanStatus?.trackedPostCount || 0, postsInFeed);
+    const rawPostsAnalyzed = Math.max(scanStatus?.archivePostCount || 0, scanStatus?.trackedPostCount || 0, postsInFeed);
     const executionMode = scanStatus?.executionMode || "local";
     const usingExternalWorker = executionMode === "external";
 
@@ -2609,6 +2622,7 @@ export default function StockMarketDashboard() {
 
             <MarketIntelligenceSection
                 intelligence={marketIntelligence}
+                archivePostCount={scanStatus?.archivePostCount || 0}
                 loading={intelligenceLoading}
                 tab={intelligenceTab}
                 onTabChange={setIntelligenceTab}
@@ -2618,17 +2632,19 @@ export default function StockMarketDashboard() {
             {/* Stats Row */}
             <div className="mb-5 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
                 <div className="min-w-[180px]"><StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" /></div>
+                <div className="min-w-[180px]"><StatCard label="Candidate ideas" value={candidateIdeaCount} icon={Radar} color="#a78bfa" subtitle="shaped from imported market data" /></div>
                 <div className="min-w-[180px]"><StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" /></div>
                 <div className="min-w-[180px]"><StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" /></div>
-                <div className="min-w-[180px]"><StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible idea${visibleIdeaCount === 1 ? "" : "s"} in this view`} /></div>
-                <div className="min-w-[180px]"><StatCard label="Posts in board" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="evidence attached to visible ideas" /></div>
+                <div className="min-w-[180px]"><StatCard label="Visible in board" value={visibleIdeaCount} icon={Activity} color="#3b82f6" subtitle="opportunities shown in this view" /></div>
+                <div className="min-w-[180px]"><StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="all imported posts across sources" /></div>
             </div>
             <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
                 <StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" />
+                <StatCard label="Candidate ideas" value={candidateIdeaCount} icon={Radar} color="#a78bfa" subtitle="shaped from imported market data" />
                 <StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" />
                 <StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" />
-                <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible idea${visibleIdeaCount === 1 ? "" : "s"} in this view`} />
-                <StatCard label="Posts in board" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="evidence attached to visible ideas" />
+                <StatCard label="Visible in board" value={visibleIdeaCount} icon={Activity} color="#3b82f6" subtitle="opportunities shown in this view" />
+                <StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="all imported posts across sources" />
             </div>
 
             {/* Tabs + Category Filter */}

@@ -1,5 +1,5 @@
 import { buildOpportunityEvidence, buildEvidenceSummary } from "@/lib/evidence";
-import { getVisibleMarketEditorial } from "@/lib/market-editorial";
+import { getVisibleMarketEditorial, getVisibleMarketEditorialProductAngle } from "@/lib/market-editorial";
 import { buildMarketIdeas } from "@/lib/market-feed";
 import { buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { getPublicOpportunityTitle, getSafePublicSummary } from "@/lib/public-idea-eligibility";
@@ -140,6 +140,7 @@ export function buildIdeaDetailPayload(
             }),
             public_verdict: approvedEditorial?.verdict || "",
             public_next_step: approvedEditorial?.next_step || "",
+            public_product_angle: getVisibleMarketEditorialProductAngle(idea.market_editorial),
             sources: normalizedSources,
             top_posts: parsedTopPosts,
             keywords: parsedKeywords,
