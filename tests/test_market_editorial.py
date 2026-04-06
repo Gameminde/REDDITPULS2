@@ -95,13 +95,14 @@ def test_market_editorial_pass_updates_current_rows(monkeypatch):
     )
 
     assert len(updated_rows) == 1
-    assert stale_updates == []
+    assert len(stale_updates) == 1
+    assert stale_updates[0]["slug"] == "older-opportunity"
     payload = updated_rows[0]["market_editorial"]
     assert payload["status"] == "success"
     assert payload["visibility_decision"] == "public"
     assert payload["edited_title"] == "Async updates tool for product teams"
-    assert telemetry["approved_public"] == 1
-    assert telemetry["tokens_used"] == 950
+    assert telemetry["approved_public"] == 2
+    assert telemetry["tokens_used"] == 1900
 
 
 def test_market_editorial_pass_fail_soft_without_columns(monkeypatch):
@@ -175,3 +176,28 @@ def test_market_editorial_skips_empty_source_mix(monkeypatch):
     assert stale_updates == []
     assert telemetry["processed"] == 0
     assert telemetry["source_mix_status"] == "empty"
+
+
+def test_market_editorial_can_backfill_existing_rows_without_current_run(monkeypatch):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.setenv("CEREBRAS_MODEL", "qwen-test")
+    monkeypatch.setenv("MARKET_AGENT_TOP_N", "5")
+    monkeypatch.setenv("MARKET_AGENT_MAX_INPUT_POSTS", "4")
+    monkeypatch.setenv("MARKET_AGENT_MAX_TOKENS_PER_RUN", "5000")
+    monkeypatch.setenv("MARKET_AGENT_REFRESH_HOURS", "24")
+    monkeypatch.setattr(orchestrator, "CerebrasStructuredClient", FakeClient)
+
+    updated_rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [],
+        [_idea_row(slug="existing-opportunity", score=48)],
+        persist_enabled=True,
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert updated_rows == []
+    assert len(stale_updates) == 1
+    assert stale_updates[0]["slug"] == "existing-opportunity"
+    assert stale_updates[0]["market_editorial"]["visibility_decision"] == "public"
+    assert telemetry["considered"] == 1
+    assert telemetry["existing_candidates"] == 1

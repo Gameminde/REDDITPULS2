@@ -349,6 +349,26 @@ def _candidate_sort_key(candidate: Dict[str, Any]) -> Tuple[float, float, float,
     )
 
 
+def _is_backfill_worthy(packet: Dict[str, Any], stored: Dict[str, Any] | None) -> bool:
+    if stored and _clean_text(stored.get("status")).lower() == "success":
+        return True
+
+    current_score = float(packet.get("current_score") or 0)
+    post_count_total = float(packet.get("post_count_total") or 0)
+    source_count = float(packet.get("source_count") or 0)
+    signal_contract = packet.get("signal_contract") or {}
+    direct_proof = float(signal_contract.get("buyer_native_direct_count") or 0)
+    supporting_signal = float(signal_contract.get("supporting_signal_count") or 0)
+
+    return (
+        current_score >= 20
+        or post_count_total >= 5
+        or source_count >= 2
+        or direct_proof > 0
+        or supporting_signal > 0
+    )
+
+
 def _needs_editorial_refresh(packet: Dict[str, Any], stored: Dict[str, Any] | None, refresh_hours: int) -> bool:
     if not stored:
         return True
@@ -370,7 +390,7 @@ def _collect_candidates(
     top_n: int,
     max_posts: int,
     refresh_hours: int,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     all_rows = list(existing_rows or [])
     current_slugs = {_clean_text(row.get("slug")) for row in current_rows}
     current_candidates = []
@@ -386,28 +406,29 @@ def _collect_candidates(
                 "packet": packet,
             })
 
-    stale_existing_candidates = []
+    refresh_existing_candidates = []
     for row in all_rows:
         slug = _clean_text(row.get("slug"))
         if not slug or slug in current_slugs:
             continue
         stored = _parse_stored_editorial(row.get("market_editorial"))
-        if not _is_public_editorial(stored):
-            continue
         packet = _build_editorial_packet(row, max_posts=max_posts, all_rows=all_rows)
-        if _needs_editorial_refresh(packet, stored, refresh_hours):
-            stale_existing_candidates.append({
-                "kind": "stale",
-                "slug": slug,
-                "row": row,
-                "packet": packet,
-            })
+        if not _needs_editorial_refresh(packet, stored, refresh_hours):
+            continue
+        if not _is_backfill_worthy(packet, stored):
+            continue
+        refresh_existing_candidates.append({
+            "kind": "existing" if not stored else "stale",
+            "slug": slug,
+            "row": row,
+            "packet": packet,
+        })
 
     current_candidates.sort(key=_candidate_sort_key)
-    stale_existing_candidates.sort(key=_candidate_sort_key)
+    refresh_existing_candidates.sort(key=_candidate_sort_key)
 
-    combined = (current_candidates + stale_existing_candidates)[:top_n]
-    return combined, stale_existing_candidates
+    combined = (current_candidates + refresh_existing_candidates)[:top_n]
+    return combined, current_candidates, refresh_existing_candidates
 
 
 def _build_editorial_payload(
@@ -477,7 +498,8 @@ def run_market_editorial_pass(
         "rate_limited": False,
         "errors": [],
     }
-    if not current_rows:
+    existing_rows_list = list(existing_rows or [])
+    if not current_rows and not existing_rows_list:
         return current_rows, [], telemetry
 
     if not persist_enabled:
@@ -524,14 +546,16 @@ def run_market_editorial_pass(
         logger("  [Editorial] Skipped: daily budget exhausted")
         return current_rows, [], telemetry
 
-    candidates, _stale_pool = _collect_candidates(
+    candidates, current_pool, refresh_pool = _collect_candidates(
         current_rows,
-        existing_rows,
+        existing_rows_list,
         top_n=top_n,
         max_posts=max_posts,
         refresh_hours=refresh_hours,
     )
     telemetry["considered"] = len(candidates)
+    telemetry["current_candidates"] = len(current_pool)
+    telemetry["existing_candidates"] = len(refresh_pool)
     if not candidates:
         logger("  [Editorial] No candidates needed refresh")
         telemetry["daily_tokens_after"] = daily_tokens_before
