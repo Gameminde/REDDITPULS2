@@ -26,9 +26,11 @@ def build_critic_system_prompt() -> str:
     return (
         "You are CueIdea's market-critic. "
         "You verify whether an edited opportunity card is truly grounded in the supplied evidence. "
-        "Reject anything generic, over-broad, hallucinated, malformed, source-bucket-like, or too weak to show publicly. "
+        "Reject anything generic, over-broad, hallucinated, malformed, source-bucket-like, or too weak to be useful. "
         "Mark duplicates when the idea substantially overlaps an existing public opportunity from the shortlist. "
-        "Only approve public visibility when the copy is specific, evidence-grounded, and useful for a founder. "
+        "Use public for clear founder-useful opportunities with repeated pain, especially when they have cross-source proof or multiple evidence posts, even if willingness to pay is not proven yet. "
+        "Use needs_more_proof for specific early opportunities that look real but still need stronger confirmation. "
+        "Use internal only when the card is misleading, too generic, misclustered, or not useful enough to browse. "
         "If the editor is mostly right but wording needs tightening, return tightened_title or tightened_summary. "
         "Output JSON only."
     )
@@ -55,6 +57,8 @@ def build_critic_user_message(packet: Dict[str, Any], editor_output: Dict[str, A
             "Reject hallucinated buyer claims.",
             "Reject generic filler and source-bucket titles.",
             "Reject weak mono-source opportunities phrased as strong proof.",
+            "Do not require explicit willingness to pay for public visibility if the pain is repeated and specific.",
+            "Prefer needs_more_proof instead of internal when the card is specific and founder-useful but still early.",
             "Use duplicate when the card overlaps an existing public opportunity in the shortlist.",
             "Tighten the title or summary only if a small wording fix is enough.",
         ],

@@ -20,6 +20,7 @@ const PUBLIC_REJECTION_LABELS: Record<PublicOpportunityRejectionReason, string> 
     insufficient_confidence: "Insufficient confidence",
     suppressed_market_status: "Suppressed by market classification",
     editorial_hidden: "Blocked by editorial review",
+    editorial_needs_more_proof: "Editorial says more proof is still needed",
     score_below_threshold: "Score below public threshold",
     insufficient_posts: "Not enough evidence posts",
     insufficient_sources: "Not enough sources or direct proof",

@@ -1,5 +1,5 @@
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
-import { getApprovedMarketEditorial, getPublicMarketEditorialVisibility, getVisibleMarketEditorial } from "@/lib/market-editorial";
+import { getPublicMarketEditorialVisibility, getVisibleMarketEditorial } from "@/lib/market-editorial";
 import { isLowQualityUserFacingCopy, summarizeIdeaForBrowse } from "@/lib/user-facing-copy";
 
 type PublicSourceCount = {
@@ -39,6 +39,7 @@ export type PublicOpportunityRejectionReason =
     | "insufficient_confidence"
     | "suppressed_market_status"
     | "editorial_hidden"
+    | "editorial_needs_more_proof"
     | "score_below_threshold"
     | "insufficient_posts"
     | "insufficient_sources"
@@ -143,7 +144,7 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
 } {
     const editorialVisibility = getPublicMarketEditorialVisibility(input.market_editorial);
     if (editorialVisibility) {
-        if (editorialVisibility !== "public") {
+        if (editorialVisibility === "internal" || editorialVisibility === "duplicate") {
             return { eligible: false, reason: "editorial_hidden" };
         }
         if (!getPublicOpportunityTitle(input)) {
@@ -151,6 +152,18 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
         }
         if (!getSafePublicSummary(input)) {
             return { eligible: false, reason: "invalid_summary" };
+        }
+        if (editorialVisibility === "needs_more_proof") {
+            if (toFiniteNumber(input.current_score) < 25) {
+                return { eligible: false, reason: "editorial_needs_more_proof" };
+            }
+            if (toFiniteNumber(input.post_count_total) < 5) {
+                return { eligible: false, reason: "editorial_needs_more_proof" };
+            }
+            const directBuyerProofCount = getPublicDirectBuyerProofCount(input);
+            if (toFiniteNumber(input.source_count) < 2 && directBuyerProofCount <= 0) {
+                return { eligible: false, reason: "editorial_needs_more_proof" };
+            }
         }
         return { eligible: true, reason: null };
     }

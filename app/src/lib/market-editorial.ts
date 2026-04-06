@@ -49,6 +49,10 @@ export interface ApprovedMarketEditorial {
     pain_statement: string;
 }
 
+export interface VisibleMarketEditorial extends Omit<ApprovedMarketEditorial, "visibility_decision"> {
+    visibility_decision: "public" | "needs_more_proof";
+}
+
 export function getMarketEditorialPublishMode(): MarketEditorialPublishMode {
     const raw = cleanText(process.env.MARKET_AGENT_PUBLISH_MODE).toLowerCase();
     return raw === "publish" ? "publish" : "shadow";
@@ -62,11 +66,16 @@ export function parseMarketEditorial(value: unknown): MarketEditorialPayload | n
     return parsed as MarketEditorialPayload;
 }
 
-export function getApprovedMarketEditorial(value: unknown): ApprovedMarketEditorial | null {
+function buildVisibleMarketEditorial(
+    value: unknown,
+    allowed: Array<"public" | "needs_more_proof">,
+): VisibleMarketEditorial | null {
     const editorial = parseMarketEditorial(value);
     if (!editorial) return null;
     if (cleanText(editorial.status).toLowerCase() !== "success") return null;
-    if (cleanText(editorial.visibility_decision).toLowerCase() !== "public") return null;
+    const visibility = cleanText(editorial.visibility_decision).toLowerCase();
+    if (visibility !== "public" && visibility !== "needs_more_proof") return null;
+    if (!allowed.includes(visibility as "public" | "needs_more_proof")) return null;
 
     const editedTitle = cleanText(editorial.edited_title);
     const editedSummary = cleanText(editorial.edited_summary);
@@ -77,11 +86,20 @@ export function getApprovedMarketEditorial(value: unknown): ApprovedMarketEditor
         edited_summary: editedSummary,
         verdict: cleanText(editorial.verdict),
         next_step: cleanText(editorial.next_step),
-        visibility_decision: "public",
+        visibility_decision: visibility as "public" | "needs_more_proof",
         quality_score: Number(editorial.quality_score || 0),
         product_angle: cleanText(editorial.product_angle),
         ideal_buyer: cleanText(editorial.ideal_buyer),
         pain_statement: cleanText(editorial.pain_statement),
+    };
+}
+
+export function getApprovedMarketEditorial(value: unknown): ApprovedMarketEditorial | null {
+    const editorial = buildVisibleMarketEditorial(value, ["public"]);
+    if (!editorial || editorial.visibility_decision !== "public") return null;
+    return {
+        ...editorial,
+        visibility_decision: "public",
     };
 }
 
@@ -99,11 +117,11 @@ export function getMarketEditorialVisibility(value: unknown): MarketEditorialVis
     return "";
 }
 
-export function getVisibleMarketEditorial(value: unknown): ApprovedMarketEditorial | null {
+export function getVisibleMarketEditorial(value: unknown): VisibleMarketEditorial | null {
     if (getMarketEditorialPublishMode() !== "publish") {
         return null;
     }
-    return getApprovedMarketEditorial(value);
+    return buildVisibleMarketEditorial(value, ["public", "needs_more_proof"]);
 }
 
 export function getPublicMarketEditorialVisibility(value: unknown): MarketEditorialVisibility | "" {
