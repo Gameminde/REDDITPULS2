@@ -373,6 +373,9 @@ def _needs_editorial_refresh(packet: Dict[str, Any], stored: Dict[str, Any] | No
     if not stored:
         return True
 
+    if _clean_text(stored.get("status")).lower() != "success":
+        return True
+
     input_hash = _clean_text(stored.get("input_hash"))
     if input_hash != _build_input_hash(packet):
         return True

@@ -204,6 +204,38 @@ def test_market_editorial_can_backfill_existing_rows_without_current_run(monkeyp
     assert telemetry["existing_candidates"] == 1
 
 
+def test_failed_editorial_rows_are_retried_immediately(monkeypatch):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.setenv("CEREBRAS_MODEL", "qwen-test")
+    monkeypatch.setenv("MARKET_AGENT_TOP_N", "5")
+    monkeypatch.setenv("MARKET_AGENT_MAX_INPUT_POSTS", "4")
+    monkeypatch.setenv("MARKET_AGENT_MAX_TOKENS_PER_RUN", "5000")
+    monkeypatch.setenv("MARKET_AGENT_REFRESH_HOURS", "24")
+    monkeypatch.setattr(orchestrator, "CerebrasStructuredClient", FakeClient)
+
+    existing_row = _idea_row(slug="retry-me", score=44)
+    existing_row["market_editorial"] = {
+        "status": "failed",
+        "input_hash": "old",
+        "updated_at": "2026-04-06T19:00:00+00:00",
+        "visibility_decision": None,
+    }
+    existing_row["market_editorial_updated_at"] = "2026-04-06T19:00:00+00:00"
+
+    updated_rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [],
+        [existing_row],
+        persist_enabled=True,
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert updated_rows == []
+    assert len(stale_updates) == 1
+    assert stale_updates[0]["market_editorial"]["status"] == "success"
+    assert telemetry["processed"] == 1
+
+
 def test_cerebras_json_schemas_avoid_unsupported_string_length_fields():
     def walk(value):
         if isinstance(value, dict):
