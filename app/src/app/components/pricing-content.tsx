@@ -36,14 +36,14 @@ type FeatureRow = {
 
 const FEATURE_ROWS: FeatureRow[] = [
     {
-        name: "Live market feed",
-        description: "The raw market feed with evidence-first topic cards and source counts.",
+        name: "Opportunity board",
+        description: "The live board of startup ideas with evidence-first cards and source counts.",
         icon: Activity,
         availability: "free",
     },
     {
-        name: "Market intelligence add-on",
-        description: "Derived wedge, theme, and competitor summaries above the raw feed.",
+        name: "Opportunity intelligence",
+        description: "Sharper product-angle, theme, and competitor summaries above the live board.",
         icon: Sparkles,
         availability: "starter",
     },
@@ -55,7 +55,7 @@ const FEATURE_ROWS: FeatureRow[] = [
     },
     {
         name: "Idea validation",
-        description: "Run the validation engine against one idea or wedge.",
+        description: "Run a full validation on one startup idea before you build.",
         icon: FileText,
         availability: "starter",
     },
@@ -85,7 +85,7 @@ const FEATURE_ROWS: FeatureRow[] = [
     },
     {
         name: "Competitor radar",
-        description: "Track competitor weakness clusters and complaint signals.",
+        description: "Track competitor weakness clusters and recurring complaint proof.",
         icon: Radar,
         availability: "pro",
     },
@@ -104,14 +104,14 @@ const FEATURE_ROWS: FeatureRow[] = [
 ];
 
 const FREE_FEATURES = [
-    "Live market feed",
+    "Opportunity board",
     "Post explorer",
     "Login, signup, and core product access",
 ];
 
 const STARTER_FEATURES = [
     "Everything in Free",
-    "Market intelligence add-on",
+    "Opportunity intelligence",
     "Idea validation and full reports",
     "Saved ideas and live alerts",
 ];
@@ -225,7 +225,7 @@ export function PricingContent() {
                     {PRICING.trialDays}-day free trial on paid plans
                 </div>
                 <h1 className="mb-3 text-[34px] font-extrabold tracking-tight text-white md:text-[42px]">
-                    Pricing for founders who want signal, not fluff
+                    Pricing for founders who want proof, not fluff
                 </h1>
                 <p className="mx-auto max-w-3xl text-sm leading-relaxed text-muted-foreground md:text-base">
                     {APP_NAME} has the features shown below today. I removed anything the product does not really ship yet, including email delivery claims for the digest.
@@ -364,7 +364,7 @@ export function PricingContent() {
                     {
                         icon: Activity,
                         title: "Live feed stays raw",
-                        body: "The market feed is not rewritten into marketing copy. You still inspect the real signal.",
+                        body: "The live board is not rewritten into marketing copy. You still inspect the real proof.",
                     },
                     {
                         icon: BellRing,

@@ -19,7 +19,7 @@ import { BrandLogo } from "@/app/components/brand-logo";
 /* ─── Nav Groups ──────────────────────────────────────────── */
 
 const marketItems = [
-    { title: "Market", url: "/dashboard", icon: BarChart3 },
+    { title: "Board", url: "/dashboard", icon: BarChart3 },
     { title: "Opportunities", url: "/dashboard/opportunities", icon: Sparkles },
     { title: "Explore", url: "/dashboard/explore", icon: Compass },
     { title: "Trends", url: "/dashboard/trends", icon: TrendingUp, premium: true },
@@ -138,7 +138,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
 
             {/* Nav Groups */}
             <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px" }}>
-                <NavGroup label="Market"       items={marketItems}       index={0} pathname={pathname} isPremium={isPremium} />
+                <NavGroup label="Board"        items={marketItems}       index={0} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Validate"     items={validateItems}     index={1} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Monitor"      items={monitorItems}      index={2} pathname={pathname} isPremium={isPremium} />
                 <NavGroup label="Intelligence" items={intelligenceItems} index={3} pathname={pathname} isPremium={isPremium} />

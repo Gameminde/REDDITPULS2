@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, LoaderCircle, LogIn, PlugZap, RefreshCw, Settings } from "lucide-react";
+import { Activity, CheckCircle2, ChevronDown, LoaderCircle, LogIn, PlugZap, RefreshCw, Settings } from "lucide-react";
 import { BrandLogo } from "@/app/components/brand-logo";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
 import { BETA_FULL_ACCESS } from "@/lib/beta-access";
@@ -139,14 +139,14 @@ export function TopBar({
 
     return (
         <header
-            className="sticky top-0 z-50 flex h-11 items-center justify-between px-2.5 sm:px-3 md:h-10 md:px-5"
+            className="sticky top-0 z-50 flex h-9 items-center justify-between px-2 sm:px-2.5 md:h-[34px] md:px-3.5"
             style={{
                 background: "hsla(0,0%,4%,0.7)",
                 borderBottom: "1px solid hsl(0 0% 100% / 0.07)",
                 backdropFilter: "blur(20px)",
             }}
         >
-            <div className="flex min-w-0 items-center gap-2 md:gap-3">
+            <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
                 <BrandLogo compact uppercase />
 
                 <div className="hidden h-3 w-px bg-border sm:block" />
@@ -161,23 +161,26 @@ export function TopBar({
                         className={`status-live h-[5px] w-[5px] rounded-full ${isGuest || BETA_FULL_ACCESS ? "bg-primary" : "bg-build"}`}
                         style={{ animation: `${isGuest || BETA_FULL_ACCESS ? "pulse-orange" : "pulse-green"} 2s ease infinite` }}
                     />
-                    <span className={`text-[10px] font-mono font-medium ${isGuest || BETA_FULL_ACCESS ? "text-primary" : "text-build"}`}>
+                    <span className={`text-[9px] font-mono font-medium ${isGuest || BETA_FULL_ACCESS ? "text-primary" : "text-build"}`}>
                         {isGuest ? "OPEN BETA" : BETA_FULL_ACCESS ? "BETA FULL ACCESS" : "LIVE"}
                     </span>
                 </div>
 
                 <div className="hidden h-3 w-px bg-border md:block" />
 
-                <span className="hidden text-[10px] font-mono text-muted-foreground md:inline">
+                <span className="topbar-metric-chip hidden items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] px-2 py-1 text-[0px] font-mono text-muted-foreground lg:inline-flex">
+                    <Activity className="h-3 w-3 text-primary/80" />
+                    <span className="text-[9px]">{ideaCount.toLocaleString()} ideas · {postCount.toLocaleString()} posts</span>
                     {ideaCount.toLocaleString()} ideas discovered · {postCount.toLocaleString()} posts archived
+                    <span className="text-[9px]">{ideaCount.toLocaleString()} ideas / {postCount.toLocaleString()} posts</span>
                 </span>
             </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-2 md:gap-2.5">
                 {!isGuest && (
                     <Link
                         href="/dashboard/settings"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-muted-foreground transition-colors hover:border-primary/20 hover:text-white lg:hidden"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-muted-foreground transition-colors hover:border-primary/20 hover:text-white lg:hidden"
                         aria-label="Open settings"
                         title="Settings"
                     >
@@ -188,13 +191,13 @@ export function TopBar({
                     <>
                         <Link
                             href="/dashboard/pricing"
-                            className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-white sm:inline-flex"
+                            className="hidden rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:text-white sm:inline-flex"
                         >
                             Pricing
                         </Link>
                         <Link
                             href="/login"
-                            className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3 sm:text-[11px]"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3"
                         >
                             <LogIn className="h-3 w-3" />
                             <span className="sm:hidden">Log in</span>
@@ -213,7 +216,7 @@ export function TopBar({
                                     return next;
                                 });
                             }}
-                            className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[10px] font-medium transition-colors ${
                                 redditConnected ? "text-foreground" : "text-primary"
                             }`}
                             style={redditConnected
@@ -374,13 +377,13 @@ export function TopBar({
                     {Array.from({ length: Math.max(modelCount, 1) }).slice(0, 5).map((_, index) => (
                         <div
                             key={index}
-                            className="h-[7px] w-[7px] rounded-full"
+                            className="h-[6px] w-[6px] rounded-full"
                             style={{ background: index === 0 ? "#ff4500" : index === 1 ? "#ff6534" : "hsla(16,100%,50%,0.5)" }}
                         />
                     ))}
                 </div>
                 <div className="hidden h-3 w-px bg-border sm:block" />
-                <span className="hidden tabular-nums text-[11px] font-mono text-muted-foreground sm:inline">{clock}</span>
+                <span className="hidden tabular-nums text-[10px] font-mono text-muted-foreground sm:inline">{clock}</span>
             </div>
         </header>
     );

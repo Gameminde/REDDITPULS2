@@ -31,6 +31,8 @@ interface TopPost {
 interface IdeaDetail {
     id: string;
     topic: string;
+    public_title?: string;
+    public_summary?: string;
     slug: string;
     current_score: number;
     change_24h: number;
@@ -132,8 +134,8 @@ const CONF_MAP: Record<string, { label: string; color: string; bg: string }> = {
 };
 
 const TREND_MAP: Record<string, { label: string; icon: LucideIcon; color: string }> = {
-    rising: { label: "Rising", icon: TrendingUp, color: "#22c55e" },
-    falling: { label: "Falling", icon: TrendingDown, color: "#ef4444" },
+    rising: { label: "Gaining traction", icon: TrendingUp, color: "#22c55e" },
+    falling: { label: "Cooling off", icon: TrendingDown, color: "#ef4444" },
     stable: { label: "Stable", icon: Minus, color: "#64748b" },
     new: { label: "New", icon: Sparkles, color: "#8b5cf6" },
 };
@@ -324,7 +326,7 @@ export default function IdeaDetailPage() {
                 onClick={() => router.push("/dashboard")}
                 className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-white transition-colors mb-5 font-medium bg-transparent border-none cursor-pointer p-0"
             >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to Market
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Board
             </button>
 
             {/* Title + Actions */}
@@ -332,7 +334,7 @@ export default function IdeaDetailPage() {
                 <div>
                     <div className="flex items-center gap-3 mb-2 flex-wrap">
                         <h1 className="text-[28px] font-extrabold text-white font-display tracking-tight m-0">
-                            {decodeHtml(idea.topic)}
+                            {decodeHtml(idea.public_title || idea.topic)}
                         </h1>
                         <span 
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-bold"
@@ -383,6 +385,11 @@ export default function IdeaDetailPage() {
                         <h2 className="text-[14px] font-bold text-white mb-2">
                             Trust and Evidence
                         </h2>
+                        {idea.public_summary ? (
+                            <p className="mb-3 max-w-2xl text-sm leading-7 text-muted-foreground">
+                                {idea.public_summary}
+                            </p>
+                        ) : null}
                         <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${trustTone(idea.trust.level)}`}>
                             {idea.trust.label}
                             <span className="text-current/80">{idea.trust.score}/100</span>
@@ -406,13 +413,13 @@ export default function IdeaDetailPage() {
 
                 {idea.trust.weak_signal && idea.trust.weak_signal_reasons.length > 0 && (
                     <div className="mt-4 rounded-xl border border-risky/20 bg-risky/8 p-4 text-sm text-risky">
-                        Weak signal: {idea.trust.weak_signal_reasons.join(" • ")}
+                        Proof still needs work: {idea.trust.weak_signal_reasons.join(" • ")}
                     </div>
                 )}
 
                 {idea.trust.inference_flags.length > 0 && (
                     <div className="mt-3 text-xs text-muted-foreground">
-                        Inference notes: {idea.trust.inference_flags.join(" • ")}
+                        Read with caution: {idea.trust.inference_flags.join(" • ")}
                     </div>
                 )}
             </motion.div>

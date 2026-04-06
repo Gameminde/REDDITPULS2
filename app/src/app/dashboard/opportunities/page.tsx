@@ -163,7 +163,7 @@ export default function OpportunitiesPage() {
                 <div>
                     <Link href="/dashboard" style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none", color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>
                         <ArrowLeft style={{ width: 14, height: 14 }} />
-                        Back to Market
+                        Back to Board
                     </Link>
                     <h1 style={{ fontSize: 24, fontWeight: 800, color: "#f1f5f9", marginTop: 12, marginBottom: 4, letterSpacing: "-0.02em" }}>
                         Opportunity Board
@@ -247,7 +247,7 @@ export default function OpportunitiesPage() {
                     <Sparkles style={{ width: 22, height: 22, margin: "0 auto 12px", opacity: 0.6 }} />
                     <div style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>No promoted opportunities yet</div>
                     <div style={{ fontSize: 12, maxWidth: 460, margin: "0 auto 14px", lineHeight: 1.6 }}>
-                        Promote promising market signals from the live feed when you want a tighter wedge, saved label, and a shortlist of real bets.
+                        Save the strongest ideas from the live board when you want a tighter angle, a saved label, and a shortlist of real bets.
                     </div>
                     <Link href="/dashboard" style={{
                         display: "inline-flex",
@@ -262,7 +262,7 @@ export default function OpportunitiesPage() {
                         fontSize: 12,
                         fontWeight: 700,
                     }}>
-                        Open Market Feed
+                        Open Opportunity Board
                     </Link>
                 </div>
             ) : (
@@ -517,7 +517,7 @@ export default function OpportunitiesPage() {
                                     border: "1px solid rgba(255,255,255,0.05)",
                                 }}>
                                     <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b", marginBottom: 8 }}>
-                                        Linked market signal
+                                        Linked board idea
                                     </div>
                                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                                         <div>
@@ -526,7 +526,7 @@ export default function OpportunitiesPage() {
                                             </div>
                                             {opportunity.primary_idea?.suggested_wedge_label && opportunity.primary_idea.suggested_wedge_label !== opportunity.primary_idea.topic && (
                                                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
-                                                    Recommended angle: {opportunity.primary_idea.suggested_wedge_label}
+                                                    Product angle: {opportunity.primary_idea.suggested_wedge_label}
                                                 </div>
                                             )}
                                         </div>
@@ -534,7 +534,7 @@ export default function OpportunitiesPage() {
                                             href={`/dashboard/idea/${opportunity.primary_idea_slug}`}
                                             style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#bfdbfe", textDecoration: "none", fontSize: 12, fontWeight: 700 }}
                                         >
-                                            Open market signal
+                                            Open idea
                                             <ExternalLink style={{ width: 13, height: 13 }} />
                                         </Link>
                                     </div>

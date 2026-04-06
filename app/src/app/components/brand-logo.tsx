@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 
 import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 
@@ -8,6 +9,7 @@ type BrandLogoProps = {
     showSubtitle?: boolean;
     align?: "left" | "center";
     className?: string;
+    href?: string;
 };
 
 export function BrandLogo({
@@ -16,14 +18,15 @@ export function BrandLogo({
     showSubtitle = false,
     align = "left",
     className = "",
+    href = "/",
 }: BrandLogoProps) {
     const wordmark = uppercase ? APP_NAME.toUpperCase() : APP_NAME;
-    const iconSize = compact ? 26 : 38;
-    const innerRadius = compact ? 10 : 14;
+    const iconSize = compact ? 23 : 36;
+    const innerRadius = compact ? 9 : 13;
     const alignItems = align === "center" ? "items-center text-center" : "items-start text-left";
 
     return (
-        <div className={`inline-flex items-center gap-3 ${className}`}>
+        <Link href={href} className={`inline-flex items-center gap-3 no-underline ${className}`}>
             <div
                 className="relative shrink-0 rounded-[14px] border border-primary/25"
                 style={{
@@ -84,7 +87,7 @@ export function BrandLogo({
 
             <div className={`flex min-w-0 flex-col justify-center ${alignItems}`}>
                 <span
-                    className={`font-display font-extrabold tracking-[-0.03em] text-white ${compact ? "text-[13px]" : "text-[20px]"}`}
+                    className={`font-display font-extrabold tracking-[-0.035em] text-white ${compact ? "text-[12px]" : "text-[19px]"}`}
                     style={{
                         textShadow: "0 0 24px rgba(249,115,22,0.2)",
                     }}
@@ -107,6 +110,6 @@ export function BrandLogo({
                     </span>
                 ) : null}
             </div>
-        </div>
+        </Link>
     );
 }

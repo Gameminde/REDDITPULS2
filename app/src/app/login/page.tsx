@@ -10,6 +10,19 @@ import { APP_NAME } from "@/lib/brand";
 
 type AuthMode = "login" | "signup";
 
+function resolvePublicSiteUrl() {
+    const configured = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "");
+    if (configured) {
+        return configured;
+    }
+
+    if (typeof window !== "undefined") {
+        return window.location.origin;
+    }
+
+    return "";
+}
+
 function LoginForm() {
     const searchParams = useSearchParams();
     const modeParam = searchParams.get("mode");
@@ -109,11 +122,12 @@ function LoginForm() {
 
         setLoading(true);
         setMessage("");
+        const publicSiteUrl = resolvePublicSiteUrl();
 
         const { error } = await supabase.auth.signInWithOAuth({
             provider: "google",
             options: {
-                redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+                redirectTo: `${publicSiteUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`,
             },
         });
 
@@ -137,9 +151,10 @@ function LoginForm() {
 
         setLoading(true);
         setMessage("");
+        const publicSiteUrl = resolvePublicSiteUrl();
 
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-            redirectTo: `${window.location.origin}/reset-password`,
+            redirectTo: `${publicSiteUrl}/reset-password`,
         });
 
         setLoading(false);

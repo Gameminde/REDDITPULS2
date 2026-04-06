@@ -1,6 +1,7 @@
 import { buildOpportunityEvidence, buildEvidenceSummary } from "@/lib/evidence";
 import { buildMarketIdeas } from "@/lib/market-feed";
 import { buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
+import { getPublicOpportunityTitle, getSafePublicSummary } from "@/lib/public-idea-eligibility";
 import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 
 export const IDEA_LIST_SELECT = [
@@ -54,10 +55,11 @@ export function safeParseJson<T = unknown>(value: unknown) {
 
 export function buildIdeasListPayload(
     rows: Array<Record<string, unknown>>,
-    options?: { includeExploratory?: boolean },
+    options?: { includeExploratory?: boolean; surface?: "user" | "admin"; limit?: number },
 ) {
     const ideas = buildMarketIdeas(rows, options);
-    return { ideas, total: ideas.length };
+    const limitedIdeas = typeof options?.limit === "number" ? ideas.slice(0, options.limit) : ideas;
+    return { ideas: limitedIdeas, total: ideas.length };
 }
 
 export function buildIdeaDetailPayload(
@@ -98,6 +100,16 @@ export function buildIdeaDetailPayload(
     return {
         idea: {
             ...idea,
+            public_title: getPublicOpportunityTitle({
+                ...idea,
+                sources: normalizedSources,
+                top_posts: Array.isArray(parsedTopPosts) ? parsedTopPosts : [],
+            }),
+            public_summary: getSafePublicSummary({
+                ...idea,
+                sources: normalizedSources,
+                top_posts: Array.isArray(parsedTopPosts) ? parsedTopPosts : [],
+            }),
             sources: normalizedSources,
             top_posts: parsedTopPosts,
             keywords: parsedKeywords,

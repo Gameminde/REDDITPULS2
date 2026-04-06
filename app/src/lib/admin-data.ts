@@ -306,7 +306,7 @@ export async function getAdminOverviewData() {
             analytics,
             adminEvents: toRows(adminEvents.data),
         }),
-        topIdeas: topIdeaRows.error ? [] : buildMarketIdeas((topIdeaRows.data || []) as unknown as Array<Record<string, unknown>>).slice(0, 5),
+        topIdeas: topIdeaRows.error ? [] : buildMarketIdeas((topIdeaRows.data || []) as unknown as Array<Record<string, unknown>>, { surface: "admin" }).slice(0, 5),
     };
 }
 
@@ -701,7 +701,7 @@ export async function getAdminMarketData() {
         fetchLatestScraperRuns(),
     ]);
 
-    const ideas = ideaRows.error ? [] : buildMarketIdeas((ideaRows.data || []) as unknown as Array<Record<string, unknown>>, { includeExploratory: true });
+    const ideas = ideaRows.error ? [] : buildMarketIdeas((ideaRows.data || []) as unknown as Array<Record<string, unknown>>, { includeExploratory: true, surface: "admin" });
     return {
         summary: {
             visibleIdeas: ideas.filter((row) => String(row.market_status || "") === "visible").length,

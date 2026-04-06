@@ -21,6 +21,8 @@ import { formatCountLabel, summarizeIdeaForBrowse } from "@/lib/user-facing-copy
 interface IdeaRow {
     id: string;
     topic: string;
+    public_title?: string;
+    public_summary?: string;
     slug: string;
     current_score: number;
     change_24h: number;
@@ -121,45 +123,35 @@ function getMomentumLabel(change24h: number): string {
 function getTrendLabel(trendDirection: string): string {
     switch (trendDirection?.toLowerCase()) {
         case "rising":
-            return "Rising trend";
+            return "Gaining traction";
         case "falling":
-            return "Falling trend";
+            return "Cooling off";
         case "new":
-            return "Newly detected";
+            return "Newly tracked";
         default:
-            return "Stable trend";
+            return "Holding steady";
     }
 }
 
 function getConfidenceLabel(confidenceLevel: string): string {
     switch ((confidenceLevel || "").toUpperCase()) {
         case "HIGH":
-            return "High confidence";
+            return "Strong proof";
         case "MEDIUM":
-            return "Moderate confidence";
+            return "Cross-source proof";
         case "LOW":
-            return "Low confidence";
+            return "Early proof";
         default:
-            return "Confidence unclear";
+            return "Proof still forming";
     }
 }
 
-function getTrustTone(level: IdeaRow["trust"]["level"]) {
-    if (level === "HIGH") return "text-build border-build/20 bg-build/10";
-    if (level === "MEDIUM") return "text-risky border-risky/20 bg-risky/10";
-    return "text-dont border-dont/20 bg-dont/10";
-}
-
-function getPostureTone(posture?: string) {
-    if (!posture) return "border-white/[0.08] bg-white/[0.03] text-muted-foreground";
-    if (/productize now/i.test(posture)) return "border-build/20 bg-build/10 text-build";
-    if (/hybrid/i.test(posture)) return "border-primary/20 bg-primary/10 text-primary";
-    if (/service-first|concierge/i.test(posture)) return "border-risky/20 bg-risky/10 text-risky";
-    return "border-dont/20 bg-dont/10 text-dont";
-}
-
 function describeIdea(idea: IdeaRow): string {
-    return summarizeIdeaForBrowse(idea);
+    return idea.public_summary || summarizeIdeaForBrowse(idea);
+}
+
+function displayIdeaTitle(idea: IdeaRow): string {
+    return idea.public_title || idea.topic;
 }
 
 function getSourceMix(sources: IdeaRow["sources"]): string {
@@ -191,13 +183,13 @@ function MetricCard({
     hint: string;
 }) {
     return (
-        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
-            <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-2.5">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                 {icon}
                 <span>{label}</span>
             </div>
-            <div className="text-lg font-mono font-semibold text-foreground">{value}</div>
-            <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+            <div className="text-base font-mono font-semibold text-foreground">{value}</div>
+            <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
         </div>
     );
 }
@@ -288,12 +280,11 @@ export default function ExplorePage() {
     }, [enhancedIdeas]);
 
     return (
-        <div className="max-w-7xl mx-auto relative z-10 px-4 pb-24 pt-8 sm:px-6">
+        <div className="relative z-10 mx-auto max-w-[1120px] px-3 pb-20 pt-4 sm:px-4">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                <h1 className="text-[32px] font-bold font-display tracking-tight-custom text-white">Explore Ideas</h1>
-                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                    A live board of startup opportunities. Each card answers three things: how strong the signal is, what
-                    is driving it, and whether the momentum looks worth investigating.
+                <h1 className="text-[26px] font-semibold font-display tracking-tight-custom text-white">Explore Ideas</h1>
+                <p className="mt-2 max-w-2xl text-[12px] leading-6 text-muted-foreground">
+                    A fast scan of startup ideas already showing real proof. Open any card to see the verdict, the evidence, and the next move.
                 </p>
             </motion.div>
 
@@ -312,9 +303,9 @@ export default function ExplorePage() {
                 />
                 <MetricCard
                     icon={<TrendingUp className="h-3.5 w-3.5" />}
-                    label="Rising Today"
+                    label="Gaining traction"
                     value={summary.risingIdeas.toString()}
-                    hint="Cards with positive 24h movement"
+                    hint="Ideas with positive 24h movement"
                 />
                 <MetricCard
                     icon={<BarChart3 className="h-3.5 w-3.5" />}
@@ -324,7 +315,7 @@ export default function ExplorePage() {
                 />
             </div>
 
-            <div className="mb-6 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-4 backdrop-blur-xl">
+            <div className="mb-5 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3 backdrop-blur-xl">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                     <div className="space-y-3">
                         <div>
@@ -336,7 +327,7 @@ export default function ExplorePage() {
                                     <button
                                         key={item}
                                         onClick={() => setFilter(item)}
-                                        className={`rounded-full border px-4 py-2 text-[11px] font-mono uppercase tracking-[0.12em] transition ${
+                                        className={`rounded-full border px-3.5 py-1.5 text-[10px] font-mono uppercase tracking-[0.12em] transition ${
                                             item === filter
                                                 ? "border-primary/30 bg-primary/10 text-primary"
                                                 : "border-white/[0.07] bg-white/[0.02] text-muted-foreground hover:border-primary/20 hover:text-foreground"
@@ -356,7 +347,7 @@ export default function ExplorePage() {
                                 <select
                                     value={sort}
                                     onChange={(e) => setSort(e.target.value)}
-                                    className="min-w-[170px] rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2 text-sm font-mono text-foreground outline-none"
+                                    className="min-w-[156px] rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2 text-[13px] font-mono text-foreground outline-none"
                                 >
                                     <option value="score">Top Score</option>
                                     <option value="trending">Strongest 24h momentum</option>
@@ -377,7 +368,7 @@ export default function ExplorePage() {
                                 placeholder="Search topics, niches, or themes"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full rounded-xl border border-white/[0.07] bg-black/20 py-2.5 pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-muted-foreground/45"
+                                className="w-full rounded-xl border border-white/[0.07] bg-black/20 py-2.5 pl-10 pr-4 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/45"
                             />
                         </div>
                     </label>
@@ -387,7 +378,7 @@ export default function ExplorePage() {
             {loading ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {Array.from({ length: 6 }).map((_, index) => (
-                        <div key={index} className="bento-cell p-5">
+                        <div key={index} className="bento-cell p-4">
                             <div className="skeleton mb-4 h-6 w-28" />
                             <div className="skeleton mb-3 h-5 w-3/4" />
                             <div className="skeleton mb-5 h-10 w-full" />
@@ -417,35 +408,35 @@ export default function ExplorePage() {
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: index * 0.03 }}
-                                className="bento-cell flex h-full min-h-[300px] flex-col p-5"
+                                className="bento-cell flex h-full min-h-[204px] flex-col p-3.5"
                             >
-                                <div className="mb-4 flex items-start justify-between gap-4">
+                                <div className="mb-3 flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                                        <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
                                             <span
-                                                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${verdict.className}`}
+                                                className={`inline-flex rounded-full px-2 py-1 text-[10px] font-mono uppercase tracking-[0.12em] ${verdict.className}`}
                                             >
                                                 {idea.verdict}
                                             </span>
-                                            <span className={`text-xl font-semibold font-mono ${scoreColor}`}>
+                                            <span className={`text-[16px] font-semibold font-mono ${scoreColor}`}>
                                                 {Math.round(idea.current_score)}
                                             </span>
-                                            <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                            <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
                                                 {idea.category || "General"}
                                             </span>
                                         </div>
 
                                         <Link href={`/dashboard/idea/${idea.slug}`} className="block">
-                                            <h2 className="text-xl font-semibold leading-tight text-white transition hover:text-primary">
-                                                {idea.topic}
+                                            <h2 className="text-[17px] font-semibold leading-tight text-white transition hover:text-primary">
+                                                {displayIdeaTitle(idea)}
                                             </h2>
                                         </Link>
-                                        <p className="mt-2 text-sm text-muted-foreground">{describeIdea(idea)}</p>
+                                        <p className="mt-1.5 text-[12px] leading-[1.55] text-muted-foreground">{describeIdea(idea)}</p>
                                     </div>
 
                                     <div className="shrink-0 text-right">
                                         <div
-                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-mono ${
+                                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-mono ${
                                                 idea.change_24h >= 0 ? "bg-build/10 text-build" : "bg-dont/10 text-dont"
                                             }`}
                                         >
@@ -456,134 +447,76 @@ export default function ExplorePage() {
                                             )}
                                             {formatSigned(idea.change_24h)} 24h
                                         </div>
-                                        <div className="mt-3 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                        <div className="mt-2.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                                             Updated
                                         </div>
-                                        <div className="mt-1 text-sm font-mono text-foreground">{formatTimeAgo(idea.last_updated)}</div>
+                                        <div className="mt-1 text-[12px] font-mono text-foreground">{formatTimeAgo(idea.last_updated)}</div>
                                     </div>
                                 </div>
 
-                                <div className="mb-4 grid grid-cols-3 gap-3">
-                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
-                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                <div className="mb-3 grid grid-cols-3 gap-2.5">
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-2.5">
+                                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                                             <Activity className="h-3.5 w-3.5" />
                                             Momentum
                                         </div>
-                                        <div className="text-sm font-semibold text-foreground">{getMomentumLabel(idea.change_24h)}</div>
-                                        <p className="mt-1 text-xs text-muted-foreground">
+                                        <div className="text-[12px] font-semibold text-foreground">{getMomentumLabel(idea.change_24h)}</div>
+                                        <p className="mt-1 text-[11px] text-muted-foreground">
                                             {formatSigned(idea.change_24h)} today
                                         </p>
                                     </div>
 
-                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
-                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-2.5">
+                                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                                             <BarChart3 className="h-3.5 w-3.5" />
                                             Posts
                                         </div>
-                                        <div className="text-lg font-semibold font-mono text-foreground">
+                                        <div className="text-[15px] font-semibold font-mono text-foreground">
                                             {formatCompact(idea.post_count_total)}
                                         </div>
-                                        <p className="mt-1 text-xs text-muted-foreground">
+                                        <p className="mt-1 text-[11px] text-muted-foreground">
                                             {(idea.post_count_24h ?? 0) > 0
                                                 ? `${idea.post_count_24h} in 24h`
                                                 : `${idea.post_count_7d} in 7d`}
                                         </p>
                                     </div>
 
-                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
-                                        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
+                                    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-2.5">
+                                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
                                             <Layers3 className="h-3.5 w-3.5" />
                                             Sources
                                         </div>
-                                        <div className="text-lg font-semibold font-mono text-foreground">{idea.source_count}</div>
-                                        <p className="mt-1 text-xs text-muted-foreground">{formatCountLabel(idea.source_count, "source")}</p>
+                                        <div className="text-[15px] font-semibold font-mono text-foreground">{idea.source_count}</div>
+                                        <p className="mt-1 text-[11px] text-muted-foreground">{formatCountLabel(idea.source_count, "source")}</p>
                                     </div>
                                 </div>
 
-                                <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
-                                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                                        <span
-                                            className={`rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getTrustTone(idea.trust.level)}`}
-                                        >
-                                            {idea.trust.label}
-                                        </span>
-                                        <span className="text-sm font-mono text-foreground">
-                                            {idea.trust.score}/100 trust
-                                        </span>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                                        <div>
-                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Evidence</span>
-                                            <p className="mt-1 text-foreground">{idea.trust.evidence_count} recent posts</p>
-                                        </div>
-                                        <div>
-                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Freshness</span>
-                                            <p className="mt-1 text-foreground">{idea.trust.freshness_label}</p>
-                                        </div>
-                                        <div>
-                                            <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/80">Direct proof</span>
-                                            <p className="mt-1 text-foreground">
-                                                {idea.trust.direct_quote_count > 0
-                                                    ? `${idea.trust.direct_quote_count} buyer quotes`
-                                                    : "Needs more buyer proof"}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {idea.trust.weak_signal && idea.trust.weak_signal_reasons.length > 0 && (
-                                        <p className="mt-3 text-xs text-risky">
-                                            Weak signal: {idea.trust.weak_signal_reasons.join(" • ")}
-                                        </p>
-                                    )}
-                                </div>
-
-                                {idea.strategy_preview && (
-                                    <div className="mb-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
-                                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                                            <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-mono">
-                                                Productization posture
-                                            </span>
-                                            <span
-                                                className={`rounded-full border px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] ${getPostureTone(idea.strategy_preview.posture)}`}
-                                            >
-                                                {idea.strategy_preview.posture}
-                                            </span>
-                                            <span className="text-sm font-mono text-foreground">
-                                                {idea.strategy_preview.readiness_score}/100 readiness
-                                            </span>
-                                        </div>
-                                        <p className="text-sm leading-relaxed text-foreground/88 line-clamp-2">
-                                            {idea.strategy_preview.next_move_summary}
-                                        </p>
-                                    </div>
-                                )}
-
-                                <div className="mb-4 flex flex-wrap gap-2">
-                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                <div className="mb-3 flex flex-wrap gap-1.5">
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
                                         {getTrendLabel(idea.trend_direction)}
                                     </span>
-                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
                                         {getConfidenceLabel(idea.confidence_level)}
                                     </span>
-                                    {idea.strategy_preview?.why_now_category && (
-                                        <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                                            {idea.strategy_preview.why_now_category}
-                                        </span>
-                                    )}
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        {idea.trust.freshness_label}
+                                    </span>
+                                    <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                        {idea.trust.direct_quote_count > 0 ? `${idea.trust.direct_quote_count} buyer quotes` : "Needs buyer quotes"}
+                                    </span>
                                 </div>
 
-                                <div className="mt-auto flex items-end justify-between gap-4 border-t border-white/[0.07] pt-4">
+                                <div className="mt-auto flex items-end justify-between gap-3 border-t border-white/[0.07] pt-3">
                                     <div className="min-w-0">
-                                        <div className={`text-sm font-medium ${verdict.tone}`}>{verdict.summary}</div>
-                                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{getSourceMix(idea.sources)}</div>
+                                        <div className={`text-[13px] font-medium ${verdict.tone}`}>{verdict.summary}</div>
+                                        <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{getSourceMix(idea.sources)}</div>
                                     </div>
 
                                     <Link
                                         href={`/dashboard/idea/${idea.slug}`}
-                                        className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition hover:bg-primary/15"
+                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-[12px] font-medium text-primary transition hover:bg-primary/15"
                                     >
-                                        Open Thesis
+                                        Open idea
                                         <ArrowUpRight className="h-4 w-4" />
                                     </Link>
                                 </div>

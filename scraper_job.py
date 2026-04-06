@@ -559,17 +559,16 @@ def _build_pain_summary(posts, topic_name=""):
     if matched_posts == 0:
         return None, 0
 
-    top_phrases = [phrase for phrase, _ in phrase_counter.most_common(2)]
-    if top_phrases:
-        if len(top_phrases) == 1:
-            summary = f"People repeatedly complain about {top_phrases[0]}."
-        else:
-            summary = f"People repeatedly complain about {top_phrases[0]} and {top_phrases[1]}."
-    else:
-        summary = f"People repeatedly describe friction around {topic_name.lower() if topic_name else 'this theme'}."
-
+    clean_topic = (topic_name or "").replace("_", " ").strip().lower()
     if supporting_titles:
-        summary += f" A representative discussion was: {supporting_titles[0]}."
+        if clean_topic:
+            summary = f"Users keep raising the same pain around {clean_topic}. Representative post: {supporting_titles[0]}."
+        else:
+            summary = f"Users keep raising the same workflow pain. Representative post: {supporting_titles[0]}."
+    elif clean_topic:
+        summary = f"Users keep raising the same pain around {clean_topic}."
+    else:
+        summary = "Users keep raising the same workflow pain."
 
     return summary[:420], matched_posts
 
@@ -3069,7 +3068,7 @@ def run_scraper_job(sources=None, topic_filter=None, mode="full", source_label="
         elif slug.startswith("sub-"):
             subreddit_name = slug[4:]
             category = SUBREDDIT_CATEGORIES.get(subreddit_name, "general")
-            topic_name = f"Pain signals from {subreddit_name.replace('_', ' ').title()}"
+            topic_name = f"{subreddit_name.replace('_', ' ').title()} workflow pain"
             topic_info = {"category": category, "keywords": [subreddit_name]}
         else:
             topic_name = slug.replace("-", " ").title()

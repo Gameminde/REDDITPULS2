@@ -22,12 +22,19 @@ type BrowseIdeaInput = {
 
 const BAD_SUMMARY_PATTERNS = [
     /complain about frustrated with/i,
+    /people repeatedly complain about/i,
+    /pain signals from /i,
+    /why this card is here/i,
     /opportunity with \d+ recent posts? feeding this score/i,
     /there are no direct buyer pain quotes anchoring the opportunity yet/i,
+    /no direct buyer pain quotes/i,
+    /legacy representative-post metadata/i,
     /no representative evidence yet/i,
     /^http status \d+/i,
     /\btrying create\b/i,
     /\bfeatured offer\b/i,
+    /\bexplore page\b/i,
+    /\bhey guys\b/i,
 ];
 
 function decodeHtml(value?: string | null) {
@@ -102,7 +109,7 @@ export function summarizeIdeaForBrowse(input: BrowseIdeaInput) {
         const community = representativePost.subreddit
             ? `r/${cleanUserFacingText(representativePost.subreddit)}`
             : formatSourceNameForUser(representativePost.source_name || representativePost.source);
-        return ensureSentence(`"${cleanUserFacingText(representativePost.title)}" keeps surfacing in ${community}`);
+        return ensureSentence(`"${cleanUserFacingText(representativePost.title)}" keeps coming up in ${community}`);
     }
 
     const topic = cleanUserFacingText(input.topic) || "This topic";
@@ -112,10 +119,10 @@ export function summarizeIdeaForBrowse(input: BrowseIdeaInput) {
     const recentPosts = Number(input.post_count_7d || input.post_count_total || 0);
 
     if (recentPosts > 0) {
-        return ensureSentence(`${topic} is showing repeated interest in ${category || "the market"} across ${sourceName}`);
+        return ensureSentence(`${topic} is coming up repeatedly in ${category || "real buyer conversations"} across ${sourceName}`);
     }
 
-    return ensureSentence(`${topic} is showing early movement in ${category || "the market"}`);
+    return ensureSentence(`${topic} is starting to show up in ${category || "founder conversations"}`);
 }
 
 export function summarizeReasonForUser(value: unknown, fallback: string) {
@@ -133,9 +140,9 @@ export function summarizeReasonForUser(value: unknown, fallback: string) {
 
 export function getSupportLevelLabel(level: string) {
     const normalized = cleanUserFacingText(level).toLowerCase();
-    if (normalized === "supporting_context") return "Strong signal";
-    if (normalized === "hypothesis") return "Exploratory signal";
-    return "Buyer pain signal";
+    if (normalized === "supporting_context") return "Cross-source proof";
+    if (normalized === "hypothesis") return "Early proof";
+    return "Buyer proof";
 }
 
 export function getReadinessLabel(readiness: string) {

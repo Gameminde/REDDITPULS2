@@ -6,18 +6,18 @@ import { APP_NAME } from "@/lib/brand";
 const steps = [
     {
         icon: Search,
-        title: "1. Watch live market signal",
-        body: `${APP_NAME} continuously scans Reddit and supporting sources to surface recurring pain, clearer opportunities, and proof-bearing market movement.`,
+        title: "1. Watch real complaints",
+        body: `${APP_NAME} continuously scans Reddit and supporting sources to surface recurring pain, clearer opportunities, and proof-bearing demand.`,
     },
     {
         icon: FileText,
         title: "2. Validate one idea deeply",
-        body: "Take any idea or market signal into the validation engine to collect evidence, pressure-test the opportunity, and build a decision-ready report.",
+        body: "Take any idea from the board into validation to collect evidence, pressure-test the opportunity, and build a decision-ready report.",
     },
     {
         icon: TrendingUp,
         title: "3. Read timing, competition, and buyer proof",
-        body: "The product turns scattered posts into structured market memory: why now, competitor pressure, WTP clues, and repeat demand patterns.",
+        body: "The product turns scattered posts into a clearer read on timing, competitor pressure, WTP clues, and repeat demand patterns.",
     },
     {
         icon: BellRing,
@@ -27,8 +27,8 @@ const steps = [
 ];
 
 const principles = [
-    "The market feed stays raw so you can inspect the evidence yourself.",
-    "Validation goes deeper than the feed and turns signal into a concrete go / no-go memo.",
+    "The opportunity board stays raw so you can inspect the evidence yourself.",
+    "Validation goes deeper than the board and turns proof into a concrete go / no-go memo.",
     "Starter gives you the core workflow. Pro unlocks the full intelligence layer.",
 ];
 
@@ -46,7 +46,7 @@ export function HowItWorksContent({ inDashboard = false }: { inDashboard?: boole
                     to a sharper business bet
                 </h1>
                 <p className="text-muted-foreground max-w-2xl mx-auto text-sm md:text-base leading-relaxed">
-                    {APP_NAME} is built for founders who want to move from scattered signal to a clearer opportunity, better validation, and a more repeatable decision loop.
+                    {APP_NAME} is built for founders who want to move from scattered complaints to a clearer opportunity, better validation, and a more repeatable decision loop.
                 </p>
             </div>
 
@@ -87,7 +87,7 @@ export function HowItWorksContent({ inDashboard = false }: { inDashboard?: boole
                     </div>
                     <h2 className="text-xl font-semibold text-white mb-3">See the plans, then start with the workflow that fits you</h2>
                     <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-                        If you mainly want the core signal-and-validation loop, Starter is enough. If you want the full intelligence layer, Pro is the right path.
+                        If you mainly want the core board-and-validation workflow, Starter is enough. If you want the full intelligence layer, Pro is the right path.
                     </p>
                     <div className="flex flex-col gap-3">
                         <Link

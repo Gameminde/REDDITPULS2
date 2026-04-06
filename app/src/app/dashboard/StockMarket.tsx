@@ -29,6 +29,8 @@ import { useDashboardViewer } from "./viewer-context";
 interface Idea {
     id: string;
     topic: string;
+    public_title?: string;
+    public_summary?: string;
     slug: string;
     current_score: number;
     change_24h: number;
@@ -147,13 +149,14 @@ function cleanText(value?: string | null) {
     return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function getIdeaDisplayTopic(idea: Pick<Idea, "topic">) {
-    return decodeHtml(idea.topic);
+function getIdeaDisplayTopic(idea: Pick<Idea, "topic" | "public_title">) {
+    return decodeHtml(idea.public_title || idea.topic);
 }
 
-function getIdeaSuggestedWedge(idea: Pick<Idea, "suggested_wedge_label" | "topic">) {
+function getIdeaSuggestedWedge(idea: Pick<Idea, "suggested_wedge_label" | "topic" | "public_title">) {
     const suggestion = decodeHtml(idea.suggested_wedge_label || "");
-    return suggestion && suggestion !== decodeHtml(idea.topic) ? suggestion : "";
+    const displayTopic = decodeHtml(idea.public_title || idea.topic);
+    return suggestion && suggestion !== displayTopic ? suggestion : "";
 }
 
 function buildIdeaHref(slug: string) {
@@ -173,7 +176,7 @@ async function promoteIdeaToBoard(payload: {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-        throw new Error(String(data.error || "Could not promote this signal to the board."));
+        throw new Error(String(data.error || "Could not save this opportunity to the board."));
     }
 
     return data;
@@ -189,9 +192,9 @@ function formatFreshnessHours(hours: number | null | undefined) {
 type TabType = "top" | "trending" | "dying" | "new";
 
 const TABS: { key: TabType; label: string; icon: LucideIcon; color: string }[] = [
-    { key: "top", label: "Top Scores", icon: BarChart3, color: "#f97316" },
-    { key: "trending", label: "Rising", icon: Flame, color: "#22c55e" },
-    { key: "dying", label: "Falling", icon: Skull, color: "#ef4444" },
+    { key: "top", label: "Best Bets", icon: BarChart3, color: "#f97316" },
+    { key: "trending", label: "Gaining Traction", icon: Flame, color: "#22c55e" },
+    { key: "dying", label: "Cooling Off", icon: Skull, color: "#ef4444" },
     { key: "new", label: "New", icon: Sparkles, color: "#8b5cf6" },
 ];
 
@@ -211,10 +214,10 @@ const CATEGORIES = [
 
 const CONFIDENCE_MAP: Record<string, { label: string; color: string; icon: string }> = {
     INSUFFICIENT: { label: "Needs data", color: "#6b7280", icon: "🔍" },
-    LOW: { label: "Early signal", color: "#f59e0b", icon: "📡" },
-    MEDIUM: { label: "Strong signal", color: "#3b82f6", icon: "📊" },
-    HIGH: { label: "Strong", color: "#22c55e", icon: "✅" },
-    STRONG: { label: "Very Strong", color: "#10b981", icon: "🔥" },
+    LOW: { label: "Early proof", color: "#f59e0b", icon: "📡" },
+    MEDIUM: { label: "Cross-source proof", color: "#3b82f6", icon: "📊" },
+    HIGH: { label: "Strong proof", color: "#22c55e", icon: "✅" },
+    STRONG: { label: "Very strong proof", color: "#10b981", icon: "🔥" },
 };
 
 function TrendIcon({ direction, size = 14 }: { direction: string; size?: number }) {
@@ -224,19 +227,26 @@ function TrendIcon({ direction, size = 14 }: { direction: string; size?: number 
     return <Minus style={{ width: size, height: size, color: "#64748b" }} />;
 }
 
+function formatTrendLabel(direction?: string | null) {
+    if (direction === "rising") return "Gaining traction";
+    if (direction === "falling") return "Cooling off";
+    if (direction === "new") return "Newly tracked";
+    return "Holding steady";
+}
+
 const SIGNAL_LEVEL_MAP: Record<OpportunitySignalContract["support_level"], { label: string; color: string; background: string }> = {
     evidence_backed: {
-        label: "Buyer pain signal",
+        label: "Buyer proof",
         color: "#22c55e",
         background: "rgba(34,197,94,0.12)",
     },
     supporting_context: {
-        label: "Strong signal",
+        label: "Cross-source proof",
         color: "#3b82f6",
         background: "rgba(59,130,246,0.12)",
     },
     hypothesis: {
-        label: "Exploratory signal",
+        label: "Early proof",
         color: "#f59e0b",
         background: "rgba(245,158,11,0.12)",
     },
@@ -556,19 +566,19 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         { label: "Volume", value: Number(scoreBreakdown.volume ?? 0), color: "#eab308" },
         { label: "Evidence quality", value: Number(scoreBreakdown.evidence_quality ?? 0), color: "#14b8a6" },
     ].filter((item) => Number.isFinite(item.value)) : [];
-    const browseSummary = summarizeIdeaForBrowse(idea);
+    const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const verdictSummary = summarizeReasonForUser(
         signalContract?.summary,
         hasThinDataWarning
             ? `${displayTopic} is still early and needs stronger proof before you treat it as a real bet`
-            : `${displayTopic} has enough repeated signal to deserve a closer look`,
+            : `${displayTopic} has enough repeated proof to deserve a closer look`,
     );
     const evidenceSummary = directBuyerCount > 0
         ? `${formatCountLabel(directBuyerCount, "buyer quote")} and ${formatCountLabel(idea.source_count, "source")} support this idea.`
         : `${formatCountLabel(idea.post_count_total, "post")} and ${formatCountLabel(idea.source_count, "source")} are visible, but stronger buyer proof is still missing.`;
     const nextStepSummary = summarizeReasonForUser(
         marketHint?.recommended_board_action || "",
-        isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to check whether the signal holds up under deeper evidence.",
+        isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to see whether the proof still holds up under a deeper review.",
     );
 
     const handleClick = (e: React.MouseEvent) => {
@@ -587,7 +597,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                 return;
             }
             setPromoteState("error");
-            setPromoteMessage("Sign in to save this signal to Opportunities.");
+            setPromoteMessage("Sign in to save this idea to Opportunities.");
             return;
         }
 
@@ -601,7 +611,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
             setPromoteMessage("Saved to Opportunities.");
         } catch (error) {
             setPromoteState("error");
-            setPromoteMessage(error instanceof Error ? error.message : "Could not promote this signal to the board.");
+            setPromoteMessage(error instanceof Error ? error.message : "Could not save this idea to the board.");
         }
     };
 
@@ -674,24 +684,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                 color: "#86efac",
                                 fontWeight: 700,
                             }}>
-                                Fresh
-                            </span>
-                        )}
-                        {hasThinDataWarning && (
-                            <span style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 4,
-                                fontSize: 10,
-                                padding: "2px 7px",
-                                borderRadius: 999,
-                                background: "rgba(245,158,11,0.12)",
-                                border: "1px solid rgba(245,158,11,0.18)",
-                                color: "#fbbf24",
-                                fontWeight: 700,
-                            }}>
-                                <AlertTriangle style={{ width: 10, height: 10 }} />
-                                Thin data
+                                New
                             </span>
                         )}
                         {expanded && (
@@ -734,13 +727,8 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                         <ScoreBar score={idea.current_score} color={scoreColor} />
                     </div>
                     <div style={{ marginTop: 5, fontSize: 9, color: "#64748b", lineHeight: 1.3 }}>
-                        evidence score
+                        opportunity score
                     </div>
-                    {hasThinDataWarning && (
-                        <div style={{ marginTop: 6, fontSize: 9, color: "#fbbf24", lineHeight: 1.4 }}>
-                            Score may overstate real demand
-                        </div>
-                    )}
                 </div>
 
                 {/* 24h */}
@@ -1053,7 +1041,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                             </div>
                                         </div>
                                         <div style={{ fontSize: 10, color: "#fed7aa", lineHeight: 1.5 }}>
-                                            Send this market signal into the Validate flow with topic, audience hint, and pain context prefilled.
+                                            Send this opportunity into Validate with the topic, buyer hint, and pain context prefilled.
                                         </div>
                                     </Link>
                                     <button
@@ -1086,8 +1074,8 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                         <div style={{ fontSize: 10, color: promoteState === "saved" ? "#dcfce7" : "#dbeafe", lineHeight: 1.5 }}>
                                             {promoteMessage || (isGuest
-                                                ? "Guest beta is read-only. Log in to save signals into your opportunity board."
-                                                : "Create a curated opportunity row without rewriting the live market feed.")}
+                                                ? "Guest beta is read-only. Log in to save ideas into your opportunity board."
+                                                : "Create a curated opportunity row without rewriting the live board.")}
                                         </div>
                                     </button>
                                 </div>
@@ -1104,7 +1092,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                     }}>
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                                             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#93c5fd" }}>
-                                                Board readiness
+                                                How ready it looks
                                             </div>
                                             <span style={{
                                                 display: "inline-flex",
@@ -1131,34 +1119,20 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                         {suggestedWedge && (
                                             <div style={{ fontSize: 12, color: "#dbeafe", lineHeight: 1.55 }}>
-                                                Recommended angle: {suggestedWedge}
+                                                Product angle: {suggestedWedge}
                                             </div>
                                         )}
                                         <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
                                             {summarizeReasonForUser(marketHint.why_it_matters_now, `${displayTopic} is moving enough to keep watching.`)}
                                         </div>
                                         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                                            Missing proof: {summarizeReasonForUser(marketHint.missing_proof, "It still needs stronger buyer proof.")}
-                                        </div>
-                                        <div style={{ fontSize: 11, color: "#bfdbfe", lineHeight: 1.55 }}>
-                                            Recommended action: {marketHint.recommended_board_action}
-                                        </div>
+                                        Missing proof: {summarizeReasonForUser(marketHint.missing_proof, "It still needs stronger buyer proof.")}
                                     </div>
-                                )}
-
-                                {!hasStructuredEvidence && (
-                                    <div style={{
-                                        padding: "10px 14px",
-                                        borderRadius: 10,
-                                        background: "rgba(245,158,11,0.08)",
-                                        border: "1px solid rgba(245,158,11,0.16)",
-                                        color: "#fde68a",
-                                        fontSize: 12,
-                                        lineHeight: 1.55,
-                                    }}>
-                                        This card is still showing legacy representative-post metadata, so the signal labels can look harsher than the raw topic really deserves until the newest scraper run finishes writing structured evidence fields.
+                                    <div style={{ fontSize: 11, color: "#bfdbfe", lineHeight: 1.55 }}>
+                                        Recommended action: {marketHint.recommended_board_action}
                                     </div>
-                                )}
+                                </div>
+                            )}
 
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
                                 <div style={{
@@ -1286,7 +1260,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                     ) : (
                                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                                            No representative evidence yet - run a scan to populate
+                                            No representative proof yet. Refresh the board to gather more evidence.
                                         </div>
                                     )}
                                 </div>
@@ -1309,7 +1283,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         fontWeight: 700,
                                         color: "#f1f5f9",
                                     }}>
-                                        <span style={{ color: "#22c55e" }}>Signal audit</span>
+                                        <span style={{ color: "#22c55e" }}>Proof audit</span>
                                     </div>
                                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                                         <DetailMetric
@@ -1410,7 +1384,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                             letterSpacing: "0.06em",
                                         }}>
                                             <TrendIcon direction={idea.trend_direction} size={12} />
-                                            {idea.trend_direction || "stable"}
+                                            {formatTrendLabel(idea.trend_direction)}
                                         </div>
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                                             <div style={{
@@ -1456,7 +1430,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                             fontWeight: 700,
                                             color: "#f1f5f9",
                                         }}>
-                                            <span style={{ color: "#f97316" }}>Why this score</span>
+                                            <span style={{ color: "#f97316" }}>How the score was built</span>
                                         </div>
                                         {scoreMeters.length > 0 ? (
                                             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1522,11 +1496,11 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
         ? idea.competition_data.market_leaders_summary
         : "";
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
-    const browseSummary = summarizeIdeaForBrowse(idea);
+    const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
     const verdictSummary = summarizeReasonForUser(
         signalContract?.summary,
-        `${displayTopic} is getting enough repeated discussion to review, but the signal still needs proof.`,
+        `${displayTopic} is getting enough repeated discussion to review, but the idea still needs proof.`,
     );
     const nextStepSummary = summarizeReasonForUser(
         marketHint?.recommended_board_action,
@@ -1707,7 +1681,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
 
                             {showFullAnalysis && (sourceSummary || marketLeadersSummary) && (
                                 <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
-                                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Signal audit</div>
+                                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Proof audit</div>
                                     {sourceSummary && (
                                         <p className="mt-2 text-xs leading-6 text-slate-200">Source mix: {sourceSummary}</p>
                                     )}
@@ -1732,26 +1706,26 @@ function StatCard({ label, value, icon: Icon, color, subtitle }: {
             className="surface-panel-soft"
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{ padding: 22, borderRadius: 16, minWidth: 180 }}
+            style={{ padding: 16, borderRadius: 14, minWidth: 154 }}
         >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-                <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
                     {label}
                 </span>
                 <div style={{
-                    width: 38, height: 38, borderRadius: 12,
+                    width: 32, height: 32, borderRadius: 10,
                     background: `${color}15`, display: "flex",
                     alignItems: "center", justifyContent: "center",
                     border: `1px solid ${color}30`,
                 }}>
-                    <Icon style={{ width: 18, height: 18, color }} />
+                    <Icon style={{ width: 15, height: 15, color }} />
                 </div>
             </div>
-            <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", fontFamily: "var(--font-display)", lineHeight: 1 }}>
+            <div style={{ fontSize: 26, fontWeight: 800, color: "#f8fafc", fontFamily: "var(--font-display)", lineHeight: 1 }}>
                 {value}
             </div>
             {subtitle && (
-                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8, lineHeight: 1.6 }}>{subtitle}</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, lineHeight: 1.5 }}>{subtitle}</div>
             )}
         </motion.div>
     );
@@ -1810,13 +1784,13 @@ function IntelligencePromoteButton({
                 return;
             }
             setState("error");
-            setMessage("Sign in to save this signal to the board.");
+            setMessage("Sign in to save this idea to the board.");
             return;
         }
 
         let label = cleanText(suggestedLabel || "");
         if (!label && typeof window !== "undefined") {
-            const entered = window.prompt("Shape the board title before promoting this signal.", topic);
+            const entered = window.prompt("Shape the board title before saving this idea.", topic);
             label = cleanText(entered || "");
             if (!label) return;
         }
@@ -1833,7 +1807,7 @@ function IntelligencePromoteButton({
             setMessage("Saved to Opportunities.");
         } catch (error) {
             setState("error");
-            setMessage(error instanceof Error ? error.message : "Could not promote this signal to the board.");
+            setMessage(error instanceof Error ? error.message : "Could not save this idea to the board.");
         }
     };
 
@@ -1907,7 +1881,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
                     </div>
                     {suggestedLabel && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Recommended angle: {suggestedLabel}
+                            Product angle: {suggestedLabel}
                         </div>
                     )}
                 </div>
@@ -1953,7 +1927,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
                     }}
                 >
                     <ExternalLink style={{ width: 13, height: 13 }} />
-                    Open signal
+                    Open idea
                 </Link>
                 <IntelligencePromoteButton
                     slug={card.slug}
@@ -1998,7 +1972,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                     </div>
                     {card.suggested_wedge_label && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Recommended angle: {card.suggested_wedge_label}
+                            Product angle: {card.suggested_wedge_label}
                         </div>
                     )}
                 </div>
@@ -2037,7 +2011,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                     }}
                 >
                     <ExternalLink style={{ width: 13, height: 13 }} />
-                    Open signal
+                    Open idea
                 </Link>
                 <IntelligencePromoteButton
                     slug={card.slug}
@@ -2091,12 +2065,12 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
             </div>
 
             <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Recommended angle: {card.recommended_angle}
+                Product angle: {card.recommended_angle}
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, color: "#64748b" }}>
-                    Latest signal: {card.latest_seen_at ? new Date(card.latest_seen_at).toLocaleString() : "Unknown"}
+                    Latest update: {card.latest_seen_at ? new Date(card.latest_seen_at).toLocaleString() : "Unknown"}
                 </span>
                 <Link
                     href="/dashboard/competitors"
@@ -2166,15 +2140,15 @@ function MarketIntelligenceSection({
                                 <Radar style={{ width: 18, height: 18, color: "#f97316" }} />
                             </div>
                             <div>
-                                <div style={{ fontSize: 18, color: "#f8fafc", fontWeight: 800 }}>Market Intelligence</div>
+                                <div style={{ fontSize: 18, color: "#f8fafc", fontWeight: 800 }}>Opportunity intelligence</div>
                                 <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
-                                    Analyst-assist view on top of the raw market feed. It highlights stronger opportunities without rewriting the feed itself.
+                                    Analyst-assist view on top of the opportunity board. It highlights stronger ideas without rewriting the board itself.
                                 </div>
                             </div>
                         </div>
                         {intelligence?.summary && (
                             <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.7 }}>
-                                {intelligence.summary.emerging_wedge_count} emerging opportunit{intelligence.summary.emerging_wedge_count === 1 ? "y" : "ies"} from {intelligence.summary.new_72h_count} new signal{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
+                                {intelligence.summary.emerging_wedge_count} emerging opportunit{intelligence.summary.emerging_wedge_count === 1 ? "y" : "ies"} from {intelligence.summary.new_72h_count} new idea{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
                             </div>
                         )}
                     </div>
@@ -2225,7 +2199,7 @@ function MarketIntelligenceSection({
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>Loading market intelligence...</div>
                 ) : currentRows.length === 0 ? (
                     <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, padding: "6px 2px" }}>
-                        No derived signals are ready in this lane right now. The raw market feed below is still live.
+                        No derived opportunities are ready in this lane right now. The board below is still updating.
                     </div>
                 ) : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
@@ -2434,39 +2408,39 @@ export default function StockMarketDashboard() {
     const usingExternalWorker = executionMode === "external";
 
     return (
-        <div style={{ padding: "20px 28px", maxWidth: 1320, margin: "0 auto" }}>
+        <div style={{ padding: "12px 18px", maxWidth: 1200, margin: "0 auto" }}>
             {/* Header */}
-            <div className="surface-panel" style={{ padding: 24, borderRadius: 22, marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
-                    <div style={{ maxWidth: 620 }}>
-                        <div className="section-kicker" style={{ marginBottom: 14 }}>Live market feed</div>
+            <div className="surface-panel" style={{ padding: 18, borderRadius: 18, marginBottom: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
+                    <div style={{ maxWidth: 520 }}>
+                        <div className="section-kicker" style={{ marginBottom: 10 }}>Opportunity board</div>
                         <h1 style={{
-                            fontSize: 32, fontWeight: 900, color: "#f8fafc",
-                            fontFamily: "var(--font-display)", marginBottom: 8, letterSpacing: "-0.03em",
+                            fontSize: 26, fontWeight: 650, color: "#f8fafc",
+                            fontFamily: "\"Space Grotesk\", var(--font-display)", marginBottom: 7, letterSpacing: "-0.04em", lineHeight: 0.98,
                         }}>
-                            Read the market before you build.
+                            Find ideas before you build.
                         </h1>
-                        <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.8 }}>
-                            Real-time market signals from Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
+                        <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 480 }}>
+                            Real startup ideas from Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
                             Review complaints and hiring proof widen the board when those lanes are configured.
                         </p>
                     </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                             {scanStatus && (scanStatus.archiveIdeaCount > 0 || scanStatus.ideaCount > 0) && (
                                 <span style={{
-                                    fontSize: 11, color: "#94a3b8", display: "flex",
+                                    fontSize: 10, color: "#94a3b8", display: "flex",
                                     alignItems: "center", gap: 6, background: "rgba(255,255,255,0.03)",
-                                    padding: "7px 12px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)",
+                                    padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)",
                                 }}>
                                     <Activity style={{ width: 12, height: 12 }} />
-                                    {liveIdeaCount.toLocaleString()} live signals
+                                    {liveIdeaCount.toLocaleString()} live opportunities
                                 </span>
                             )}
 
                             {lastUpdated && (
-                                <span style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
                                     <Clock style={{ width: 11, height: 11 }} /> {lastUpdated}
                                 </span>
                             )}
@@ -2515,7 +2489,7 @@ export default function StockMarketDashboard() {
                             ) : (
                                 <>
                                     <Zap style={{ width: 15, height: 15 }} />
-                                    Scan for Opportunities
+                                    Refresh ideas
                                 </>
                             )}
                         </motion.button>
@@ -2642,24 +2616,24 @@ export default function StockMarketDashboard() {
             />
 
             {/* Stats Row */}
-            <div className="mb-6 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
-                <div className="min-w-[180px]"><StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" /></div>
-                <div className="min-w-[180px]"><StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" /></div>
-                <div className="min-w-[180px]"><StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" /></div>
-                <div className="min-w-[180px]"><StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible signal${visibleIdeaCount === 1 ? "" : "s"} in this view`} /></div>
-                <div className="min-w-[180px]"><StatCard label="Posts In Feed" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="live evidence attached to visible signals" /></div>
+            <div className="mb-5 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
+                <div className="min-w-[180px]"><StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" /></div>
+                <div className="min-w-[180px]"><StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" /></div>
+                <div className="min-w-[180px]"><StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" /></div>
+                <div className="min-w-[180px]"><StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible idea${visibleIdeaCount === 1 ? "" : "s"} in this view`} /></div>
+                <div className="min-w-[180px]"><StatCard label="Posts in board" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="evidence attached to visible ideas" /></div>
             </div>
-            <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 24 }}>
-                <StatCard label="Live Signals" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="non-junk topics in the feed" />
-                <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas trending up" />
-                <StatCard label="Falling" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing steam" />
-                <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible signal${visibleIdeaCount === 1 ? "" : "s"} in this view`} />
-                <StatCard label="Posts In Feed" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="live evidence attached to visible signals" />
+            <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
+                <StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" />
+                <StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" />
+                <StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" />
+                <StatCard label="Avg Score" value={avgScore.toFixed(0)} icon={Activity} color="#3b82f6" subtitle={`${visibleIdeaCount} visible idea${visibleIdeaCount === 1 ? "" : "s"} in this view`} />
+                <StatCard label="Posts in board" value={activePostCount.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="evidence attached to visible ideas" />
             </div>
 
             {/* Tabs + Category Filter */}
             <div
-                className="mb-[18px] flex flex-col gap-3 rounded-2xl border p-[12px_14px] lg:flex-row lg:items-center lg:justify-between"
+                className="mb-4 flex flex-col gap-3 rounded-2xl border p-[10px_12px] lg:flex-row lg:items-center lg:justify-between"
                 style={{
                     background: "rgba(255,255,255,0.03)",
                     borderColor: "rgba(255,255,255,0.08)",
@@ -2674,10 +2648,10 @@ export default function StockMarketDashboard() {
                                 onClick={() => setTab(t.key)}
                                 style={{
                                     display: "flex", alignItems: "center", gap: 6,
-                                    padding: "9px 16px", borderRadius: 999, border: tab === t.key ? `1px solid ${t.color}33` : "1px solid rgba(255,255,255,0.06)",
+                                    padding: "8px 14px", borderRadius: 999, border: tab === t.key ? `1px solid ${t.color}33` : "1px solid rgba(255,255,255,0.06)",
                                     background: tab === t.key ? `${t.color}20` : "transparent",
                                     color: tab === t.key ? t.color : "#64748b",
-                                    cursor: "pointer", fontSize: 13, fontWeight: 600,
+                                    cursor: "pointer", fontSize: 12, fontWeight: 600,
                                     transition: "all 0.2s ease",
                                 }}
                             >
@@ -2694,10 +2668,10 @@ export default function StockMarketDashboard() {
                             key={c.key}
                             onClick={() => setCategory(c.key)}
                             style={{
-                                padding: "6px 11px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.06)",
+                                padding: "5px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.06)",
                                 background: category === c.key ? "rgba(249,115,22,0.15)" : "transparent",
                                 color: category === c.key ? "#f97316" : "#475569",
-                                cursor: "pointer", fontSize: 11, fontWeight: 500,
+                                cursor: "pointer", fontSize: 10, fontWeight: 500,
                                 transition: "all 0.2s ease",
                             }}
                         >
@@ -2720,10 +2694,10 @@ export default function StockMarketDashboard() {
                             fontWeight: 600,
                             transition: "all 0.2s ease",
                         }}
-                        title={showEarlySignals ? "Hide exploratory market signals" : "Show exploratory market signals too"}
+                        title={showEarlySignals ? "Hide early opportunities" : "Show early opportunities too"}
                     >
                         <AlertTriangle style={{ width: 11, height: 11 }} />
-                        {showEarlySignals ? "Hide exploratory signals" : "Show exploratory signals"}
+                        {showEarlySignals ? "Hide early ideas" : "Show early ideas"}
                     </button>
                 </div>
             </div>
@@ -2772,10 +2746,10 @@ export default function StockMarketDashboard() {
                             <>
                                 <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
                                 <div style={{ marginBottom: 8, color: "#94a3b8", fontWeight: 600 }}>
-                                    No live signals match this filter
+                                    No opportunities match this filter
                                 </div>
                                 <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
-                                    Try another category or reveal exploratory signals to widen the live market feed.
+                                    Try another category or reveal early ideas to widen the board.
                                 </div>
                             </>
                         )}
@@ -2802,7 +2776,7 @@ export default function StockMarketDashboard() {
                     borderTopRightRadius: 14,
                 }}>
                     <div style={{ textAlign: "center" }}>#</div>
-                    <div>Market Signal</div>
+                    <div>Opportunity</div>
                     <div style={{ textAlign: "center" }}>Score</div>
                     <div style={{ textAlign: "center" }}>24h</div>
                     <div style={{ textAlign: "center" }}>7d</div>
@@ -2855,10 +2829,10 @@ export default function StockMarketDashboard() {
                                 <>
                                     <Activity style={{ width: 24, height: 24, margin: "0 auto 12px", opacity: 0.5 }} />
                                     <div style={{ marginBottom: 8, color: "#94a3b8", fontWeight: 600 }}>
-                                        No live signals match this filter
+                                        No opportunities match this filter
                                     </div>
                                     <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
-                                        Try another category or reveal exploratory signals to widen the live market feed.
+                                        Try another category or reveal early ideas to widen the board.
                                     </div>
                                 </>
                             )}

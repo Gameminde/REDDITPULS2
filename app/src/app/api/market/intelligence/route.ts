@@ -91,9 +91,10 @@ export async function GET(req: NextRequest) {
     if (trendError) return NextResponse.json({ error: trendError.message }, { status: 500 });
 
     const hydratedIdeas = (ideaRows || []).map((row) => hydrateIdeaForMarket(row as Record<string, unknown>));
-    const feedVisible = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, { includeExploratory: false });
+    const userFacingIdeas = hydratedIdeas.filter((idea) => idea.public_browse_eligible);
+    const feedVisible = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, { includeExploratory: false, surface: "user" });
 
-    const recentIdeaIds = hydratedIdeas
+    const recentIdeaIds = userFacingIdeas
         .filter((idea) => {
             const firstSeen = Date.parse(String(idea.first_seen || ""));
             return Number.isFinite(firstSeen) && Date.now() - firstSeen <= 72 * 3600000;
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
     }
 
     const emergingWedges = buildEmergingWedges({
-        ideas: hydratedIdeas,
+        ideas: userFacingIdeas,
         promotedSlugs,
         historyRows: (ideaHistoryRows || []) as Array<{ idea_id?: string | null; score?: number | null; recorded_at?: string | null }>,
         trendRows: (trendRows || []) as Array<{ keyword?: string | null; change_24h?: number | null; change_7d?: number | null; updated_at?: string | null }>,
@@ -132,7 +133,7 @@ export async function GET(req: NextRequest) {
     });
 
     const themesToShape = buildThemesToShape({
-        ideas: hydratedIdeas,
+        ideas: userFacingIdeas,
         promotedSlugs,
         emergingSlugs: new Set(emergingWedges.map((item) => item.slug)),
         category: category || undefined,
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
     });
 
     const sourceHealth = extractScraperRunHealth((latestRuns?.[0] || null) as Record<string, unknown> | null);
-    const new72hCount = hydratedIdeas.filter((idea) => {
+    const new72hCount = userFacingIdeas.filter((idea) => {
         const firstSeen = Date.parse(String(idea.first_seen || ""));
         if (!Number.isFinite(firstSeen)) return false;
         if (category && idea.category !== category) return false;
@@ -156,7 +157,7 @@ export async function GET(req: NextRequest) {
         summary: {
             generated_at: new Date().toISOString(),
             ...sourceHealth,
-            raw_idea_count: hydratedIdeas.length,
+            raw_idea_count: userFacingIdeas.length,
             feed_visible_count: category ? feedVisible.filter((idea) => idea.category === category).length : feedVisible.length,
             new_72h_count: new72hCount,
             emerging_wedge_count: emergingWedges.length,

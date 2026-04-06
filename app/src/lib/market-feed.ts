@@ -10,6 +10,11 @@ import { buildMarketOpportunityPresentation } from "@/lib/market-opportunity-pre
 import { buildMarketHint, type MarketHint } from "@/lib/opportunity-actionability";
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
+import {
+    getPublicOpportunityTitle,
+    getSafePublicSummary,
+    isPublicOpportunityEligible,
+} from "@/lib/public-idea-eligibility";
 import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 
 export type MarketKind =
@@ -26,6 +31,7 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     topic: string;
     slug: string;
     category: string;
+    pain_summary: string | null;
     source_count: number;
     post_count_total: number;
     post_count_7d: number;
@@ -47,6 +53,9 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     fresh_candidate: boolean;
     board_eligible: boolean;
     board_stale_reason: string | null;
+    public_title: string;
+    public_summary: string;
+    public_browse_eligible: boolean;
 }
 
 const SHARE_THREAD_PATTERNS = [
@@ -387,6 +396,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         topic: String(idea.topic || ""),
         slug: String(idea.slug || ""),
         category: String(idea.category || ""),
+        pain_summary: typeof idea.pain_summary === "string" ? idea.pain_summary : null,
         source_count: Number(idea.source_count || normalizedSources.length || 0),
         post_count_total: Number(idea.post_count_total || 0),
         post_count_7d: Number(idea.post_count_7d || 0),
@@ -410,16 +420,38 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         fresh_candidate: freshness,
         board_eligible: boardState.boardEligible,
         board_stale_reason: boardState.boardStaleReason,
+        public_title: "",
+        public_summary: "",
+        public_browse_eligible: false,
     } satisfies Omit<MarketHydratedIdea, "market_hint">;
 
-    return {
+    const withHint = {
         ...hydrated,
         market_hint: buildMarketHint(hydrated),
     };
+
+    const public_title = getPublicOpportunityTitle(withHint);
+    const public_summary = getSafePublicSummary(withHint);
+
+    return {
+        ...withHint,
+        public_title,
+        public_summary,
+        public_browse_eligible: isPublicOpportunityEligible({
+            ...withHint,
+            suggested_wedge_label: public_title || withHint.suggested_wedge_label,
+            pain_summary: public_summary || withHint.pain_summary,
+        }),
+    };
 }
 
-export function shouldIncludeMarketIdea(idea: MarketHydratedIdea, includeExploratory = false) {
+export function shouldIncludeMarketIdea(
+    idea: MarketHydratedIdea,
+    includeExploratory = false,
+    surface: "user" | "admin" = "user",
+) {
     if (idea.market_status === "suppressed") return false;
+    if (surface === "user" && !idea.public_browse_eligible) return false;
     if (includeExploratory) return true;
     return !shouldSuppressOpportunityIdeaCard({
         signalContract: idea.signal_contract,
@@ -427,9 +459,13 @@ export function shouldIncludeMarketIdea(idea: MarketHydratedIdea, includeExplora
     });
 }
 
-export function buildMarketIdeas(rows: Array<Record<string, unknown>>, options?: { includeExploratory?: boolean }) {
+export function buildMarketIdeas(
+    rows: Array<Record<string, unknown>>,
+    options?: { includeExploratory?: boolean; surface?: "user" | "admin" },
+) {
     const includeExploratory = Boolean(options?.includeExploratory);
+    const surface = options?.surface || "user";
     return rows
         .map((row) => hydrateIdeaForMarket(row))
-        .filter((idea) => shouldIncludeMarketIdea(idea, includeExploratory));
+        .filter((idea) => shouldIncludeMarketIdea(idea, includeExploratory, surface));
 }

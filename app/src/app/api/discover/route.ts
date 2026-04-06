@@ -143,9 +143,11 @@ export async function GET() {
 
         const visibleIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
             includeExploratory: false,
+            surface: "user",
         });
         const archiveIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
             includeExploratory: true,
+            surface: "user",
         });
 
         const trackedPostCount = visibleIdeas.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0);

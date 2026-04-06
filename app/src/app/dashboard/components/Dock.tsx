@@ -28,7 +28,7 @@ interface DockNavItem {
 }
 
 const marketItems: DockNavItem[] = [
-    ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Market", path: "/dashboard", icon: BarChart3, exact: true }] : []),
+    ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Board", path: "/dashboard", icon: BarChart3, exact: true }] : []),
     ...(FEATURE_FLAGS.EXPLORE_ENABLED ? [{ name: "Explore", path: "/dashboard/explore", icon: Compass }] : []),
     ...(FEATURE_FLAGS.TRENDS_ENABLED ? [{ name: "Trends", path: "/dashboard/trends", icon: TrendingUp }] : []),
 ];
@@ -50,7 +50,7 @@ const infoItems: DockNavItem[] = [
 ];
 
 const mobileItems: DockNavItem[] = [
-    ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Market", path: "/dashboard", icon: BarChart3, exact: true }] : []),
+    ...(FEATURE_FLAGS.STOCK_MARKET_ENABLED ? [{ name: "Board", path: "/dashboard", icon: BarChart3, exact: true }] : []),
     ...(FEATURE_FLAGS.EXPLORE_ENABLED ? [{ name: "Explore", path: "/dashboard/explore", icon: Compass }] : []),
     ...(FEATURE_FLAGS.VALIDATE_ENABLED ? [{ name: "Validate", path: "/dashboard/validate", icon: Lightbulb }] : []),
     ...(FEATURE_FLAGS.REPORTS_ENABLED ? [{ name: "Reports", path: "/dashboard/reports", icon: FileText }] : []),
@@ -225,8 +225,8 @@ export function Dock({
                 style={{
                     background: "hsla(0,0%,4%,0.85)",
                     border: "1px solid hsl(0 0% 100% / 0.07)",
-                    borderRadius: 15,
-                    padding: "7px 10px",
+                    borderRadius: 14,
+                    padding: "5px 8px",
                     backdropFilter: "blur(40px) saturate(200%)",
                     boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.05), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px hsla(16,100%,50%,0.05)",
                 }}
@@ -251,7 +251,7 @@ export function Dock({
                                             emitValidationStorageChange();
                                         }
                                     }}
-                                    className={`relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider ${
+                                    className={`relative flex flex-col items-center gap-[2px] px-2 py-1.5 rounded-xl min-w-[46px] transition-all duration-150 text-[9px] tracking-[0.12em] ${
                                         isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
                                     }`}
                                     style={isActive
@@ -283,7 +283,7 @@ export function Dock({
                 {showBetaBadge ? (
                     <>
                         <div
-                            className="relative flex items-center gap-2 px-3 py-1.5 rounded-xl min-w-[54px] text-[10px] tracking-wider text-primary"
+                            className="relative flex items-center gap-2 px-2.5 py-1.5 rounded-xl min-w-[50px] text-[10px] tracking-wider text-primary"
                             style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                         >
                             <Sparkles className="w-[16px] h-[16px]" />
@@ -299,7 +299,7 @@ export function Dock({
                 {isGuest ? (
                     <Link
                         href="/login"
-                        className="relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider text-primary"
+                        className="relative flex flex-col items-center gap-[3px] px-2.5 py-1.5 rounded-xl min-w-[50px] transition-all duration-150 text-[10px] tracking-wider text-primary"
                         style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                     >
                         <LogIn className="w-4 h-4" />
@@ -309,7 +309,7 @@ export function Dock({
                     <>
                         <Link
                             href="/dashboard/settings"
-                            className={`relative flex flex-col items-center gap-[3px] px-3 py-1.5 rounded-xl min-w-[54px] transition-all duration-150 text-[10px] tracking-wider ${
+                            className={`relative flex flex-col items-center gap-[3px] px-2.5 py-1.5 rounded-xl min-w-[50px] transition-all duration-150 text-[10px] tracking-wider ${
                                 currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
                             }`}
                             style={currentPath?.startsWith("/dashboard/settings")

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Dock } from "./components/Dock";
 import { TopBar } from "./components/TopBar";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
+import { createClient } from "@/lib/supabase-browser";
 import { DashboardViewerProvider } from "./viewer-context";
 
 export function DashboardLayout({
@@ -23,6 +24,38 @@ export function DashboardLayout({
     const [postCount, setPostCount] = useState(0);
     const [modelCount, setModelCount] = useState(0);
     const [alertCount, setAlertCount] = useState(0);
+
+    useEffect(() => {
+        if (!isGuest || typeof window === "undefined") return;
+
+        const supabase = createClient();
+        let cancelled = false;
+        let refreshed = false;
+
+        const refreshIntoAuthenticatedState = () => {
+            if (cancelled || refreshed) return;
+            refreshed = true;
+            window.location.reload();
+        };
+
+        void supabase.auth.getSession().then(({ data }) => {
+            if (data.session) {
+                refreshIntoAuthenticatedState();
+            }
+        });
+
+        const { data } = supabase.auth.onAuthStateChange((event, session) => {
+            if (!session) return;
+            if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
+                refreshIntoAuthenticatedState();
+            }
+        });
+
+        return () => {
+            cancelled = true;
+            data.subscription.unsubscribe();
+        };
+    }, [isGuest]);
 
     useEffect(() => {
         const refreshMarketSummary = () => {
@@ -103,7 +136,7 @@ export function DashboardLayout({
                         modelCount={modelCount}
                         ideaCount={ideaCount}
                     />
-                    <main className="relative z-10 flex-1 overflow-y-auto px-2.5 pb-32 pt-2.5 sm:px-3.5 sm:pt-3.5 md:px-5 lg:px-7 lg:pt-5 lg:pb-28">
+                    <main className="relative z-10 flex-1 overflow-y-auto px-2 pb-28 pt-2 sm:px-2.5 sm:pt-2.5 md:px-3.5 md:pt-3.5 lg:px-4 lg:pt-3 lg:pb-24">
                         {children}
                     </main>
                 </div>

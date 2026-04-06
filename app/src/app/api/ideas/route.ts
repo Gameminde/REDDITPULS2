@@ -50,7 +50,8 @@ export async function GET(request: Request) {
             query = query.order("current_score", { ascending: direction === "asc" });
     }
 
-    const { data, error } = await query.limit(limit);
+    const fetchLimit = Math.min(Math.max(limit * 4, limit), 500);
+    const { data, error } = await query.limit(fetchLimit);
 
     if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -58,5 +59,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json(buildIdeasListPayload((data || []) as unknown as Array<Record<string, unknown>>, {
         includeExploratory,
+        surface: "user",
+        limit,
     }));
 }

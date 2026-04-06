@@ -6,6 +6,12 @@ import { trackServerEvent } from "@/lib/analytics";
 import { sanitizeNextPath } from "@/lib/auth-redirect";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
+type PendingCookie = {
+    name: string;
+    value: string;
+    options?: Record<string, unknown>;
+};
+
 function resolvePublicOrigin(request: Request): string {
     const requestUrl = new URL(request.url);
     const forwardedProto = request.headers.get("x-forwarded-proto");
@@ -16,6 +22,10 @@ function resolvePublicOrigin(request: Request): string {
         || process.env.SITE_URL
         || ""
     ).replace(/\/+$/, "");
+
+    if (envOrigin && !/localhost|0\.0\.0\.0/i.test(envOrigin)) {
+        return envOrigin;
+    }
 
     if (host && !/^0\.0\.0\.0(?::\d+)?$/i.test(host) && !/^localhost(?::\d+)?$/i.test(host)) {
         const protocol = forwardedProto || requestUrl.protocol.replace(":", "") || "http";
@@ -34,6 +44,7 @@ export async function GET(request: Request) {
     const origin = resolvePublicOrigin(request);
     const code = searchParams.get("code");
     const safePath = sanitizeNextPath(searchParams.get("next"), "/dashboard");
+    const pendingCookies: PendingCookie[] = [];
 
     if (code) {
         const cookieStore = await cookies();
@@ -47,9 +58,10 @@ export async function GET(request: Request) {
                     },
                     setAll(cookiesToSet) {
                         try {
-                            cookiesToSet.forEach(({ name, value, options }) =>
-                                cookieStore.set(name, value, options)
-                            );
+                            cookiesToSet.forEach(({ name, value, options }) => {
+                                pendingCookies.push({ name, value, options });
+                                cookieStore.set(name, value, options);
+                            });
                         } catch {}
                     },
                 },
@@ -88,7 +100,11 @@ export async function GET(request: Request) {
                 });
             }
 
-            return NextResponse.redirect(`${origin}${safePath}`);
+            const response = NextResponse.redirect(`${origin}${safePath}`);
+            pendingCookies.forEach(({ name, value, options }) => {
+                response.cookies.set(name, value, options);
+            });
+            return response;
         }
     }
 
