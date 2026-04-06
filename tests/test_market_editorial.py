@@ -236,6 +236,39 @@ def test_failed_editorial_rows_are_retried_immediately(monkeypatch):
     assert telemetry["processed"] == 1
 
 
+def test_subreddit_bucket_backfill_is_skipped(monkeypatch):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.setenv("CEREBRAS_MODEL", "qwen-test")
+    monkeypatch.setenv("MARKET_AGENT_TOP_N", "5")
+    monkeypatch.setenv("MARKET_AGENT_MAX_INPUT_POSTS", "4")
+    monkeypatch.setenv("MARKET_AGENT_MAX_TOKENS_PER_RUN", "5000")
+    monkeypatch.setenv("MARKET_AGENT_REFRESH_HOURS", "24")
+    monkeypatch.setattr(orchestrator, "CerebrasStructuredClient", FakeClient)
+
+    bucket = _idea_row(slug="sub-productivity", score=52, source_count=1)
+    bucket["topic"] = "Pain signals from productivity"
+    bucket["sources"] = [{"platform": "reddit", "count": 8}]
+    bucket["signal_contract"] = {
+        "support_level": "hypothesis",
+        "buyer_native_direct_count": 0,
+        "supporting_signal_count": 0,
+        "dominant_platform": "reddit",
+        "single_source": True,
+    }
+
+    updated_rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [],
+        [bucket],
+        persist_enabled=True,
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert updated_rows == []
+    assert stale_updates == []
+    assert telemetry["considered"] == 0
+
+
 def test_cerebras_json_schemas_avoid_unsupported_string_length_fields():
     def walk(value):
         if isinstance(value, dict):

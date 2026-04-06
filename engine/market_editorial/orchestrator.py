@@ -350,6 +350,11 @@ def _candidate_sort_key(candidate: Dict[str, Any]) -> Tuple[float, float, float,
 
 
 def _is_backfill_worthy(packet: Dict[str, Any], stored: Dict[str, Any] | None) -> bool:
+    slug = _clean_text(packet.get("slug")).lower()
+    topic = _clean_text(packet.get("topic")).lower()
+    if slug.startswith("sub-") or "not-promote" in slug or topic.startswith("pain signals from"):
+        return False
+
     if stored and _clean_text(stored.get("status")).lower() == "success":
         return True
 
@@ -359,6 +364,8 @@ def _is_backfill_worthy(packet: Dict[str, Any], stored: Dict[str, Any] | None) -
     signal_contract = packet.get("signal_contract") or {}
     direct_proof = float(signal_contract.get("buyer_native_direct_count") or 0)
     supporting_signal = float(signal_contract.get("supporting_signal_count") or 0)
+    if source_count < 2 and direct_proof <= 0 and supporting_signal <= 0:
+        return False
 
     return (
         current_score >= 20
