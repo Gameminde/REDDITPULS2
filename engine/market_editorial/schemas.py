@@ -46,8 +46,6 @@ CRITIC_JSON_SCHEMA: Dict[str, Any] = {
         "critic_reasons": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 1,
-            "maxItems": 6,
         },
         "tightened_title": {
             "anyOf": [

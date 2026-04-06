@@ -209,6 +209,8 @@ def test_cerebras_json_schemas_avoid_unsupported_string_length_fields():
         if isinstance(value, dict):
             assert "minLength" not in value
             assert "maxLength" not in value
+            assert "minItems" not in value
+            assert "maxItems" not in value
             for child in value.values():
                 walk(child)
         elif isinstance(value, list):
