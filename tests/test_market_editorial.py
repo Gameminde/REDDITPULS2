@@ -269,6 +269,34 @@ def test_subreddit_bucket_backfill_is_skipped(monkeypatch):
     assert telemetry["considered"] == 0
 
 
+def test_invalid_dynamic_topic_is_skipped_from_editorial(monkeypatch):
+    monkeypatch.setenv("MARKET_AGENT_ENABLED", "true")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.setenv("CEREBRAS_MODEL", "qwen-test")
+    monkeypatch.setenv("MARKET_AGENT_TOP_N", "5")
+    monkeypatch.setenv("MARKET_AGENT_MAX_INPUT_POSTS", "4")
+    monkeypatch.setenv("MARKET_AGENT_MAX_TOKENS_PER_RUN", "5000")
+    monkeypatch.setenv("MARKET_AGENT_REFRESH_HOURS", "24")
+    monkeypatch.setattr(orchestrator, "CerebrasStructuredClient", FakeClient)
+
+    malformed = _idea_row(slug="dyn-hey-everyone", score=29, source_count=2)
+    malformed["topic"] = "hey everyone"
+    malformed["public_title"] = "hey everyone"
+    malformed["suggested_wedge_label"] = None
+
+    updated_rows, stale_updates, telemetry = orchestrator.run_market_editorial_pass(
+        [malformed],
+        [malformed],
+        persist_enabled=True,
+        logger=lambda *_args, **_kwargs: None,
+    )
+
+    assert len(updated_rows) == 1
+    assert "market_editorial" not in updated_rows[0]
+    assert stale_updates == []
+    assert telemetry["considered"] == 0
+
+
 def test_cerebras_json_schemas_avoid_unsupported_string_length_fields():
     def walk(value):
         if isinstance(value, dict):

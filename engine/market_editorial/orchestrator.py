@@ -25,6 +25,75 @@ from market_editorial.schemas import (
 )
 
 
+INVALID_MARKET_TOPIC_EXACT_BLOCKLIST = {
+    "don know",
+    "few years",
+    "first users",
+    "hey all",
+    "hey everyone",
+    "hey guys",
+    "https www",
+    "long take",
+    "lot people",
+    "not sure",
+    "other people",
+    "quarter achieve",
+    "years marketing",
+    "explore page",
+}
+
+INVALID_MARKET_TOPIC_PREFIXES = (
+    "anyone else ",
+    "does anyone ",
+    "don know",
+    "help ",
+    "hey ",
+    "how do i ",
+    "looking for ",
+    "manual ",
+    "not sure",
+)
+
+INVALID_MARKET_TOPIC_GENERIC_TOKENS = {
+    "alternative",
+    "alternatives",
+    "anyone",
+    "does",
+    "don",
+    "else",
+    "everyone",
+    "few",
+    "first",
+    "for",
+    "guys",
+    "help",
+    "how",
+    "i",
+    "issue",
+    "issues",
+    "know",
+    "long",
+    "lot",
+    "looking",
+    "manual",
+    "month",
+    "months",
+    "not",
+    "other",
+    "page",
+    "people",
+    "problem",
+    "problems",
+    "quarter",
+    "recommendation",
+    "recommendations",
+    "sure",
+    "take",
+    "year",
+    "years",
+}
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = str(os.environ.get(name, "")).strip().lower()
     if not raw:
@@ -126,6 +195,30 @@ def _normalize_top_posts(value: Any, max_posts: int) -> List[Dict[str, Any]]:
 
 def _tokenize(value: Any) -> List[str]:
     return [token for token in _clean_text(value).lower().replace("/", " ").replace("-", " ").split() if len(token) > 2]
+
+
+def _normalize_market_topic_name(value: Any) -> str:
+    normalized = _clean_text(value).lower().replace("&", " ")
+    normalized = "".join(char if char.isalnum() or char.isspace() else " " for char in normalized)
+    return " ".join(normalized.split()).strip()
+
+
+def _is_invalid_market_topic_name(value: Any) -> bool:
+    normalized = _normalize_market_topic_name(value)
+    if not normalized:
+        return True
+    if normalized in INVALID_MARKET_TOPIC_EXACT_BLOCKLIST:
+        return True
+    if any(normalized.startswith(prefix) for prefix in INVALID_MARKET_TOPIC_PREFIXES):
+        return True
+    if "http" in normalized or "www" in normalized:
+        return True
+
+    meaningful_tokens = [
+        token for token in normalized.split(" ")
+        if token and token not in INVALID_MARKET_TOPIC_GENERIC_TOKENS and len(token) > 2
+    ]
+    return len(meaningful_tokens) < 2
 
 
 def _parse_stored_editorial(value: Any) -> Dict[str, Any] | None:
@@ -352,7 +445,12 @@ def _candidate_sort_key(candidate: Dict[str, Any]) -> Tuple[float, float, float,
 def _is_backfill_worthy(packet: Dict[str, Any], stored: Dict[str, Any] | None) -> bool:
     slug = _clean_text(packet.get("slug")).lower()
     topic = _clean_text(packet.get("topic")).lower()
+    heuristic_title = _clean_text(packet.get("heuristic_title"))
     if slug.startswith("sub-") or "not-promote" in slug or topic.startswith("pain signals from"):
+        return False
+    if slug.startswith("dyn-") and _is_invalid_market_topic_name(heuristic_title or topic):
+        return False
+    if _is_invalid_market_topic_name(heuristic_title or topic):
         return False
 
     if stored and _clean_text(stored.get("status")).lower() == "success":
@@ -408,7 +506,7 @@ def _collect_candidates(
     for row in current_rows:
         packet = _build_editorial_packet(row, max_posts=max_posts, all_rows=all_rows)
         stored = _parse_stored_editorial(row.get("market_editorial"))
-        if _needs_editorial_refresh(packet, stored, refresh_hours):
+        if _needs_editorial_refresh(packet, stored, refresh_hours) and _is_backfill_worthy(packet, stored):
             current_candidates.append({
                 "kind": "current",
                 "slug": packet["slug"],
