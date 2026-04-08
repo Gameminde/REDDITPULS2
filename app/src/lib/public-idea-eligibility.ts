@@ -40,6 +40,7 @@ export type PublicOpportunityRejectionReason =
     | "suppressed_market_status"
     | "editorial_hidden"
     | "editorial_needs_more_proof"
+    | "needs_wedge"
     | "score_below_threshold"
     | "insufficient_posts"
     | "insufficient_sources"
@@ -82,6 +83,13 @@ function shouldPreferOpportunityAngle(title: string, productAngle: string) {
     if (!title || !productAngle) return false;
     if (title.length >= 72) return true;
     return PAIN_FIRST_TITLE_PATTERNS.some((pattern) => pattern.test(title));
+}
+
+function areTitlesEquivalent(left: string, right: string) {
+    const normalizedLeft = normalizeMarketTopicName(left);
+    const normalizedRight = normalizeMarketTopicName(right);
+    if (!normalizedLeft || !normalizedRight) return false;
+    return normalizedLeft === normalizedRight;
 }
 
 export function normalizePublicOpportunityTitle(value?: string | null) {
@@ -136,6 +144,27 @@ export function getPublicOpportunityTitle(input: PublicIdeaInput) {
     return "";
 }
 
+export function hasSpecificPublicOpportunityAngle(input: PublicIdeaInput) {
+    const topic = normalizePublicOpportunityTitle(input.topic);
+    const suggestedWedge = normalizePublicOpportunityTitle(input.suggested_wedge_label);
+    if (suggestedWedge && !isBlockedPublicOpportunityTitle(suggestedWedge) && !areTitlesEquivalent(suggestedWedge, topic)) {
+        return true;
+    }
+
+    const approvedEditorial = getVisibleMarketEditorial(input.market_editorial);
+    const editorialAngle = normalizePublicOpportunityTitle(approvedEditorial?.product_angle);
+    const editorialTitle = normalizePublicOpportunityTitle(approvedEditorial?.edited_title);
+
+    if (editorialAngle && !isBlockedPublicOpportunityTitle(editorialAngle) && !areTitlesEquivalent(editorialAngle, topic)) {
+        return true;
+    }
+    if (editorialTitle && !isBlockedPublicOpportunityTitle(editorialTitle) && !areTitlesEquivalent(editorialTitle, topic)) {
+        return true;
+    }
+
+    return false;
+}
+
 export function getPublicDirectBuyerProofCount(input: PublicIdeaInput) {
     return Math.max(0, toFiniteNumber(input.signal_contract?.buyer_native_direct_count));
 }
@@ -172,6 +201,12 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
 } {
     const editorialVisibility = getPublicMarketEditorialVisibility(input.market_editorial);
     if (editorialVisibility) {
+        if (
+            cleanText(input.market_status).toLowerCase() === "needs_wedge"
+            && !hasSpecificPublicOpportunityAngle(input)
+        ) {
+            return { eligible: false, reason: "needs_wedge" };
+        }
         if (editorialVisibility === "internal" || editorialVisibility === "duplicate") {
             return { eligible: false, reason: "editorial_hidden" };
         }
@@ -201,6 +236,9 @@ export function explainPublicOpportunityEligibility(input: PublicIdeaInput): {
     }
     if (cleanText(input.market_status).toLowerCase() === "suppressed") {
         return { eligible: false, reason: "suppressed_market_status" };
+    }
+    if (cleanText(input.market_status).toLowerCase() === "needs_wedge" && !hasSpecificPublicOpportunityAngle(input)) {
+        return { eligible: false, reason: "needs_wedge" };
     }
     if (toFiniteNumber(input.current_score) < 30) {
         return { eligible: false, reason: "score_below_threshold" };

@@ -110,6 +110,8 @@ function mapEligibilityReason(
     switch (reason) {
         case "editorial_hidden":
             return "editorial_hidden";
+        case "needs_wedge":
+            return "needs_wedge";
         case "editorial_needs_more_proof":
         case "insufficient_confidence":
         case "score_below_threshold":
