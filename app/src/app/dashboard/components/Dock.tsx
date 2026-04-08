@@ -67,9 +67,9 @@ function DockDivider() {
         <div
             style={{
                 width: 1,
-                height: 28,
-                background: "hsl(0 0% 100% / 0.08)",
-                margin: "0 4px",
+                height: 22,
+                background: "hsl(0 0% 100% / 0.06)",
+                margin: "0 2px",
                 flexShrink: 0,
             }}
         />
@@ -168,14 +168,14 @@ export function Dock({
 
     return (
         <>
-            <div className="fixed bottom-3 left-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[420px] -translate-x-1/2 pointer-events-auto lg:hidden">
+            <div className="fixed bottom-2 left-1/2 z-[1000] w-[calc(100vw-1.25rem)] max-w-[420px] -translate-x-1/2 pointer-events-auto lg:hidden">
                 <nav
-                    className="mx-auto flex items-end justify-between gap-1 rounded-[24px] border px-2 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] pt-2"
+                    className="mx-auto flex items-center justify-between gap-1 rounded-[22px] border px-1.5 pb-[calc(env(safe-area-inset-bottom,0px)+8px)] pt-1.5"
                     style={{
-                        background: "hsla(0,0%,4%,0.9)",
-                        borderColor: "hsl(0 0% 100% / 0.07)",
-                        backdropFilter: "blur(40px) saturate(200%)",
-                        boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.05), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px hsla(16,100%,50%,0.06)",
+                        background: "hsla(0,0%,4%,0.82)",
+                        borderColor: "hsl(0 0% 100% / 0.06)",
+                        backdropFilter: "blur(28px) saturate(180%)",
+                        boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.04), 0 18px 44px rgba(0,0,0,0.5)",
                     }}
                 >
                     {mobileDockItems.map((item) => {
@@ -188,26 +188,29 @@ export function Dock({
                             <Link
                                 key={`${item.name}-${item.path}-mobile`}
                                 href={item.path}
-                                className={`relative flex min-h-[56px] min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[10px] tracking-[0.08em] transition-all duration-150 ${
+                                className={`relative flex min-h-[50px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-[18px] px-2 py-2 text-[10px] tracking-[0.08em] transition-all duration-150 ${
                                     isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                                } ${isValidate ? "-mt-5" : ""}`}
-                                style={isValidate
+                                }`}
+                                style={isActive
                                     ? {
-                                        background: isActive ? "linear-gradient(180deg, hsl(16 100% 50% / 0.28), hsl(16 100% 50% / 0.14))" : "linear-gradient(180deg, hsl(16 100% 50% / 0.22), hsl(16 100% 50% / 0.08))",
-                                        border: "1px solid hsl(16 100% 50% / 0.22)",
-                                        boxShadow: "0 0 24px hsla(16,100%,50%,0.18)",
+                                        background: "hsl(16 100% 50% / 0.12)",
+                                        border: "1px solid hsl(16 100% 50% / 0.18)",
                                     }
-                                    : isActive
-                                        ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                    : isValidate
+                                        ? {
+                                            background: "hsl(16 100% 50% / 0.06)",
+                                            border: "1px solid hsl(16 100% 50% / 0.1)",
+                                            color: "#fdba74",
+                                        }
                                         : { border: "1px solid transparent" }}
                             >
-                                <div className={`relative flex items-center justify-center ${isValidate ? "h-10 w-10 rounded-2xl bg-black/20" : ""}`}>
-                                    <Icon className={`${isValidate ? "h-5 w-5" : "h-4 w-4"}`} />
+                                <div className="relative flex items-center justify-center">
+                                    <Icon className="h-4 w-4" />
                                 </div>
-                                <span className={`truncate font-medium ${isValidate ? "text-[11px] uppercase" : ""}`}>
+                                <span className={`truncate font-medium ${isValidate ? "uppercase" : ""}`}>
                                     {item.name}
                                 </span>
-                                {isActive && !isValidate && (
+                                {isActive && (
                                     <span className="absolute bottom-1 h-1 w-1 rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(16 100% 50%)" }} />
                                 )}
                             </Link>
@@ -217,18 +220,18 @@ export function Dock({
             </div>
 
             <div
-                className="fixed bottom-3 left-1/2 z-[1000] hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto pointer-events-auto lg:block"
+                className="fixed bottom-2 left-1/2 z-[1000] hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto pointer-events-auto lg:block"
                 style={{ scrollbarWidth: "none" }}
             >
             <nav
                 className="mx-auto flex min-w-max items-center gap-1"
                 style={{
-                    background: "hsla(0,0%,4%,0.85)",
-                    border: "1px solid hsl(0 0% 100% / 0.07)",
-                    borderRadius: 14,
-                    padding: "5px 8px",
-                    backdropFilter: "blur(40px) saturate(200%)",
-                    boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.05), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px hsla(16,100%,50%,0.05)",
+                    background: "hsla(0,0%,4%,0.82)",
+                    border: "1px solid hsl(0 0% 100% / 0.06)",
+                    borderRadius: 12,
+                    padding: "4px 6px",
+                    backdropFilter: "blur(28px) saturate(180%)",
+                    boxShadow: "0 0 0 1px hsl(0 0% 100% / 0.04), 0 18px 44px rgba(0,0,0,0.5)",
                 }}
             >
                 {groups.map((group, gi) => (
@@ -251,11 +254,11 @@ export function Dock({
                                             emitValidationStorageChange();
                                         }
                                     }}
-                                    className={`relative flex flex-col items-center gap-[2px] px-2 py-1.5 rounded-xl min-w-[46px] transition-all duration-150 text-[9px] tracking-[0.12em] ${
+                                    className={`relative flex flex-col items-center gap-1 rounded-xl px-2 py-1.5 min-w-[44px] transition-all duration-150 text-[9px] tracking-[0.12em] ${
                                         isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
                                     }`}
                                     style={isActive
-                                        ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                        ? { background: "hsl(16 100% 50% / 0.1)", border: "1px solid hsl(16 100% 50% / 0.16)" }
                                         : { border: "1px solid transparent" }}
                                 >
                                     <div className="relative">
@@ -283,8 +286,8 @@ export function Dock({
                 {showBetaBadge ? (
                     <>
                         <div
-                            className="relative flex items-center gap-2 px-2.5 py-1.5 rounded-xl min-w-[50px] text-[10px] tracking-wider text-primary"
-                            style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                            className="relative flex items-center gap-2 rounded-xl px-2.5 py-1.5 min-w-[50px] text-[10px] tracking-wider text-primary"
+                            style={{ background: "hsl(16 100% 50% / 0.1)", border: "1px solid hsl(16 100% 50% / 0.16)" }}
                         >
                             <Sparkles className="w-[16px] h-[16px]" />
                             <div className="flex flex-col leading-none">
@@ -299,8 +302,8 @@ export function Dock({
                 {isGuest ? (
                     <Link
                         href="/login"
-                        className="relative flex flex-col items-center gap-[3px] px-2.5 py-1.5 rounded-xl min-w-[50px] transition-all duration-150 text-[10px] tracking-wider text-primary"
-                        style={{ background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
+                        className="relative flex flex-col items-center gap-1 rounded-xl px-2.5 py-1.5 min-w-[50px] transition-all duration-150 text-[10px] tracking-wider text-primary"
+                        style={{ background: "hsl(16 100% 50% / 0.1)", border: "1px solid hsl(16 100% 50% / 0.16)" }}
                     >
                         <LogIn className="w-4 h-4" />
                         <span className="font-medium">Log In</span>
@@ -309,11 +312,11 @@ export function Dock({
                     <>
                         <Link
                             href="/dashboard/settings"
-                            className={`relative flex flex-col items-center gap-[3px] px-2.5 py-1.5 rounded-xl min-w-[50px] transition-all duration-150 text-[10px] tracking-wider ${
+                            className={`relative flex flex-col items-center gap-1 rounded-xl px-2.5 py-1.5 min-w-[50px] transition-all duration-150 text-[10px] tracking-wider ${
                                 currentPath?.startsWith("/dashboard/settings") ? "text-primary" : "text-muted-foreground hover:text-foreground"
                             }`}
                             style={currentPath?.startsWith("/dashboard/settings")
-                                ? { background: "hsl(16 100% 50% / 0.12)", border: "1px solid hsl(16 100% 50% / 0.2)" }
+                                ? { background: "hsl(16 100% 50% / 0.1)", border: "1px solid hsl(16 100% 50% / 0.16)" }
                                 : { border: "1px solid transparent" }}
                         >
                             <Settings className="w-4 h-4" />

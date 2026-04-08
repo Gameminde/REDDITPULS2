@@ -162,6 +162,20 @@ function getIdeaSuggestedWedge(idea: Pick<Idea, "public_product_angle" | "sugges
     return suggestion && suggestion !== displayTopic ? suggestion : "";
 }
 
+function getBoardPrimaryTitle(displayTopic: string, suggestedWedge: string) {
+    const cleanTopic = cleanText(displayTopic);
+    const cleanWedge = cleanText(suggestedWedge);
+
+    if (!cleanWedge) return cleanTopic;
+
+    const soundsLikePainStatement = /\b(frustrat|burnout|distrust|gaps?|manual|delay|problem|struggle|complain|access control|mocking)\b/i.test(cleanTopic);
+    if (cleanTopic.length > 76 || soundsLikePainStatement) {
+        return cleanWedge;
+    }
+
+    return cleanTopic;
+}
+
 function buildIdeaHref(slug: string) {
     return `/dashboard/idea/${encodeURIComponent(slug)}`;
 }
@@ -353,6 +367,68 @@ function ChangeDisplay({ value, prefix = "" }: { value: number; prefix?: string 
             {icon}{prefix}{value > 0 ? "+" : ""}{value.toFixed(1)}
         </span>
     );
+}
+
+const CLAMP_ONE = {
+    overflow: "hidden",
+    display: "-webkit-box",
+    WebkitBoxOrient: "vertical" as const,
+    WebkitLineClamp: 1,
+};
+
+const CLAMP_TWO = {
+    overflow: "hidden",
+    display: "-webkit-box",
+    WebkitBoxOrient: "vertical" as const,
+    WebkitLineClamp: 2,
+};
+
+function getTrendTone(direction?: string | null) {
+    if (direction === "rising") {
+        return { label: "Gaining traction", color: "#22c55e", background: "rgba(34,197,94,0.12)" };
+    }
+    if (direction === "falling") {
+        return { label: "Cooling off", color: "#ef4444", background: "rgba(239,68,68,0.12)" };
+    }
+    if (direction === "new") {
+        return { label: "Newly tracked", color: "#a855f7", background: "rgba(168,85,247,0.12)" };
+    }
+    return { label: "Holding steady", color: "#94a3b8", background: "rgba(148,163,184,0.12)" };
+}
+
+function getOpportunityTypeLabel(idea: Pick<Idea, "category" | "public_title" | "public_product_angle" | "public_summary" | "topic">) {
+    const haystack = decodeHtml([
+        idea.public_product_angle,
+        idea.public_title,
+        idea.public_summary,
+        idea.topic,
+    ].filter(Boolean).join(" ")).toLowerCase();
+
+    if (/\btax\b|\blegal\b|\bbookkeep|\bcompliance\b|\bllc\b|\bsetup\b|\bonboard/i.test(haystack)) return "Setup pain";
+    if (/\balternative\b|\breplace\b|\bswitch\b|\bmigration\b/i.test(haystack)) return "Replacement";
+    if (/\btrust\b|\bdistrust\b|\bauthentic\b|\bburnout\b|\bapproval\b/i.test(haystack)) return "Trust gap";
+    if (/\bapi\b|\bmock\b|\bdev\b|\bintegration\b|\btest\b|\bdeploy\b|\bengineer/i.test(haystack)) return "Dev workflow";
+    if (/\baccess control\b|\bpermission\b|\bmanual\b|\badmin\b|\bops\b|\boperation/i.test(haystack)) return "Manual ops";
+    if (/\bcontent\b|\bsocial media\b|\bcalendar\b|\bfeedback\b|\bhandoff\b|\bworkflow\b|\bmanager/i.test(haystack)) return "Workflow gap";
+
+    switch (idea.category) {
+        case "marketing":
+            return "Go-to-market";
+        case "dev-tools":
+            return "Dev workflow";
+        case "productivity":
+            return "Workflow gap";
+        case "security":
+            return "Security ops";
+        case "hr":
+            return "People ops";
+        case "ecommerce":
+            return "Commerce ops";
+        case "ai":
+            return "AI workflow";
+        default:
+            return "Opportunity";
+    }
 }
 
 function ScoreBar({ score, color = "#f97316" }: { score: number; color?: string }) {
@@ -583,6 +659,8 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         idea.public_next_step || marketHint?.recommended_board_action || "",
         isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to see whether the proof still holds up under a deeper review.",
     );
+    const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
+    const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -628,7 +706,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                 whileHover={{ scale: 1.005, borderColor: "rgba(249,115,22,0.25)" }}
                 onClick={handleClick}
                 style={{
-                    display: "grid", gridTemplateColumns: "40px 1.5fr 100px 100px 100px 80px 80px",
+                    display: "grid", gridTemplateColumns: "40px minmax(0,1.5fr) 100px 100px 100px 84px 96px",
                     alignItems: "center", gap: 12, padding: "14px 18px",
                     cursor: "pointer", borderRadius: 10,
                     borderBottom: expanded ? "none" : "1px solid rgba(255,255,255,0.03)",
@@ -636,7 +714,6 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                     background: expanded ? "rgba(249,115,22,0.04)" : "transparent",
                 }}
             >
-                {/* Rank */}
                 <div style={{
                     fontSize: 14, fontWeight: 700, color: rank <= 3 ? "#f97316" : "#475569",
                     fontFamily: "var(--font-mono)", textAlign: "center",
@@ -644,17 +721,17 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                     #{rank}
                 </div>
 
-                {/* Topic + meta */}
-                <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
                         <TrendIcon direction={idea.trend_direction} />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>
-                            {displayTopic}
+                        <span style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9", lineHeight: 1.35, ...CLAMP_TWO }}>
+                            {primaryTitle}
                         </span>
                         <span style={{
                             fontSize: 10, padding: "1px 6px", borderRadius: 4,
                             background: "rgba(249,115,22,0.1)", color: "#f97316",
                             textTransform: "uppercase", fontWeight: 600,
+                            whiteSpace: "nowrap",
                         }}>
                             {idea.category}
                         </span>
@@ -690,16 +767,13 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                 New
                             </span>
                         )}
-                        {expanded && (
-                            <span style={{ fontSize: 9, color: "#64748b" }}>Open details</span>
-                        )}
                     </div>
-                    {suggestedWedge && (
-                        <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 6 }}>
-                            Product angle: {suggestedWedge}
+                    {secondaryAngle && (
+                        <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 6, ...CLAMP_ONE }}>
+                            Product angle: {secondaryAngle}
                         </div>
                     )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
                         <span>{formatCountLabel(idea.post_count_total, "post")}</span>
                         <span>{formatCountLabel(idea.source_count, "source")}</span>
                         <span style={{
@@ -714,10 +788,12 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                         }}>
                             {signalBadgeLabel}
                         </span>
+                        {expanded && (
+                            <span style={{ fontSize: 9, color: "#64748b" }}>Open details</span>
+                        )}
                     </div>
                 </div>
 
-                {/* Score */}
                 <div style={{ textAlign: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                         <div style={{
@@ -739,42 +815,39 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                     </div>
                 </div>
 
-                {/* 24h */}
                 <div style={{ textAlign: "center" }}>
                     <ChangeDisplay value={idea.change_24h} prefix="24h " />
                 </div>
 
-                {/* 7d */}
                 <div style={{ textAlign: "center" }}>
                     <ChangeDisplay value={idea.change_7d} prefix="7d " />
                 </div>
 
-                {/* Volume 7d */}
                 <div style={{ textAlign: "center", fontSize: 12, color: "#94a3b8", fontFamily: "var(--font-mono)" }}>
                     {idea.post_count_7d}
                     <div style={{ fontSize: 9, color: "#475569" }}>7d vol</div>
                 </div>
 
-                {/* Sources */}
-                <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
                     {(idea.sources || []).map((source) => {
                         const s = source.platform;
                         return (
-                        <span key={`${idea.id}-${s}`} style={{
-                            fontSize: 9, padding: "2px 5px", borderRadius: 3,
-                            background: s === "reddit" ? "rgba(255,69,0,0.15)" :
-                                s === "hackernews" ? "rgba(255,102,0,0.15)" :
-                                    s === "producthunt" ? "rgba(218,85,47,0.15)" :
-                                        "rgba(79,70,229,0.15)",
-                            color: s === "reddit" ? "#ff4500" :
-                                s === "hackernews" ? "#ff6600" :
-                                s === "producthunt" ? "#da552f" :
-                                        "#4f46e5",
-                            fontWeight: 600, textTransform: "uppercase",
-                        }} title={`${formatSourceName(s)}: ${source.count} posts`}>
-                            {formatSourceShort(s)}{Math.max(0, Number(source.count || 0))}
-                        </span>
-                    )})}
+                            <span key={`${idea.id}-${s}`} style={{
+                                fontSize: 9, padding: "2px 5px", borderRadius: 3,
+                                background: s === "reddit" ? "rgba(255,69,0,0.15)" :
+                                    s === "hackernews" ? "rgba(255,102,0,0.15)" :
+                                        s === "producthunt" ? "rgba(218,85,47,0.15)" :
+                                            "rgba(79,70,229,0.15)",
+                                color: s === "reddit" ? "#ff4500" :
+                                    s === "hackernews" ? "#ff6600" :
+                                        s === "producthunt" ? "#da552f" :
+                                            "#4f46e5",
+                                fontWeight: 600, textTransform: "uppercase",
+                            }} title={`${formatSourceName(s)}: ${source.count} posts`}>
+                                {formatSourceShort(s)}{Math.max(0, Number(source.count || 0))}
+                            </span>
+                        );
+                    })}
                 </div>
             </motion.div>
 
@@ -1504,8 +1577,10 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
         ? idea.competition_data.market_leaders_summary
         : "";
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
-    const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
+    const trendTone = getTrendTone(idea.trend_direction);
+    const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
+    const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
     const verdictSummary = summarizeReasonForUser(
         idea.public_verdict || signalContract?.summary,
         `${displayTopic} is getting enough repeated discussion to review, but the idea still needs proof.`,
@@ -1536,20 +1611,18 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                                 Fresh
                             </span>
                         )}
-                        {idea.market_status === "needs_wedge" && (
-                            <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-[10px] font-mono uppercase tracking-[0.14em] text-blue-300">
-                                Needs focus
-                            </span>
-                        )}
+                    </div>
+
+                    <div className="mb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+                        {idea.category} · {trendTone.label}
                     </div>
 
                     <Link href={ideaHref} className="block">
-                        <h3 className="text-base font-semibold leading-6 text-white">{displayTopic}</h3>
-                        {suggestedWedge && (
-                            <p className="mt-1 text-sm leading-6 text-slate-300">{suggestedWedge}</p>
+                        <h3 className="text-base font-semibold leading-6 text-white" style={CLAMP_TWO}>{primaryTitle}</h3>
+                        {secondaryAngle && (
+                            <p className="mt-1 text-sm leading-6 text-orange-200" style={CLAMP_TWO}>Product angle: {secondaryAngle}</p>
                         )}
                     </Link>
-                    <p className="mt-2 text-xs leading-6 text-muted-foreground">{browseSummary}</p>
                 </div>
 
                 <div className="shrink-0 text-right">
@@ -1560,31 +1633,30 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                 </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-3 gap-2">
                 <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">24h</div>
-                    <div className="mt-1 text-sm font-semibold">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Proof</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                        {directBuyerCount > 0 ? `${directBuyerCount} quotes` : `${idea.source_count} sources`}
+                    </div>
+                    <div className="mt-2 text-[10px] text-muted-foreground">{formatCountLabel(idea.post_count_total, "post")}</div>
+                </div>
+                <div className="rounded-2xl border border-white/8 p-3" style={{ background: trendTone.background, borderColor: `${trendTone.color}25` }}>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.14em]" style={{ color: trendTone.color }}>Momentum</div>
+                    <div className="mt-1 text-sm font-semibold text-white" style={CLAMP_ONE}>{trendTone.label}</div>
+                    <div className="mt-2 text-xs">
                         <ChangeDisplay value={idea.change_24h} />
                     </div>
                 </div>
                 <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">7d</div>
-                    <div className="mt-1 text-sm font-semibold">
-                        <ChangeDisplay value={idea.change_7d} />
-                    </div>
-                </div>
-                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
                     <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Volume</div>
-                    <div className="mt-1 text-sm font-semibold text-white">{formatCountLabel(idea.post_count_total, "post")}</div>
-                </div>
-                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground">Sources</div>
-                    <div className="mt-1 text-sm font-semibold text-white">{formatCountLabel(idea.source_count, "source")}</div>
+                    <div className="mt-1 text-sm font-semibold text-white">{idea.post_count_7d}</div>
+                    <div className="mt-2 text-[10px] text-muted-foreground">7d posts</div>
                 </div>
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-                {(idea.sources || []).map((source) => {
+                {(idea.sources || []).slice(0, 3).map((source) => {
                     const platform = source.platform;
                     return (
                         <span
@@ -1624,7 +1696,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                     className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-primary/25 bg-primary/10 px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-primary transition-colors hover:bg-primary/15"
                 >
                     <Zap style={{ width: 14, height: 14 }} />
-                    Validate
+                    {isGuest ? "Log in" : "Validate"}
                 </Link>
             </div>
 
@@ -2133,32 +2205,32 @@ function MarketIntelligenceSection({
 
     return (
         <div style={{ marginBottom: 24 }}>
-            <div className="surface-panel" style={{ padding: 24, borderRadius: 22 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 20, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 20 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 620 }}>
+            <div className="surface-panel" style={{ padding: 18, borderRadius: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 16 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{
-                                width: 42,
-                                height: 42,
-                                borderRadius: 14,
+                                width: 36,
+                                height: 36,
+                                borderRadius: 12,
                                 background: "rgba(249,115,22,0.12)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 border: "1px solid rgba(249,115,22,0.2)",
                             }}>
-                                <Radar style={{ width: 18, height: 18, color: "#f97316" }} />
+                                <Radar style={{ width: 16, height: 16, color: "#f97316" }} />
                             </div>
                             <div>
-                                <div style={{ fontSize: 18, color: "#f8fafc", fontWeight: 800 }}>Opportunity intelligence</div>
-                                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
-                                    Analyst-assist view on top of the opportunity board. It highlights stronger ideas without rewriting the board itself.
+                                <div style={{ fontSize: 16, color: "#f8fafc", fontWeight: 800 }}>Signals to review</div>
+                                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
+                                    Promising lanes that are not ready for the main board yet.
                                 </div>
                             </div>
                         </div>
                         {intelligence?.summary && (
-                            <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.7 }}>
-                                {intelligence.summary.emerging_wedge_count} emerging opportunit{intelligence.summary.emerging_wedge_count === 1 ? "y" : "ies"} from {intelligence.summary.new_72h_count} new idea{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
+                            <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.6 }}>
+                                {intelligence.summary.emerging_wedge_count} lane{intelligence.summary.emerging_wedge_count === 1 ? "" : "s"} to review from {intelligence.summary.new_72h_count} new idea{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
                             </div>
                         )}
                     </div>
@@ -2197,10 +2269,10 @@ function MarketIntelligenceSection({
                         display: "grid",
                         gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                         gap: 12,
-                        marginBottom: 18,
+                        marginBottom: 14,
                     }}>
-                        <DetailMetric label="Candidate ideas" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
-                        <DetailMetric label="Visible in board" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
+                        <DetailMetric label="Candidates" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
+                        <DetailMetric label="On board" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
                         <DetailMetric label="New 72h" value={intelligence.summary.new_72h_count} accent="#fbbf24" />
                         {Number(archivePostCount || 0) > 0 && (
                             <DetailMetric label="Posts analyzed" value={Number(archivePostCount || 0)} accent="#a78bfa" />
@@ -2211,8 +2283,8 @@ function MarketIntelligenceSection({
                 {loading ? (
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>Loading market intelligence...</div>
                 ) : currentRows.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, padding: "6px 2px" }}>
-                        No derived opportunities are ready in this lane right now. The board below is still updating.
+                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, padding: "4px 2px" }}>
+                        Nothing worth elevating in this lane yet.
                     </div>
                 ) : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
@@ -2413,10 +2485,9 @@ export default function StockMarketDashboard() {
 
     const visibleIdeas = filteredIdeas;
     const liveIdeaCount = Math.max(scanStatus?.ideaCount || 0, visibleIdeas.length);
-    const visibleIdeaCount = visibleIdeas.length;
-    const candidateIdeaCount = Math.max(marketIntelligence?.summary.raw_idea_count || 0, visibleIdeaCount);
     const postsInFeed = visibleIdeas.reduce((a, b) => a + b.post_count_total, 0);
     const rawPostsAnalyzed = Math.max(scanStatus?.archivePostCount || 0, scanStatus?.trackedPostCount || 0, postsInFeed);
+    const newIdeaCount = marketIntelligence?.summary.new_72h_count || 0;
     const executionMode = scanStatus?.executionMode || "local";
     const usingExternalWorker = executionMode === "external";
 
@@ -2433,9 +2504,8 @@ export default function StockMarketDashboard() {
                         }}>
                             Find ideas before you build.
                         </h1>
-                        <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 480 }}>
-                            Real startup ideas from Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
-                            Review complaints and hiring proof widen the board when those lanes are configured.
+                        <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 500 }}>
+                            Startup opportunities pulled from repeated complaints and buying signals across Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
                         </p>
                     </div>
 
@@ -2527,7 +2597,7 @@ export default function StockMarketDashboard() {
                     justifyContent: "space-between",
                 }}>
                     <span>
-                        CueIdea beta is open. Browse the live market, explore ideas, and watch trend shifts now. Log in to validate ideas, save opportunities, and personalize your workspace.
+                        Browse now. Sign in only when you want to validate, save, or personalize.
                     </span>
                     <Link
                         href="/login"
@@ -2546,7 +2616,7 @@ export default function StockMarketDashboard() {
                             whiteSpace: "nowrap",
                         }}
                     >
-                        Create free account
+                        Create account
                     </Link>
                 </div>
             )}
@@ -2631,20 +2701,16 @@ export default function StockMarketDashboard() {
 
             {/* Stats Row */}
             <div className="mb-5 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
-                <div className="min-w-[180px]"><StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" /></div>
-                <div className="min-w-[180px]"><StatCard label="Candidate ideas" value={candidateIdeaCount} icon={Radar} color="#a78bfa" subtitle="shaped from imported market data" /></div>
-                <div className="min-w-[180px]"><StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" /></div>
-                <div className="min-w-[180px]"><StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" /></div>
-                <div className="min-w-[180px]"><StatCard label="Visible in board" value={visibleIdeaCount} icon={Activity} color="#3b82f6" subtitle="opportunities shown in this view" /></div>
-                <div className="min-w-[180px]"><StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="all imported posts across sources" /></div>
+                <div className="min-w-[180px]"><StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="on the board right now" /></div>
+                <div className="min-w-[180px]"><StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="moving up this cycle" /></div>
+                <div className="min-w-[180px]"><StatCard label="New 72h" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="fresh idea clusters" /></div>
+                <div className="min-w-[180px]"><StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="raw posts behind the board" /></div>
             </div>
             <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
-                <StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="ideas worth watching right now" />
-                <StatCard label="Candidate ideas" value={candidateIdeaCount} icon={Radar} color="#a78bfa" subtitle="shaped from imported market data" />
-                <StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="ideas picking up speed" />
-                <StatCard label="Cooling off" value={trendCounts.falling} icon={TrendingDown} color="#ef4444" subtitle="ideas losing urgency" />
-                <StatCard label="Visible in board" value={visibleIdeaCount} icon={Activity} color="#3b82f6" subtitle="opportunities shown in this view" />
-                <StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="all imported posts across sources" />
+                <StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="on the board right now" />
+                <StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="moving up this cycle" />
+                <StatCard label="New 72h" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="fresh idea clusters" />
+                <StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="raw posts behind the board" />
             </div>
 
             {/* Tabs + Category Filter */}

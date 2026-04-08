@@ -168,11 +168,11 @@ export function TopBar({
 
                 <div className="hidden h-3 w-px bg-border md:block" />
 
-                <span className="topbar-metric-chip hidden items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] px-2 py-1 text-[0px] font-mono text-muted-foreground lg:inline-flex">
+                <span className="topbar-metric-chip hidden items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] px-2 py-1 font-mono text-muted-foreground lg:inline-flex">
                     <Activity className="h-3 w-3 text-primary/80" />
-                    <span className="text-[9px]">{ideaCount.toLocaleString()} ideas · {postCount.toLocaleString()} posts</span>
-                    {ideaCount.toLocaleString()} ideas discovered · {postCount.toLocaleString()} posts archived
-                    <span className="text-[9px]">{ideaCount.toLocaleString()} ideas / {postCount.toLocaleString()} posts</span>
+                    <span className="text-[9px] tabular-nums">{ideaCount.toLocaleString()} ideas</span>
+                    <span className="h-1 w-1 rounded-full bg-white/20" />
+                    <span className="text-[9px] tabular-nums">{postCount.toLocaleString()} posts</span>
                 </span>
             </div>
 
