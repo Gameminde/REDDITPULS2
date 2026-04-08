@@ -23,13 +23,13 @@ function resolvePublicOrigin(request: Request): string {
         || ""
     ).replace(/\/+$/, "");
 
-    if (envOrigin && !/localhost|0\.0\.0\.0/i.test(envOrigin)) {
-        return envOrigin;
-    }
-
     if (host && !/^0\.0\.0\.0(?::\d+)?$/i.test(host) && !/^localhost(?::\d+)?$/i.test(host)) {
         const protocol = forwardedProto || requestUrl.protocol.replace(":", "") || "http";
         return `${protocol}://${host}`;
+    }
+
+    if (envOrigin && !/localhost|0\.0\.0\.0/i.test(envOrigin)) {
+        return envOrigin;
     }
 
     if (envOrigin) {
