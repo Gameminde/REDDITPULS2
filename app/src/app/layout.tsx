@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from "react";
 import './globals.css';
+import { AuthSessionBridge } from '@/app/components/auth-session-bridge';
 import { ThreeBackgroundWrapper } from '@/app/components/ThreeBackgroundWrapper';
 import { AnalyticsTracker } from '@/lib/analytics-client';
 import { APP_DESCRIPTION, APP_NAME } from '@/lib/brand';
@@ -27,6 +28,7 @@ export default function RootLayout({
         <div className="relative z-10 w-full min-h-screen">
           <Suspense fallback={null}>
             <AnalyticsTracker />
+            <AuthSessionBridge />
           </Suspense>
           {children}
         </div>

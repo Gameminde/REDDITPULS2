@@ -1150,12 +1150,12 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                                 Opportunity board
                                             </div>
                                             <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
-                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Promote to board"}
+                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to board"}
                                             </div>
                                         </div>
                                         <div style={{ fontSize: 10, color: promoteState === "saved" ? "#dcfce7" : "#dbeafe", lineHeight: 1.5 }}>
                                             {promoteMessage || (isGuest
-                                                ? "Guest beta is read-only. Log in to save ideas into your opportunity board."
+                                                ? "Guest beta is read-only. Join the beta with Google to save ideas into your board."
                                                 : "Create a curated opportunity row without rewriting the live board.")}
                                         </div>
                                     </button>
@@ -2759,13 +2759,13 @@ export default function StockMarketDashboard() {
                                         color: "#fb923c", cursor: "pointer",
                                         fontSize: 14, fontWeight: 600,
                                     }}
-                                >
-                                    <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-                                    {scanning ? "Scanning..." : isGuest ? "Sign in to run first scan" : "Launch First Scan"}
+                                    >
+                                        <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
+                                    {scanning ? "Scanning..." : isGuest ? "Join beta to run first scan" : "Launch First Scan"}
                                 </motion.button>
                                 <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
                                     {isGuest
-                                        ? "Guest beta is read-only. Log in to unlock personal workflows."
+                                        ? "Guest beta is read-only. Join with Google to unlock personal workflows."
                                         : "Scans Reddit, HN, ProductHunt & IndieHackers for opportunities"}
                                 </div>
                             </>
@@ -2844,11 +2844,11 @@ export default function StockMarketDashboard() {
                                         }}
                                     >
                                         <Zap style={{ width: 14, height: 14, display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-                                        {scanning ? "Scanning..." : isGuest ? "Sign in to run first scan" : "Launch First Scan"}
+                                        {scanning ? "Scanning..." : isGuest ? "Join beta to run first scan" : "Launch First Scan"}
                                     </motion.button>
                                     <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
                                         {isGuest
-                                            ? "Guest beta is read-only. Log in to unlock personal workflows."
+                                            ? "Guest beta is read-only. Join with Google to unlock personal workflows."
                                             : "Scans Reddit, HN, ProductHunt & IndieHackers for opportunities"}
                                     </div>
                                 </>

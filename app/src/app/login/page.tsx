@@ -179,12 +179,12 @@ function LoginForm() {
 
                 <div className="card-glow p-8">
                     <h2 className="text-2xl font-bold mb-2 text-center">
-                        {mode === "login" ? "Welcome back" : "Create your account"}
+                        {mode === "login" ? "Welcome back" : "Join the beta"}
                     </h2>
                     <p className="text-zinc-400 text-sm text-center mb-6">
                         {mode === "login"
                             ? "Log in to your dashboard"
-                            : "Create your account and start turning raw signal into clearer opportunities"}
+                            : "Sign up with Google to join the beta and unlock your dashboard"}
                     </p>
 
                     <button
@@ -265,7 +265,7 @@ function LoginForm() {
                             data-track-scope="auth"
                             className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3 rounded-lg font-semibold transition"
                         >
-                            {loading ? "..." : mode === "login" ? "Log In" : "Create Account"}
+                            {loading ? "..." : mode === "login" ? "Log In" : "Join Beta"}
                         </button>
                     </form>
 
@@ -293,7 +293,7 @@ function LoginForm() {
                     <p className="text-sm text-center text-zinc-500 mt-6">
                         {mode === "login" ? (
                             <>
-                                No account?{" "}
+                                New here?{" "}
                                 <button
                                     onClick={() => {
                                         setMode("signup");
@@ -301,12 +301,12 @@ function LoginForm() {
                                     }}
                                     className="text-orange-400 hover:underline"
                                 >
-                                    Sign up
+                                    Join beta
                                 </button>
                             </>
                         ) : (
                             <>
-                                Already have one?{" "}
+                                Already in the beta?{" "}
                                 <button
                                     onClick={() => {
                                         setMode("login");

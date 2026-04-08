@@ -200,8 +200,8 @@ export function TopBar({
                             className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3"
                         >
                             <LogIn className="h-3 w-3" />
-                            <span className="sm:hidden">Log in</span>
-                            <span className="hidden sm:inline">Log in to unlock actions</span>
+                            <span className="sm:hidden">Join beta</span>
+                            <span className="hidden sm:inline">Join beta with Google</span>
                         </Link>
                     </>
                 ) : FEATURE_FLAGS.REDDIT_CONNECTION_LAB_ENABLED && (
