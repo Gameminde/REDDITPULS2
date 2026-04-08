@@ -23,6 +23,11 @@ export function AuthSessionBridge() {
     const searchParams = useSearchParams();
     const supabase = useMemo(() => createClient(), []);
     const handledRef = useRef(false);
+    const searchKey = searchParams.toString();
+
+    useEffect(() => {
+        handledRef.current = false;
+    }, [pathname, searchKey]);
 
     useEffect(() => {
         let cancelled = false;
@@ -40,13 +45,19 @@ export function AuthSessionBridge() {
                 return;
             }
 
-            if (oauthArtifacts) {
-                router.replace(nextPath === "/login" ? "/dashboard" : nextPath);
-                router.refresh();
+            if (pathname === "/auth/complete") {
+                window.location.replace(nextPath === "/login" ? "/dashboard" : nextPath);
                 return;
             }
 
-            router.refresh();
+            if (oauthArtifacts) {
+                window.location.replace(nextPath === "/login" ? "/dashboard" : nextPath);
+                return;
+            }
+
+            if (pathname.startsWith("/dashboard")) {
+                router.refresh();
+            }
         };
 
         void supabase.auth.getSession().then(({ data }) => {
@@ -64,7 +75,7 @@ export function AuthSessionBridge() {
             cancelled = true;
             data.subscription.unsubscribe();
         };
-    }, [pathname, router, searchParams, supabase]);
+    }, [pathname, router, searchKey, searchParams, supabase]);
 
     return null;
 }

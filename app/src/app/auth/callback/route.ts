@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { trackServerEvent } from "@/lib/analytics";
 import { sanitizeNextPath } from "@/lib/auth-redirect";
+import { getAuthCompleteHref, getBetaLoginHref } from "@/lib/beta-access";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
 type PendingCookie = {
@@ -100,7 +101,7 @@ export async function GET(request: Request) {
                 });
             }
 
-            const response = NextResponse.redirect(`${origin}${safePath}`);
+            const response = NextResponse.redirect(`${origin}${getAuthCompleteHref(safePath)}`);
             pendingCookies.forEach(({ name, value, options }) => {
                 response.cookies.set(name, value, options);
             });
@@ -108,5 +109,5 @@ export async function GET(request: Request) {
         }
     }
 
-    return NextResponse.redirect(`${origin}/login`);
+    return NextResponse.redirect(`${origin}${getBetaLoginHref(safePath)}`);
 }

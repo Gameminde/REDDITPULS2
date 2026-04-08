@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { trackClientEvent } from "@/lib/analytics-client";
+import { getBetaTargetPath } from "@/lib/beta-access";
 import { createClient } from "@/lib/supabase-browser";
 import { APP_NAME } from "@/lib/brand";
 
@@ -27,7 +28,7 @@ function LoginForm() {
     const searchParams = useSearchParams();
     const modeParam = searchParams.get("mode");
     const messageParam = searchParams.get("message");
-    const nextPath = searchParams.get("next") || "/dashboard";
+    const nextPath = getBetaTargetPath(searchParams.get("next"));
     const googleAuthEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
     const initialMode: AuthMode = modeParam === "signup" ? "signup" : "login";

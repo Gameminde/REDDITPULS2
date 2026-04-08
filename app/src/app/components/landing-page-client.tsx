@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { BrandLogo } from "@/app/components/brand-logo";
+import { getBetaLoginHref, getJoinBetaHref } from "@/lib/beta-access";
 
 export type LandingPainExample = {
     topic: string;
@@ -78,6 +79,9 @@ const FEATURE_CARDS = [
         desc: "See where existing tools frustrate users so your positioning starts sharper.",
     },
 ];
+
+const JOIN_BETA_HREF = getJoinBetaHref("/dashboard");
+const DASHBOARD_LOGIN_HREF = getBetaLoginHref("/dashboard");
 
 function formatCompact(value: number) {
     return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
@@ -323,7 +327,7 @@ export default function LandingPageClient({
                     </div>
 
                     <Link
-                        href="/login?mode=signup&next=/dashboard"
+                        href={JOIN_BETA_HREF}
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_28px_rgba(255,90,31,0.26)] transition hover:-translate-y-0.5"
                         data-track-event="open_beta_nav_click"
                         data-track-scope="marketing"
@@ -406,7 +410,7 @@ export default function LandingPageClient({
                         className="mt-10 flex flex-col items-center gap-3 sm:flex-row"
                     >
                         <Link
-                            href="/login?mode=signup&next=/dashboard"
+                            href={JOIN_BETA_HREF}
                             className="inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-bold text-white shadow-[0_0_45px_rgba(255,90,31,0.32)] transition hover:-translate-y-0.5"
                             data-track-event="open_beta_hero_click"
                             data-track-scope="marketing"
@@ -692,7 +696,7 @@ export default function LandingPageClient({
 
                             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
                                 <Link
-                                    href="/login?mode=signup&next=/dashboard"
+                                    href={JOIN_BETA_HREF}
                                     className="inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-bold text-white shadow-[0_0_45px_rgba(255,90,31,0.32)] transition hover:-translate-y-0.5"
                                     data-track-event="open_beta_footer_click"
                                     data-track-scope="marketing"
@@ -722,7 +726,7 @@ export default function LandingPageClient({
                     <div className="flex flex-wrap items-center gap-4">
                         <Link href="/pricing" className="transition-colors hover:text-white">Pricing</Link>
                         <Link href="/how-it-works" className="transition-colors hover:text-white">How it works</Link>
-                        <Link href="/login" className="transition-colors hover:text-white">Login</Link>
+                        <Link href={DASHBOARD_LOGIN_HREF} className="transition-colors hover:text-white">Login</Link>
                     </div>
                 </div>
             </footer>

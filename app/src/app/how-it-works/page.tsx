@@ -2,6 +2,9 @@ import Link from "next/link";
 
 import { BrandLogo } from "@/app/components/brand-logo";
 import { HowItWorksContent } from "@/app/components/how-it-works-content";
+import { getBetaLoginHref } from "@/lib/beta-access";
+
+const DASHBOARD_LOGIN_HREF = getBetaLoginHref("/dashboard");
 
 export default function HowItWorksPage() {
     return (
@@ -29,7 +32,7 @@ export default function HowItWorksPage() {
                         <Link href="/pricing" className="text-muted-foreground hover:text-white transition-colors">
                             Pricing
                         </Link>
-                        <Link href="/login" className="text-white hover:text-primary transition-colors">
+                        <Link href={DASHBOARD_LOGIN_HREF} className="text-white hover:text-primary transition-colors">
                             Sign in
                         </Link>
                     </div>

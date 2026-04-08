@@ -25,6 +25,7 @@ import {
     summarizeReasonForUser,
 } from "@/lib/user-facing-copy";
 import { useDashboardViewer } from "./viewer-context";
+import { getJoinBetaHref } from "@/lib/beta-access";
 
 interface Idea {
     id: string;
@@ -229,7 +230,7 @@ const CATEGORIES = [
     { key: "data", label: "Data" },
 ];
 
-const BETA_AUTH_HREF = "/login?mode=signup&next=/dashboard";
+const BETA_AUTH_HREF = getJoinBetaHref("/dashboard");
 
 const CONFIDENCE_MAP: Record<string, { label: string; color: string; icon: string }> = {
     INSUFFICIENT: { label: "Needs data", color: "#6b7280", icon: "🔍" },

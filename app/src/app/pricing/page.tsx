@@ -2,7 +2,10 @@ import Link from "next/link";
 
 import { BrandLogo } from "@/app/components/brand-logo";
 import { PricingContent } from "@/app/components/pricing-content";
+import { getBetaLoginHref } from "@/lib/beta-access";
 import { APP_NAME } from "@/lib/brand";
+
+const DASHBOARD_LOGIN_HREF = getBetaLoginHref("/dashboard");
 
 export default function PublicPricingPage() {
     return (
@@ -37,7 +40,7 @@ export default function PublicPricingPage() {
                             How it works
                         </Link>
                         <Link
-                            href="/login"
+                            href={DASHBOARD_LOGIN_HREF}
                             className="text-white hover:text-primary transition-colors"
                             data-track-event="pricing_signin_click"
                             data-track-scope="marketing"

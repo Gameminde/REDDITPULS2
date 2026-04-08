@@ -18,7 +18,9 @@ import {
     TrendingUp,
 } from "lucide-react";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
-import { BETA_FULL_ACCESS } from "@/lib/beta-access";
+import { BETA_FULL_ACCESS, getBetaLoginHref, getJoinBetaHref } from "@/lib/beta-access";
+
+const DASHBOARD_LOGIN_HREF = getBetaLoginHref("/dashboard");
 
 interface DockNavItem {
     name: string;
@@ -94,7 +96,7 @@ export function Dock({
     const mobileDockItems = mobileItems.map((item) => {
         const guestAllowed = item.path === "/dashboard" || item.path === "/dashboard/explore";
         if (isGuest && !guestAllowed) {
-            return { ...item, path: "/login", exact: false };
+            return { ...item, path: getJoinBetaHref(item.path), exact: false };
         }
         return item;
     });
@@ -301,7 +303,7 @@ export function Dock({
 
                 {isGuest ? (
                     <Link
-                        href="/login"
+                        href={DASHBOARD_LOGIN_HREF}
                         className="relative flex flex-col items-center gap-1 rounded-xl px-2.5 py-1.5 min-w-[50px] transition-all duration-150 text-[10px] tracking-wider text-primary"
                         style={{ background: "hsl(16 100% 50% / 0.1)", border: "1px solid hsl(16 100% 50% / 0.16)" }}
                     >

@@ -23,6 +23,7 @@ import {
 
 import { StaggerContainer, StaggerItem } from "@/app/components/motion";
 import { APP_NAME } from "@/lib/brand";
+import { getBetaLoginHref, getJoinBetaHref } from "@/lib/beta-access";
 import { PRICING } from "@/lib/pricing-plans";
 
 type Availability = "free" | "starter" | "pro";
@@ -122,6 +123,9 @@ const PRO_FEATURES = [
     "WTP detection and competitor radar",
     "Source intelligence and in-app digest",
 ];
+
+const LOGIN_TO_APP_HREF = getBetaLoginHref("/dashboard");
+const JOIN_BETA_HREF = getJoinBetaHref("/dashboard");
 
 function availabilityFor(plan: "free" | "starter" | "pro", row: FeatureRow) {
     if (plan === "pro") return true;
@@ -239,7 +243,7 @@ export function PricingContent() {
                     subtitle="Use the live feed and post explorer to see what the market is saying before you commit."
                     points={FREE_FEATURES}
                     cta="Open the app"
-                    href="/login"
+                    href={LOGIN_TO_APP_HREF}
                 />
                 <PlanCard
                     title={PRICING.starter.name}
@@ -247,7 +251,7 @@ export function PricingContent() {
                     subtitle="The core workflow for a solo founder: market intelligence, validation depth, and saved follow-up."
                     points={STARTER_FEATURES}
                     cta={`Start ${PRICING.trialDays}-day free trial`}
-                    href="/login?mode=signup"
+                    href={JOIN_BETA_HREF}
                 />
                 <PlanCard
                     title={PRICING.pro.name}
@@ -255,7 +259,7 @@ export function PricingContent() {
                     subtitle="Everything unlocked. This is the full intelligence layer when you want CueIdea in your weekly operating system."
                     points={PRO_FEATURES}
                     cta={`Start ${PRICING.trialDays}-day free trial`}
-                    href="/login?mode=signup"
+                    href={JOIN_BETA_HREF}
                     featured
                     badge="Most Popular"
                     accent="#f97316"

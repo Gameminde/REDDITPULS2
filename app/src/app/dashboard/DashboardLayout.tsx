@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { Dock } from "./components/Dock";
 import { TopBar } from "./components/TopBar";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
-import { createClient } from "@/lib/supabase-browser";
 import { DashboardViewerProvider } from "./viewer-context";
 
 export function DashboardLayout({
@@ -24,38 +23,6 @@ export function DashboardLayout({
     const [postCount, setPostCount] = useState(0);
     const [modelCount, setModelCount] = useState(0);
     const [alertCount, setAlertCount] = useState(0);
-
-    useEffect(() => {
-        if (!isGuest || typeof window === "undefined") return;
-
-        const supabase = createClient();
-        let cancelled = false;
-        let refreshed = false;
-
-        const refreshIntoAuthenticatedState = () => {
-            if (cancelled || refreshed) return;
-            refreshed = true;
-            window.location.reload();
-        };
-
-        void supabase.auth.getSession().then(({ data }) => {
-            if (data.session) {
-                refreshIntoAuthenticatedState();
-            }
-        });
-
-        const { data } = supabase.auth.onAuthStateChange((event, session) => {
-            if (!session) return;
-            if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
-                refreshIntoAuthenticatedState();
-            }
-        });
-
-        return () => {
-            cancelled = true;
-            data.subscription.unsubscribe();
-        };
-    }, [isGuest]);
 
     useEffect(() => {
         const refreshMarketSummary = () => {

@@ -5,8 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CheckCircle2, ChevronDown, LoaderCircle, LogIn, PlugZap, RefreshCw, Settings } from "lucide-react";
 import { BrandLogo } from "@/app/components/brand-logo";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
-import { BETA_FULL_ACCESS } from "@/lib/beta-access";
+import { BETA_FULL_ACCESS, getJoinBetaHref } from "@/lib/beta-access";
 import type { RedditConnectionSummary, RedditSourcePack } from "@/lib/reddit-lab";
+
+const JOIN_BETA_HREF = getJoinBetaHref("/dashboard");
 
 type RedditLabTopbarState = {
     oauth_configured: boolean;
@@ -203,7 +205,7 @@ export function TopBar({
                             Pricing
                         </Link>
                         <Link
-                            href="/login?mode=signup&next=/dashboard"
+                            href={JOIN_BETA_HREF}
                             className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3"
                         >
                             <LogIn className="h-3 w-3" />
