@@ -446,6 +446,8 @@ def run_keyword_scan(
     min_keyword_matches: int = 2,
     idea_text: str = "",
     icp_category: str = "",
+    subreddit_cap: int | None = None,
+    enable_historical_backfill: bool = True,
     return_metadata: bool = False,
 ):
     """
@@ -493,6 +495,8 @@ def run_keyword_scan(
     except TypeError:
         selected_subs = _select_subreddits(keywords, forced_subreddits=forced_subreddits)
     selected_subs = filter_subreddits_by_icp(selected_subs, icp_category)
+    if subreddit_cap:
+        selected_subs = selected_subs[:max(1, int(subreddit_cap))]
 
     # ── Phase 1: Global Reddit search ──
     if on_progress:
@@ -584,6 +588,8 @@ def run_keyword_scan(
         )
         if dynamic_discovered_subs:
             selected_subs = list(dict.fromkeys(selected_subs + dynamic_discovered_subs))
+            if subreddit_cap:
+                selected_subs = selected_subs[:max(1, int(subreddit_cap))]
             print(f"    [Discovery] Added dynamic subreddits: {dynamic_discovered_subs}")
 
     # ── Phase 2: Subreddit-specific searches ──
@@ -666,37 +672,38 @@ def run_keyword_scan(
                 time.sleep(2.5)
 
     # ── Phase 2.5: PullPush.io historical backfill ──
-    if on_progress:
-        on_progress(len(all_posts), "Fetching historical data (PullPush)...")
-
-    try:
-        from pullpush_scraper import scrape_historical
-        query = " ".join(keywords[:3])  # Top 3 keywords for historical search
-        for sub in selected_subs[:12]:  # Top 12 selected subs for historical depth
-            if time.time() - start_time > max_seconds:
-                break
-            pp_posts = scrape_historical(sub, keyword=query, days_back=90, size=50)
-            new_count = 0
-            for post_data in pp_posts:
-                eid = post_data.get("external_id", "")
-                if eid and eid not in seen_ids:
-                    text_lower = post_data.get("full_text", "").lower()
-                    matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
-                    if len(matched_kw) >= max(1, min_keyword_matches):
-                        seen_ids.add(eid)
-                        post_data["id"] = eid
-                        post_data["matched_keywords"] = matched_kw
-                        post_data["selftext"] = post_data.get("body", "")
-                        all_posts.append(post_data)
-                        new_count += 1
-            if new_count > 0:
-                print(f"    [PP] r/{sub}: +{new_count} historical posts")
-            time.sleep(0.5)
-
+    if enable_historical_backfill:
         if on_progress:
-            on_progress(len(all_posts), f"Historical backfill done: {len(all_posts)} posts")
-    except Exception as e:
-        print(f"    [!] PullPush backfill skipped: {e}")
+            on_progress(len(all_posts), "Fetching historical data (PullPush)...")
+
+        try:
+            from pullpush_scraper import scrape_historical
+            query = " ".join(keywords[:3])  # Top 3 keywords for historical search
+            for sub in selected_subs[:12]:  # Top 12 selected subs for historical depth
+                if time.time() - start_time > max_seconds:
+                    break
+                pp_posts = scrape_historical(sub, keyword=query, days_back=90, size=50)
+                new_count = 0
+                for post_data in pp_posts:
+                    eid = post_data.get("external_id", "")
+                    if eid and eid not in seen_ids:
+                        text_lower = post_data.get("full_text", "").lower()
+                        matched_kw = [kw for kw in keywords if _keyword_matches(kw, text_lower)]
+                        if len(matched_kw) >= max(1, min_keyword_matches):
+                            seen_ids.add(eid)
+                            post_data["id"] = eid
+                            post_data["matched_keywords"] = matched_kw
+                            post_data["selftext"] = post_data.get("body", "")
+                            all_posts.append(post_data)
+                            new_count += 1
+                if new_count > 0:
+                    print(f"    [PP] r/{sub}: +{new_count} historical posts")
+                time.sleep(0.5)
+
+            if on_progress:
+                on_progress(len(all_posts), f"Historical backfill done: {len(all_posts)} posts")
+        except Exception as e:
+            print(f"    [!] PullPush backfill skipped: {e}")
 
     # ── Phase 3: If long scan, keep polling for new posts ──
     if max_seconds > 600:

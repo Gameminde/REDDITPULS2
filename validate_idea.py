@@ -816,9 +816,8 @@ ICP_TRIGGER_MAP = {
         "employee", "workforce", "hris", "ats",
     ],
     "B2B_CONSTRUCTION": [
-        "construction", "contractor", "builder", "project manager",
-        "field service", "subcontractor", "gc", "jobsite",
-        "building", "civil engineering",
+        "construction", "contractor", "home builder", "general contractor",
+        "subcontractor", "jobsite", "civil engineering", "foreman", "estimator",
     ],
     "B2B_FINANCE": [
         "accounting", "bookkeeping", "invoice", "payroll",
@@ -1876,10 +1875,12 @@ def phase2_scrape(
     reddit_lab_context = _sanitize_reddit_lab_context(reddit_lab_raw)
     idea_icp = classify_icp(idea_text, audience, formal_keywords)
     required_subreddits = _route_forced_subreddits(idea_icp, required_subreddits)
+    occupation_limit = 2 if depth_config.get("mode") == "quick" else 6
     required_subreddits, occupation_match = _augment_subreddits_with_occupation_map(
         idea_text,
         audience,
         required_subreddits,
+        limit=occupation_limit,
     )
     required_subreddits = [
         str(sub).strip().replace("r/", "").replace("/r/", "")
@@ -1950,6 +1951,8 @@ def phase2_scrape(
                 min_keyword_matches=reddit_min_matches,
                 idea_text=idea_text,
                 icp_category=idea_icp,
+                subreddit_cap=depth_config.get("subreddit_cap"),
+                enable_historical_backfill=False,
                 return_metadata=True,
             )
             
@@ -2010,6 +2013,8 @@ def phase2_scrape(
             min_keyword_matches=reddit_min_matches,
             idea_text=idea_text,
             icp_category=idea_icp,
+            subreddit_cap=depth_config.get("subreddit_cap"),
+            enable_historical_backfill=False,
             return_metadata=True,
         )
         if isinstance(reddit_result, dict):
@@ -2068,15 +2073,23 @@ def phase2_scrape(
     comment_subreddits = list(dict.fromkeys(
         list(scrape_audit.get("discovered_subreddits", [])) + list(required_subreddits)
     ))[:12]
-    reddit_comment_posts = _fetch_reddit_comment_posts(
-        comment_subreddits,
-        reddit_keywords[:6],
-        idea_icp,
-        timeout_seconds=45 if mode in ("deep", "investigation") else 20,
-        max_posts=80 if mode in ("deep", "investigation") else 40,
-        days_back=90 if idea_icp in LOW_VOLUME_ICPS else 30,
-        seed_posts=reddit_posts,
-    )
+    if mode == "quick":
+        reddit_comment_posts = _fetch_live_reddit_comment_posts(
+            reddit_posts,
+            reddit_keywords[:4],
+            timeout_seconds=8,
+            max_posts=12,
+        )
+    else:
+        reddit_comment_posts = _fetch_reddit_comment_posts(
+            comment_subreddits,
+            reddit_keywords[:6],
+            idea_icp,
+            timeout_seconds=45 if mode in ("deep", "investigation") else 20,
+            max_posts=80 if mode in ("deep", "investigation") else 40,
+            days_back=90 if idea_icp in LOW_VOLUME_ICPS else 30,
+            seed_posts=reddit_posts,
+        )
     source_counts["reddit_comment"] = len(reddit_comment_posts)
     if reddit_comment_posts:
         print(f"  [✓] Reddit Comments: {len(reddit_comment_posts)} posts")
@@ -2088,7 +2101,8 @@ def phase2_scrape(
         "message": f"Reddit comments: {len(reddit_comment_posts)} matching discussions",
     })
 
-    g2_posts = _fetch_g2_review_posts(idea_icp, known_competitors or [], timeout_seconds=60)
+    g2_timeout = 20 if mode == "quick" else 60
+    g2_posts = _fetch_g2_review_posts(idea_icp, known_competitors or [], timeout_seconds=g2_timeout)
     source_counts["g2_review"] = len(g2_posts)
     if g2_posts:
         print(f"  [✓] G2 Reviews: {len(g2_posts)} posts")
@@ -2100,7 +2114,12 @@ def phase2_scrape(
         "message": f"G2: {len(g2_posts)} review complaints found",
     })
 
-    job_posts = _fetch_adzuna_job_posts(scrape_keywords[:5], idea_icp, timeout_seconds=30, max_posts=50)
+    job_posts = _fetch_adzuna_job_posts(
+        scrape_keywords[:4] if mode == "quick" else scrape_keywords[:5],
+        idea_icp,
+        timeout_seconds=15 if mode == "quick" else 30,
+        max_posts=20 if mode == "quick" else 50,
+    )
     source_counts["job_posting"] = len(job_posts)
     log_progress(validation_id, {
         "phase": "scraping",
@@ -2109,7 +2128,12 @@ def phase2_scrape(
         "message": f"Jobs: {len(job_posts)} relevant postings found",
     })
 
-    vendor_blog_posts = _fetch_vendor_blog_posts(idea_icp, idea_text, scrape_keywords[:5], max_posts=20)
+    vendor_blog_posts = _fetch_vendor_blog_posts(
+        idea_icp,
+        idea_text,
+        scrape_keywords[:4] if mode == "quick" else scrape_keywords[:5],
+        max_posts=8 if mode == "quick" else 20,
+    )
     source_counts["vendor_blog"] = len(vendor_blog_posts)
     log_progress(validation_id, {
         "phase": "scraping",
@@ -2323,7 +2347,7 @@ def phase2_scrape(
         history_keywords,
         required_subreddits=required_subreddits,
         days_back=30,
-        max_posts=120 if mode in ("deep", "investigation") else 60,
+        max_posts=120 if mode in ("deep", "investigation") else 24,
     )
     scrape_audit["db_history_posts"] = len(db_history_posts)
     print(f"  [DB] Recent history: {len(db_history_posts)} posts from the last 30 days")

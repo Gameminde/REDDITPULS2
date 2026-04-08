@@ -23,7 +23,7 @@ DATASET_PATH = os.path.join(
 OCCUPATION_ALIASES = {
     "hr": ["human resources", "people ops", "recruiting", "recruiter", "hr generalist", "talent"],
     "finance": ["accounting", "bookkeeping", "controller", "cfo", "finance team", "payroll"],
-    "construction": ["construction", "contractor", "builder", "project manager", "estimator", "foreman"],
+    "construction": ["construction", "contractor", "home builder", "general contractor", "estimator", "foreman"],
     "legal": ["lawyer", "attorney", "paralegal", "law firm", "legal ops", "compliance"],
     "marketing": ["marketing", "growth", "seo", "content marketer", "campaign manager", "demand gen"],
     "sales": ["sales", "account executive", "bdr", "sdr", "revops", "revenue operations"],
@@ -138,4 +138,3 @@ def infer_occupation_subreddits(audience_text: str, idea_text: str = "", limit: 
         ],
         "subreddits": ordered_subs,
     }
-
