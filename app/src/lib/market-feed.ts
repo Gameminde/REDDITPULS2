@@ -19,8 +19,11 @@ import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market
 import {
     getPublicOpportunityTitle,
     getSafePublicSummary,
-    isPublicOpportunityEligible,
 } from "@/lib/public-idea-eligibility";
+import {
+    resolveMarketVisibilityDecision,
+    type MarketVisibilityDecision,
+} from "@/lib/market-visibility";
 import { buildOpportunityTrust, normalizeSources } from "@/lib/trust";
 
 export type MarketKind =
@@ -67,6 +70,7 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     public_browse_eligible: boolean;
     market_editorial: MarketEditorialPayload | null;
     market_editorial_updated_at: string | null;
+    visibility_decision: MarketVisibilityDecision;
 }
 
 const SHARE_THREAD_PATTERNS = [
@@ -388,14 +392,31 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
     const suggestedWedgeLabel = presentation.shape_status === "derived"
         ? presentation.display_topic
         : null;
+    const shouldHardSuppressFromPresentation = presentation.suppress_from_market
+        && presentation.suppress_reason !== "Broad theme still needs a wedge";
+
+    const normalizedClassification = shouldHardSuppressFromPresentation
+        ? {
+            ...classification,
+            market_status: "suppressed" as const,
+            suppression_reason: presentation.suppress_reason || classification.suppression_reason,
+        }
+        : presentation.shape_status === "derived" && classification.market_status === "needs_wedge"
+            ? {
+                ...classification,
+                market_status: "visible" as const,
+                suppression_reason: null,
+            }
+            : classification;
     const freshness = isFreshCandidate({
         firstSeen: String(idea.first_seen || ""),
-        marketStatus: classification.market_status,
+        marketStatus: normalizedClassification.market_status,
         sourceCount: Number(idea.source_count || normalizedSources.length || 0),
         signalContract,
     });
+
     const boardState = getBoardEligibility({
-        marketStatus: classification.market_status,
+        marketStatus: normalizedClassification.market_status,
         topic: String(idea.topic || ""),
         postCount7d: Number(idea.post_count_7d || 0),
         signalContract,
@@ -426,9 +447,9 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         direct_vs_inferred: evidenceSummary.direct_vs_inferred,
         strategy_preview: buildOpportunityStrategyPreview(strategy),
         suggested_wedge_label: suggestedWedgeLabel,
-        market_kind: classification.market_kind,
-        market_status: classification.market_status,
-        suppression_reason: classification.suppression_reason,
+        market_kind: normalizedClassification.market_kind,
+        market_status: normalizedClassification.market_status,
+        suppression_reason: normalizedClassification.suppression_reason,
         fresh_candidate: freshness,
         board_eligible: boardState.boardEligible,
         board_stale_reason: boardState.boardStaleReason,
@@ -440,6 +461,13 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         public_browse_eligible: false,
         market_editorial: parsedMarketEditorial,
         market_editorial_updated_at: typeof idea.market_editorial_updated_at === "string" ? idea.market_editorial_updated_at : null,
+        visibility_decision: {
+            status: "hidden",
+            reason: "weak_proof",
+            decided_by: "heuristic",
+            confidence_band: "low",
+            updated_at: typeof idea.last_updated === "string" ? idea.last_updated : null,
+        },
     } satisfies Omit<MarketHydratedIdea, "market_hint">;
 
     const withHint = {
@@ -452,6 +480,15 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
     const approvedEditorial = getVisibleMarketEditorial(parsedMarketEditorial);
     const public_product_angle = getVisibleMarketEditorialProductAngle(parsedMarketEditorial);
 
+    const visibilityDecision = resolveMarketVisibilityDecision({
+        ...withHint,
+        suggested_wedge_label: public_title || withHint.suggested_wedge_label,
+        pain_summary: public_summary || withHint.pain_summary,
+        suppression_reason: withHint.suppression_reason,
+        market_editorial_updated_at: withHint.market_editorial_updated_at,
+        last_updated: typeof idea.last_updated === "string" ? idea.last_updated : null,
+    });
+
     return {
         ...withHint,
         public_title,
@@ -459,11 +496,8 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         public_verdict: approvedEditorial?.verdict || "",
         public_next_step: approvedEditorial?.next_step || "",
         public_product_angle,
-        public_browse_eligible: isPublicOpportunityEligible({
-            ...withHint,
-            suggested_wedge_label: public_title || withHint.suggested_wedge_label,
-            pain_summary: public_summary || withHint.pain_summary,
-        }),
+        public_browse_eligible: visibilityDecision.status === "visible",
+        visibility_decision: visibilityDecision,
     };
 }
 
@@ -472,8 +506,8 @@ export function shouldIncludeMarketIdea(
     includeExploratory = false,
     surface: "user" | "admin" = "user",
 ) {
-    if (idea.market_status === "suppressed") return false;
-    if (surface === "user" && !idea.public_browse_eligible) return false;
+    if (surface === "user" && idea.visibility_decision.status !== "visible") return false;
+    if (surface === "admin" && idea.market_status === "suppressed") return false;
     if (includeExploratory) return true;
     return !shouldSuppressOpportunityIdeaCard({
         signalContract: idea.signal_contract,

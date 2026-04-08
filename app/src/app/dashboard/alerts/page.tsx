@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Bell, BellRing, ChevronDown, ChevronUp, ExternalLink, PauseCircle } from "lucide-react";
+import { ValidationDepthChooser } from "@/app/dashboard/components/ValidationDepthChooser";
 
 interface AlertMatch {
     id: string;
@@ -74,7 +74,6 @@ function trustTone(level?: "HIGH" | "MEDIUM" | "LOW") {
 }
 
 export default function AlertsPage() {
-    const router = useRouter();
     const [alerts, setAlerts] = useState<PainAlert[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -120,11 +119,6 @@ export default function AlertsPage() {
                 : alert
         )));
         setUnreadCount((count) => Math.max(0, count - (alerts.find((alert) => alert.id === alertId)?.matches.length || 0)));
-    };
-
-    const validateAngle = (match: AlertMatch) => {
-        const prefill = `Angle from live signal: ${match.post_title}\n\nSource: r/${match.subreddit}\nScore: ${match.post_score}\nKeywords: ${match.matched_keywords.join(", ")}`;
-        router.push(`/dashboard/validate?idea=${encodeURIComponent(prefill)}`);
     };
 
     if (loading) {
@@ -299,12 +293,17 @@ export default function AlertsPage() {
                                                             >
                                                                 View Post <ExternalLink className="w-3.5 h-3.5" />
                                                             </a>
-                                                            <button
-                                                                onClick={() => validateAngle(match)}
-                                                                className="px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-xs font-mono text-primary"
+                                                            <ValidationDepthChooser
+                                                                prefill={{
+                                                                    idea: `Angle from live signal: ${match.post_title}`,
+                                                                    target: match.subreddit ? `People active in r/${match.subreddit}` : "People discussing this live signal",
+                                                                    pain: `Source signal scored ${match.post_score} and matched: ${match.matched_keywords.join(", ")}.`,
+                                                                }}
                                                             >
-                                                                Validate This Angle
-                                                            </button>
+                                                                <span className="px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-xs font-mono text-primary">
+                                                                    Validate This Angle
+                                                                </span>
+                                                            </ValidationDepthChooser>
                                                         </div>
                                                     </div>
                                                 </div>

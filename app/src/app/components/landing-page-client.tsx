@@ -48,35 +48,35 @@ export type LandingStats = {
 };
 
 const SOURCE_LANES = [
-    { key: "reddit", name: "Reddit", detail: "Founder complaints, buyer pain, workaround threads, and willingness-to-pay language." },
-    { key: "hackernews", name: "Hacker News", detail: "Launch discussion, dev skepticism, replacement chatter, and technical demand." },
-    { key: "producthunt", name: "Product Hunt", detail: "New launches, positioning shifts, and audience reactions around fresh categories." },
-    { key: "indiehackers", name: "Indie Hackers", detail: "Operator pain, founder experiments, and build-in-public workflow signals." },
-    { key: "githubissues", name: "GitHub Issues", detail: "Open issues, feature requests, and friction from tools teams already rely on." },
-    { key: "g2_review", name: "Review complaints", detail: "Buyer-native frustration and competitor weakness after teams have already paid." },
-    { key: "job_posting", name: "Hiring signals", detail: "Budget, urgency, and team demand when companies hire around a workflow." },
+    { key: "reddit", name: "Reddit", detail: "Complaints, workarounds, buyer language." },
+    { key: "hackernews", name: "Hacker News", detail: "Launch reaction and dev demand." },
+    { key: "producthunt", name: "Product Hunt", detail: "New launches and audience response." },
+    { key: "indiehackers", name: "Indie Hackers", detail: "Operator pain and build-in-public signal." },
+    { key: "githubissues", name: "GitHub Issues", detail: "Feature requests and tool friction." },
+    { key: "g2_review", name: "Review complaints", detail: "Paid-user frustration and competitor weakness." },
+    { key: "job_posting", name: "Hiring signals", detail: "Budget and urgency around a workflow." },
 ];
 
 const FEATURE_CARDS = [
     {
         icon: Search,
-        title: "Browse real complaints",
-        desc: "Read the frustration behind each opportunity instead of guessing from trend charts.",
+        title: "See the complaint",
+        desc: "Start from the real pain, not a guess.",
     },
     {
         icon: Activity,
-        title: "Find repeated pain",
-        desc: "CueIdea groups recurring workflow pain so the same problem stops looking like random noise.",
+        title: "See the pattern",
+        desc: "Repeated pain turns into one opportunity.",
     },
     {
         icon: CheckCircle2,
-        title: "Validate before building",
-        desc: "Check buyer pain, competition, timing, and next move before you commit roadmap time.",
+        title: "Validate fast",
+        desc: "Check proof before you commit.",
     },
     {
         icon: Shield,
-        title: "Spot competitor gaps",
-        desc: "See where existing tools frustrate users so your positioning starts sharper.",
+        title: "See the gap",
+        desc: "Find where current tools fail.",
     },
 ];
 
@@ -371,7 +371,7 @@ export default function LandingPageClient({
                     >
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-primary/95">
-                            Live - scanning 5 source types right now
+                            Live - public signals
                         </span>
                     </motion.div>
 
@@ -385,13 +385,9 @@ export default function LandingPageClient({
                             className="leading-[0.92] tracking-[-0.06em] text-white"
                             style={{ fontFamily: "\"Space Grotesk\", var(--font-display)", fontSize: "clamp(3rem, 8vw, 7.25rem)", fontWeight: 800 }}
                         >
-                            <span className="block">Build what startup</span>
-                            <span className="block">customers are</span>
-                            <span className="block text-primary">already asking for.</span>
+                            <span className="block">See startup demand</span>
+                            <span className="block text-primary">before you build.</span>
                         </h1>
-                        <p className="mt-4 text-[clamp(1.15rem,2vw,1.8rem)] font-semibold tracking-[-0.04em] text-white/24">
-                            Not stocks, not crypto, not trading.
-                        </p>
                     </motion.div>
 
                     <motion.p
@@ -400,7 +396,7 @@ export default function LandingPageClient({
                         transition={{ delay: 0.35 }}
                         className="mt-8 max-w-[760px] text-base leading-8 text-white/45 md:text-lg"
                     >
-                        CueIdea watches where real people complain - Reddit, Hacker News, GitHub Issues, Product Hunt, and Indie Hackers - then turns repeated pain into startup ideas you can inspect and validate before you build.
+                        CueIdea turns repeated public pain into startup opportunities you can inspect and validate.
                     </motion.p>
 
                     <motion.div
@@ -422,7 +418,7 @@ export default function LandingPageClient({
                             href="#examples"
                             className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/10 px-6 text-sm font-semibold text-white/65 transition hover:border-white/16 hover:text-white"
                         >
-                            See live ideas
+                            See the radar
                             <ArrowRight className="h-3.5 w-3.5" />
                         </a>
                     </motion.div>
@@ -434,7 +430,7 @@ export default function LandingPageClient({
                         className="mt-14 w-full max-w-4xl"
                     >
                         <p className="mb-4 text-center text-[10px] uppercase tracking-[0.24em] text-white/18">
-                            Scanning complaints from
+                            Watching
                         </p>
                         <Marquee />
                     </motion.div>
@@ -443,10 +439,10 @@ export default function LandingPageClient({
                 <section className="relative z-10 px-4 py-16 sm:px-6 lg:px-8">
                     <div className="mx-auto grid max-w-5xl grid-cols-2 gap-3 md:grid-cols-4">
                         {[
-                            { label: "Ideas found", value: stats.rawIdeas },
-                            { label: "Posts collected", value: stats.evidencePosts },
-                            { label: "Live examples", value: painExamples.length },
-                            { label: "Sources watched", value: SOURCE_LANES.length },
+                            { label: "Ideas", value: stats.rawIdeas },
+                            { label: "Posts", value: stats.evidencePosts },
+                            { label: "Examples", value: painExamples.length },
+                            { label: "Sources", value: SOURCE_LANES.length },
                         ].map((stat, index) => (
                             <motion.div
                                 key={stat.label}
@@ -481,9 +477,9 @@ export default function LandingPageClient({
                                 className="text-4xl font-black leading-[0.95] tracking-[-0.06em] text-white md:text-6xl"
                                 style={{ fontFamily: "\"Space Grotesk\", var(--font-display)" }}
                             >
-                                From noise
+                                Pain to
                                 <br />
-                                to opportunity.
+                                product angle.
                             </h2>
                         </motion.div>
 
@@ -511,9 +507,9 @@ export default function LandingPageClient({
                                 className="text-4xl font-black leading-[0.96] tracking-[-0.05em] text-white md:text-6xl"
                                 style={{ fontFamily: "\"Space Grotesk\", var(--font-display)" }}
                             >
-                                Built to find
+                                Built for
                                 <br />
-                                signal fast.
+                                fast conviction.
                             </h2>
                         </motion.div>
 
@@ -527,9 +523,9 @@ export default function LandingPageClient({
                                 <div className="mb-6 flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/14 text-primary">
                                     <Radar className="h-5 w-5" />
                                 </div>
-                                <h3 className="text-[1.35rem] font-bold text-white">Watch live complaints</h3>
+                                <h3 className="text-[1.35rem] font-bold text-white">Watch live pain</h3>
                                 <p className="mt-3 max-w-[20rem] text-sm leading-7 text-white/45">
-                                    CueIdea monitors public communities where founders, operators, and buyers already talk about broken workflows in real time.
+                                    Track real workflow pain across public sources.
                                 </p>
 
                                 <div className="mt-8 flex flex-wrap gap-2">
@@ -575,11 +571,11 @@ export default function LandingPageClient({
                                     className="text-4xl font-black leading-[0.96] tracking-[-0.05em] text-white md:text-6xl"
                                     style={{ fontFamily: "\"Space Grotesk\", var(--font-display)" }}
                                 >
-                                    Live from the app.
+                                    Recent signals.
                                 </h2>
                             </div>
                             <Link href="/dashboard" className="hidden items-center gap-2 text-sm font-semibold text-white/40 transition-colors hover:text-white md:inline-flex">
-                                Open board
+                                Open radar
                                 <ArrowRight className="h-3.5 w-3.5" />
                             </Link>
                         </div>
@@ -607,7 +603,7 @@ export default function LandingPageClient({
                                         </span>
                                         <h3 className="mt-2 truncate text-base font-bold text-white md:text-lg">{idea.wedge}</h3>
                                         <p className="mt-1 text-sm text-white/32">
-                                            Opportunity found from {idea.topic.toLowerCase()} conversations.
+                                            From {idea.topic.toLowerCase()} conversations.
                                         </p>
                                     </div>
 
@@ -644,9 +640,9 @@ export default function LandingPageClient({
                                 className="text-4xl font-black leading-[0.96] tracking-[-0.05em] text-white md:text-6xl"
                                 style={{ fontFamily: "\"Space Grotesk\", var(--font-display)" }}
                             >
-                                Built from real
+                                Where the
                                 <br />
-                                founder-side data.
+                                signal comes from.
                             </h2>
                         </motion.div>
 
@@ -686,12 +682,12 @@ export default function LandingPageClient({
                                 className="text-4xl font-black leading-[0.94] tracking-[-0.05em] text-white md:text-6xl"
                                 style={{ fontFamily: "\"Space Grotesk\", var(--font-display)" }}
                             >
-                                Stop guessing.
+                                Validate before
                                 <br />
-                                Validate the idea first.
+                                you build.
                             </h2>
                             <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-white/42 md:text-base">
-                                Open the board, inspect the complaints, then validate one startup idea before you spend roadmap time or design energy on the wrong bet.
+                                Inspect the signal, then validate one idea before you spend time building.
                             </p>
 
                             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -721,7 +717,7 @@ export default function LandingPageClient({
                 <div className="mx-auto flex max-w-5xl flex-col gap-4 text-sm text-white/28 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-3">
                         <BrandLogo compact />
-                        <span>Community intelligence for startup founders.</span>
+                        <span>Startup opportunity intelligence.</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-4">
                         <Link href="/pricing" className="transition-colors hover:text-white">Pricing</Link>

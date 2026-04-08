@@ -48,6 +48,20 @@ export default async function AdminMarketPage() {
                 </div>
             </AdminSection>
 
+            <AdminSection title="Visibility reasons" description="Why ideas are currently hidden from the user-facing radar.">
+                {data.visibilityBreakdown.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                        {data.visibilityBreakdown.map((item) => (
+                            <AdminPill key={item.reason} tone={item.reason === "duplicate" || item.reason === "editorial_hidden" ? "warning" : "neutral"}>
+                                {item.label}: {item.count}
+                            </AdminPill>
+                        ))}
+                    </div>
+                ) : (
+                    <EmptyAdminState title="Nothing hidden right now" body="All currently hydrated ideas are visible, or the hidden pool is empty in this sample." />
+                )}
+            </AdminSection>
+
             <AdminSection title="Top signals" description="Highest-scoring market opportunities right now.">
                 {data.topIdeas.length > 0 ? (
                     <div className="space-y-3">
@@ -56,7 +70,9 @@ export default async function AdminMarketPage() {
                                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                     <div>
                                         <div className="text-sm font-medium text-white">{String(idea.topic || "")}</div>
-                                        <div className="mt-1 text-xs text-muted-foreground">{String(idea.category || "general")} · {String(idea.market_status || "visible")}</div>
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                            {String(idea.category || "general")} · {String(idea.market_status || "visible")} · {String(idea.visibility_decision?.reason || "visible")}
+                                        </div>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                         <AdminPill>{Number(idea.current_score || 0)} score</AdminPill>

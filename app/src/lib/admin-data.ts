@@ -6,8 +6,8 @@ import { normalizeProfileRole, type AdminProfileRole } from "@/lib/admin-access"
 import { recordAdminEvent } from "@/lib/admin-events";
 import { trackServerEvent } from "@/lib/analytics";
 import { getApprovedMarketEditorial, getMarketEditorialPublishMode, parseMarketEditorial } from "@/lib/market-editorial";
+import { MARKET_VISIBILITY_REASON_LABELS } from "@/lib/market-visibility";
 import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
-import { explainPublicOpportunityEligibility, type PublicOpportunityRejectionReason } from "@/lib/public-idea-eligibility";
 import { enqueueValidationJob } from "@/lib/queue";
 import { getRuntimeSettings, updateRuntimeSettings } from "@/lib/runtime-settings";
 import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
@@ -16,18 +16,6 @@ import { createAdmin } from "@/lib/supabase-admin";
 const execAsync = promisify(exec);
 const DAY_MS = 86_400_000;
 const MARKET_AUDIT_IDEA_SELECT = "id, topic, slug, current_score, change_24h, change_7d, trend_direction, confidence_level, post_count_total, post_count_7d, source_count, sources, category, competition_data, icp_data, top_posts, keywords, pain_count, pain_summary, first_seen, last_updated, score_breakdown, market_editorial, market_editorial_updated_at";
-const PUBLIC_REJECTION_LABELS: Record<PublicOpportunityRejectionReason, string> = {
-    insufficient_confidence: "Insufficient confidence",
-    suppressed_market_status: "Suppressed by market classification",
-    editorial_hidden: "Blocked by editorial review",
-    editorial_needs_more_proof: "Editorial says more proof is still needed",
-    score_below_threshold: "Score below public threshold",
-    insufficient_posts: "Not enough evidence posts",
-    insufficient_sources: "Not enough sources or direct proof",
-    invalid_title: "Title is too weak or malformed",
-    invalid_summary: "Summary is too weak or malformed",
-};
-
 export type AdminActor = {
     id: string;
     email: string;
@@ -280,25 +268,25 @@ function buildRecentActivity(input: {
 
 function buildMarketAuditSummary(rows: Array<Record<string, unknown>>) {
     const hydratedIdeas = rows.map((row) => hydrateIdeaForMarket(row));
-    const rejectionCounts = new Map<PublicOpportunityRejectionReason, number>();
+    const visibilityReasonCounts = new Map<string, number>();
     let publicEligible = 0;
 
     for (const idea of hydratedIdeas) {
-        const eligibility = explainPublicOpportunityEligibility(idea);
-        if (eligibility.eligible) {
+        if (idea.visibility_decision.status === "visible") {
             publicEligible += 1;
             continue;
         }
-        if (eligibility.reason) {
-            rejectionCounts.set(eligibility.reason, (rejectionCounts.get(eligibility.reason) || 0) + 1);
-        }
+        visibilityReasonCounts.set(
+            idea.visibility_decision.reason,
+            (visibilityReasonCounts.get(idea.visibility_decision.reason) || 0) + 1,
+        );
     }
 
-    const rejectionBreakdown = [...rejectionCounts.entries()]
+    const rejectionBreakdown = [...visibilityReasonCounts.entries()]
         .sort((a, b) => b[1] - a[1])
         .map(([reason, count]) => ({
             reason,
-            label: PUBLIC_REJECTION_LABELS[reason],
+            label: MARKET_VISIBILITY_REASON_LABELS[reason as keyof typeof MARKET_VISIBILITY_REASON_LABELS] || reason,
             count,
         }));
 
@@ -308,7 +296,7 @@ function buildMarketAuditSummary(rows: Array<Record<string, unknown>>) {
         publicRejected: Math.max(0, hydratedIdeas.length - publicEligible),
         userFeedVisible: buildMarketIdeas(rows, { surface: "user" }).length,
         adminFeedVisible: buildMarketIdeas(rows, { includeExploratory: true, surface: "admin" }).length,
-        visibleMarketStatus: hydratedIdeas.filter((idea) => idea.market_status === "visible").length,
+        visibleMarketStatus: hydratedIdeas.filter((idea) => idea.visibility_decision.status === "visible").length,
         needsFocus: hydratedIdeas.filter((idea) => idea.market_status === "needs_wedge").length,
         suppressed: hydratedIdeas.filter((idea) => idea.market_status === "suppressed").length,
         rejectionBreakdown,
@@ -373,7 +361,12 @@ export async function getAdminOverviewData() {
             analytics,
             adminEvents: toRows(adminEvents.data),
         }),
-        topIdeas: topIdeaRows.error ? [] : buildMarketIdeas((topIdeaRows.data || []) as unknown as Array<Record<string, unknown>>, { surface: "admin" }).slice(0, 5),
+        topIdeas: topIdeaRows.error
+            ? []
+            : ((topIdeaRows.data || []) as unknown as Array<Record<string, unknown>>)
+                .map((row) => hydrateIdeaForMarket(row))
+                .filter((idea) => idea.visibility_decision.status === "visible")
+                .slice(0, 5),
     };
 }
 
@@ -774,7 +767,22 @@ export async function getAdminMarketData() {
         fetchLatestScraperRuns(),
     ]);
 
+    const hydratedIdeas = ideaRows.error
+        ? []
+        : ((ideaRows.data || []) as unknown as Array<Record<string, unknown>>).map((row) => hydrateIdeaForMarket(row));
     const ideas = ideaRows.error ? [] : buildMarketIdeas((ideaRows.data || []) as unknown as Array<Record<string, unknown>>, { includeExploratory: true, surface: "admin" });
+    const visibleIdeas = hydratedIdeas.filter((idea) => idea.visibility_decision.status === "visible");
+    const visibilityBreakdown = [...hydratedIdeas.reduce((acc, idea) => {
+        if (idea.visibility_decision.status === "visible") return acc;
+        acc.set(idea.visibility_decision.reason, (acc.get(idea.visibility_decision.reason) || 0) + 1);
+        return acc;
+    }, new Map<string, number>()).entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({
+            reason,
+            label: MARKET_VISIBILITY_REASON_LABELS[reason as keyof typeof MARKET_VISIBILITY_REASON_LABELS] || reason,
+            count,
+        }));
     const editorialComparisons = ideas
         .map((idea) => {
             const editorial = parseMarketEditorial(idea.market_editorial);
@@ -817,17 +825,18 @@ export async function getAdminMarketData() {
 
     return {
         summary: {
-            visibleIdeas: ideas.filter((row) => String(row.market_status || "") === "visible").length,
-            risingIdeas: ideas.filter((row) => String(row.trend_direction || "").toLowerCase() === "rising").length,
-            fallingIdeas: ideas.filter((row) => String(row.trend_direction || "").toLowerCase() === "falling").length,
+            visibleIdeas: visibleIdeas.length,
+            risingIdeas: visibleIdeas.filter((row) => String(row.trend_direction || "").toLowerCase() === "rising").length,
+            fallingIdeas: visibleIdeas.filter((row) => String(row.trend_direction || "").toLowerCase() === "falling").length,
             needsWedge: ideas.filter((row) => String(row.market_status || "") === "needs_wedge").length,
-            suppressedIdeas: Math.max(0, toRows(ideaRows.data).length - ideas.length),
+            suppressedIdeas: hydratedIdeas.filter((row) => row.visibility_decision.status === "hidden").length,
             editorialReviewed: editorialComparisons.length,
             publishMode: getMarketEditorialPublishMode(),
         },
         sourceHealth: extractScraperRunHealth(runs[0] || null),
-        topIdeas: ideas.slice(0, 12),
+        topIdeas: visibleIdeas.slice(0, 12),
         editorialComparisons,
+        visibilityBreakdown,
     };
 }
 

@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
 
     const hydratedIdeas = (ideaRows || []).map((row) => hydrateIdeaForMarket(row as Record<string, unknown>));
     const laneIdeas = category ? hydratedIdeas.filter((idea) => idea.category === category) : hydratedIdeas;
-    const userFacingIdeas = hydratedIdeas.filter((idea) => idea.public_browse_eligible);
+    const userFacingIdeas = hydratedIdeas.filter((idea) => idea.visibility_decision.status === "visible");
     const feedVisible = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, { includeExploratory: false, surface: "user" });
     const laneFeedVisible = category ? feedVisible.filter((idea) => idea.category === category) : feedVisible;
 

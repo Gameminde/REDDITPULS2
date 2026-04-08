@@ -4,6 +4,8 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, ArrowLeft, ExternalLink, Layers3, Radar, Sparkles } from "lucide-react";
+import { ValidationDepthChooser } from "@/app/dashboard/components/ValidationDepthChooser";
+import type { ValidationPrefill } from "@/lib/validation-entry";
 
 type OpportunityRow = {
     id: string;
@@ -59,22 +61,15 @@ type OpportunityRow = {
     } | null;
 };
 
-function buildValidationHref(opportunity: OpportunityRow) {
-    const params = new URLSearchParams();
-    params.set("idea", opportunity.label);
-    params.set(
-        "target",
-        opportunity.icp_summary
+function buildValidationPrefill(opportunity: OpportunityRow): ValidationPrefill {
+    return {
+        idea: opportunity.label,
+        target: opportunity.icp_summary
             || (opportunity.primary_idea?.topic ? `Buyers around ${opportunity.primary_idea.topic}` : `Buyers around ${opportunity.label}`),
-    );
-    params.set(
-        "pain",
-        opportunity.board_intelligence?.why_now_summary
+        pain: opportunity.board_intelligence?.why_now_summary
             || opportunity.board_intelligence?.summary_line
-            || `The recurring workflow pain around ${opportunity.label} still needs a deeper validation pass.`,
-    );
-    params.set("depth", "deep");
-    return `/dashboard/validate?${params.toString()}`;
+            || `The recurring workflow pain around ${opportunity.label} still needs deeper validation.`,
+    };
 }
 
 function SectionCard({
@@ -163,13 +158,13 @@ export default function OpportunitiesPage() {
                 <div>
                     <Link href="/dashboard" style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none", color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>
                         <ArrowLeft style={{ width: 14, height: 14 }} />
-                        Back to Board
+                        Back to Radar
                     </Link>
                     <h1 style={{ fontSize: 24, fontWeight: 800, color: "#f1f5f9", marginTop: 12, marginBottom: 4, letterSpacing: "-0.02em" }}>
-                        Opportunity Board
+                        Opportunity Radar
                     </h1>
                     <p style={{ fontSize: 13, color: "#64748b", maxWidth: 760, lineHeight: 1.6 }}>
-                        Promoted opportunities become structured decision cards here. The board stays small, evidence-first, and built for action.
+                        Promoted opportunities become structured decision cards here. The radar stays small, evidence-first, and built for action.
                     </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(160px, 1fr))", gap: 12, minWidth: 360 }}>
@@ -180,13 +175,13 @@ export default function OpportunitiesPage() {
                         border: "1px solid rgba(255,255,255,0.06)",
                     }}>
                         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b", marginBottom: 8 }}>
-                            Active board
+                            Active radar
                         </div>
                         <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", fontFamily: "var(--font-mono)" }}>
                             {liveCount}
                         </div>
                         <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-                            board-ready and still active
+                            radar-ready and still active
                         </div>
                     </div>
                     <div style={{
@@ -233,7 +228,7 @@ export default function OpportunitiesPage() {
                     textAlign: "center",
                 }}>
                     <Activity style={{ width: 22, height: 22, margin: "0 auto 12px", opacity: 0.6 }} />
-                    Loading opportunity board...
+                    Loading opportunity radar...
                 </div>
             ) : opportunities.length === 0 ? (
                 <div style={{
@@ -247,7 +242,7 @@ export default function OpportunitiesPage() {
                     <Sparkles style={{ width: 22, height: 22, margin: "0 auto 12px", opacity: 0.6 }} />
                     <div style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>No promoted opportunities yet</div>
                     <div style={{ fontSize: 12, maxWidth: 460, margin: "0 auto 14px", lineHeight: 1.6 }}>
-                        Save the strongest ideas from the live board when you want a tighter angle, a saved label, and a shortlist of real bets.
+                        Save the strongest ideas from the live radar when you want a tighter angle, a saved label, and a shortlist of real bets.
                     </div>
                     <Link href="/dashboard" style={{
                         display: "inline-flex",
@@ -262,14 +257,14 @@ export default function OpportunitiesPage() {
                         fontSize: 12,
                         fontWeight: 700,
                     }}>
-                        Open Opportunity Board
+                        Open Opportunity Radar
                     </Link>
                 </div>
             ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 18 }}>
                     {opportunities.map((opportunity, index) => {
                         const intelligence = opportunity.board_intelligence;
-                        const validateHref = buildValidationHref(opportunity);
+                        const validationPrefill = buildValidationPrefill(opportunity);
                         const watchPending = watchBusyId === opportunity.id;
 
                         return (
@@ -424,7 +419,7 @@ export default function OpportunitiesPage() {
                                             ))}
                                             {(intelligence?.evidence_snapshot.representative_evidence || []).length === 0 && (
                                                 <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                                                    Representative evidence is still thin, so this board bet should stay disciplined.
+                                                    Representative evidence is still thin, so this bet should stay disciplined.
                                                 </div>
                                             )}
                                         </div>
@@ -450,23 +445,24 @@ export default function OpportunitiesPage() {
                                         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
                                             {intelligence?.first_step || "Start with one narrow validation step before you expand this."}
                                         </div>
-                                        <Link href={validateHref} style={{
-                                            display: "inline-flex",
-                                            alignItems: "center",
-                                            gap: 6,
-                                            width: "fit-content",
-                                            padding: "9px 12px",
-                                            borderRadius: 10,
-                                            textDecoration: "none",
-                                            background: "rgba(249,115,22,0.12)",
-                                            border: "1px solid rgba(249,115,22,0.18)",
-                                            color: "#fdba74",
-                                            fontSize: 11,
-                                            fontWeight: 700,
-                                        }}>
-                                            Validate now
-                                            <ExternalLink style={{ width: 12, height: 12 }} />
-                                        </Link>
+                                        <ValidationDepthChooser prefill={validationPrefill}>
+                                            <span style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 6,
+                                                width: "fit-content",
+                                                padding: "9px 12px",
+                                                borderRadius: 10,
+                                                background: "rgba(249,115,22,0.12)",
+                                                border: "1px solid rgba(249,115,22,0.18)",
+                                                color: "#fdba74",
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                            }}>
+                                                Validate now
+                                                <ExternalLink style={{ width: 12, height: 12 }} />
+                                            </span>
+                                        </ValidationDepthChooser>
                                     </SectionCard>
 
                                     <SectionCard label="Readiness">
@@ -517,7 +513,7 @@ export default function OpportunitiesPage() {
                                     border: "1px solid rgba(255,255,255,0.05)",
                                 }}>
                                     <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b", marginBottom: 8 }}>
-                                        Linked board idea
+                                        Linked radar idea
                                     </div>
                                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                                         <div>

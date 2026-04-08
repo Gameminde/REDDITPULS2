@@ -11,6 +11,7 @@ import {
     Target, Lightbulb, Radar, ShieldAlert,
 } from "lucide-react";
 import ScoreBreakdownTooltip, { type ScoreBreakdown } from "./ScoreBreakdownTooltip";
+import { ValidationDepthChooser } from "./components/ValidationDepthChooser";
 import {
     getOpportunityPostSupportLevel,
     rankOpportunityRepresentativePosts,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/user-facing-copy";
 import { useDashboardViewer } from "./viewer-context";
 import { getJoinBetaHref } from "@/lib/beta-access";
+import type { ValidationPrefill } from "@/lib/validation-entry";
 
 interface Idea {
     id: string;
@@ -194,7 +196,7 @@ async function promoteIdeaToBoard(payload: {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-        throw new Error(String(data.error || "Could not save this opportunity to the board."));
+        throw new Error(String(data.error || "Could not save this opportunity to the radar."));
     }
 
     return data;
@@ -210,9 +212,9 @@ function formatFreshnessHours(hours: number | null | undefined) {
 type TabType = "top" | "trending" | "dying" | "new";
 
 const TABS: { key: TabType; label: string; icon: LucideIcon; color: string }[] = [
-    { key: "top", label: "Best Bets", icon: BarChart3, color: "#f97316" },
-    { key: "trending", label: "Gaining Traction", icon: Flame, color: "#22c55e" },
-    { key: "dying", label: "Cooling Off", icon: Skull, color: "#ef4444" },
+    { key: "top", label: "Top", icon: BarChart3, color: "#f97316" },
+    { key: "trending", label: "Rising", icon: Flame, color: "#22c55e" },
+    { key: "dying", label: "Cooling", icon: Skull, color: "#ef4444" },
     { key: "new", label: "New", icon: Sparkles, color: "#8b5cf6" },
 ];
 
@@ -492,13 +494,12 @@ function normalizeScoreBreakdown(idea: Idea): ScoreBreakdown | null {
     return hasAnyRaw || hasVisibleSignal ? breakdown : null;
 }
 
-function buildMarketValidationHref(
+function buildMarketValidationPrefill(
     idea: Idea,
     representativePosts: OpportunityTopPost[],
     signalSummary?: string | null,
     dominantPlatform?: string | null,
-) {
-    const params = new URLSearchParams();
+): ValidationPrefill {
     const cleanTopic = getIdeaDisplayTopic(idea).trim();
     const uniqueCommunities = Array.from(new Set(
         representativePosts
@@ -519,12 +520,73 @@ function buildMarketValidationHref(
         ? signalSummary.trim()
         : `People are discussing ${cleanTopic}, but the exact buyer pain still needs direct validation.`;
 
-    params.set("idea", cleanTopic);
-    params.set("target", target);
-    params.set("pain", pain);
-    params.set("depth", "deep");
+    return {
+        idea: cleanTopic,
+        target,
+        pain,
+    };
+}
 
-    return `/dashboard/validate?${params.toString()}`;
+function getTransformationRawPainPost(representativePosts: OpportunityTopPost[]) {
+    return representativePosts.find((post) => cleanText(post.title)) || representativePosts[0] || null;
+}
+
+function getTransformationSourceLabel(post: OpportunityTopPost | null) {
+    if (!post) return "Representative source";
+    const subreddit = cleanText(post.subreddit);
+    if (subreddit) return `From r/${decodeHtml(subreddit)}`;
+    return `From ${formatSourceName(post.source)}`;
+}
+
+function getTransformationPatternSummary(
+    browseSummary: string,
+    signalSummary?: string | null,
+    displayTopic?: string,
+) {
+    return summarizeReasonForUser(
+        signalSummary,
+        browseSummary || `${displayTopic || "This idea"} is clustering often enough to deserve a closer look.`,
+    );
+}
+
+function TransformationStep({
+    label,
+    value,
+    hint,
+    tone = "rgba(255,255,255,0.03)",
+    border = "rgba(255,255,255,0.08)",
+    labelColor = "#94a3b8",
+}: {
+    label: string;
+    value: string;
+    hint?: string;
+    tone?: string;
+    border?: string;
+    labelColor?: string;
+}) {
+    return (
+        <div style={{
+            padding: "14px 16px",
+            borderRadius: 14,
+            background: tone,
+            border: `1px solid ${border}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+        }}>
+            <div style={{ fontSize: 10, color: labelColor, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                {label}
+            </div>
+            <div style={{ fontSize: 12, color: "#f8fafc", lineHeight: 1.65, fontWeight: 600 }}>
+                {value}
+            </div>
+            {hint && (
+                <div style={{ fontSize: 10.5, color: "#94a3b8", lineHeight: 1.55 }}>
+                    {hint}
+                </div>
+            )}
+        </div>
+    );
 }
 
 function DetailMetric({
@@ -634,7 +696,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
     const marketLeadersSummary = isRecord(idea.competition_data) && typeof idea.competition_data.market_leaders_summary === "string"
         ? idea.competition_data.market_leaders_summary
         : "";
-    const validateHref = buildMarketValidationHref(
+    const validationPrefill = buildMarketValidationPrefill(
         idea,
         representativePosts,
         signalContract?.summary || null,
@@ -664,6 +726,19 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
     );
     const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
     const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
+    const rawPainPost = getTransformationRawPainPost(representativePosts);
+    const rawPainTitle = rawPainPost ? decodeHtml(rawPainPost.title) : `People are repeatedly describing friction around ${displayTopic}.`;
+    const rawPainSourceLabel = getTransformationSourceLabel(rawPainPost);
+    const repeatedPattern = getTransformationPatternSummary(
+        browseSummary,
+        signalContract?.summary || null,
+        displayTopic,
+    );
+    const transformationAngle = secondaryAngle || primaryTitle;
+    const whyNowSummary = summarizeReasonForUser(
+        marketHint?.why_it_matters_now || idea.public_verdict || signalContract?.summary,
+        `${displayTopic} is moving enough right now to justify a tighter validation pass.`,
+    );
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -695,7 +770,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
             setPromoteMessage("Saved to Opportunities.");
         } catch (error) {
             setPromoteState("error");
-            setPromoteMessage(error instanceof Error ? error.message : "Could not save this idea to the board.");
+            setPromoteMessage(error instanceof Error ? error.message : "Could not save this idea to the radar.");
         }
     };
 
@@ -875,6 +950,76 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                         }}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                                 <div style={{
+                                    padding: "14px 16px",
+                                    borderRadius: 14,
+                                    background: "rgba(255,255,255,0.03)",
+                                    border: "1px solid rgba(255,255,255,0.08)",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 12,
+                                }}>
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                        <div>
+                                            <div style={{ fontSize: 10, color: "#f97316", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                                                Why this opportunity?
+                                            </div>
+                                            <div style={{ marginTop: 4, fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
+                                                Raw pain becomes a repeated pattern, then a tighter product angle.
+                                            </div>
+                                        </div>
+                                        <span style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            padding: "3px 8px",
+                                            borderRadius: 999,
+                                            background: "rgba(249,115,22,0.08)",
+                                            border: "1px solid rgba(249,115,22,0.16)",
+                                            fontSize: 10,
+                                            color: "#fdba74",
+                                            fontWeight: 700,
+                                        }}>
+                                            Explainable signal
+                                        </span>
+                                    </div>
+                                    <div style={{
+                                        display: "grid",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                        gap: 12,
+                                    }}>
+                                        <TransformationStep
+                                            label="Raw pain"
+                                            value={rawPainTitle}
+                                            hint={rawPainSourceLabel}
+                                            tone="rgba(249,115,22,0.06)"
+                                            border="rgba(249,115,22,0.14)"
+                                            labelColor="#fdba74"
+                                        />
+                                        <TransformationStep
+                                            label="Repeated pattern"
+                                            value={repeatedPattern}
+                                            hint={evidenceSummary}
+                                        />
+                                        <TransformationStep
+                                            label="Product angle"
+                                            value={transformationAngle}
+                                            hint={browseSummary}
+                                            tone="rgba(59,130,246,0.08)"
+                                            border="rgba(59,130,246,0.16)"
+                                            labelColor="#93c5fd"
+                                        />
+                                        <TransformationStep
+                                            label="Why now"
+                                            value={whyNowSummary}
+                                            hint={nextStepSummary}
+                                            tone="rgba(34,197,94,0.08)"
+                                            border="rgba(34,197,94,0.16)"
+                                            labelColor="#86efac"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div style={{
                                     display: "grid",
                                     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                                     gap: 12,
@@ -956,26 +1101,27 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                             </div>
                                         </div>
                                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                            <Link
-                                                href={validateHref}
-                                                onClick={(event) => event.stopPropagation()}
-                                                style={{
+                                            <ValidationDepthChooser
+                                                prefill={validationPrefill}
+                                                isGuest={isGuest}
+                                                nextPath="/dashboard"
+                                            >
+                                                <span style={{
                                                     display: "inline-flex",
                                                     alignItems: "center",
                                                     justifyContent: "center",
                                                     gap: 8,
                                                     padding: "10px 14px",
                                                     borderRadius: 10,
-                                                    textDecoration: "none",
                                                     background: "linear-gradient(135deg, rgba(249,115,22,0.18), rgba(234,88,12,0.08))",
                                                     border: "1px solid rgba(249,115,22,0.22)",
                                                     color: "#f8fafc",
                                                     fontSize: 12,
                                                     fontWeight: 700,
-                                                }}
-                                            >
-                                                Validate this idea
-                                            </Link>
+                                                }}>
+                                                    Validate this idea
+                                                </span>
+                                            </ValidationDepthChooser>
                                             <button
                                                 onClick={handlePromote}
                                                 style={{
@@ -998,7 +1144,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                                     fontWeight: 700,
                                                 }}
                                             >
-                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Save to board"}
+                                                {promoteState === "saved" ? "Saved to radar" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Save to radar"}
                                             </button>
                                         </div>
                                         {promoteMessage && (
@@ -1101,33 +1247,35 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         hint={hasStructuredEvidence ? "Posts include structured evidence metadata." : "Representative posts still use older scrape metadata."}
                                         accent={hasStructuredEvidence ? "#22c55e" : "#f59e0b"}
                                     />
-                                    <Link
-                                        href={validateHref}
-                                        onClick={(event) => event.stopPropagation()}
-                                        style={{
+                                    <ValidationDepthChooser
+                                        prefill={validationPrefill}
+                                        isGuest={isGuest}
+                                        nextPath="/dashboard"
+                                    >
+                                        <span style={{
                                             display: "flex",
                                             flexDirection: "column",
                                             justifyContent: "space-between",
                                             gap: 8,
                                             padding: "12px 14px",
                                             borderRadius: 10,
-                                            textDecoration: "none",
                                             background: "linear-gradient(135deg, rgba(249,115,22,0.14), rgba(234,88,12,0.06))",
                                             border: "1px solid rgba(249,115,22,0.18)",
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 10, color: "#fdba74", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                                                Next move
-                                            </div>
-                                            <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
-                                                Validate this idea
-                                            </div>
-                                        </div>
-                                        <div style={{ fontSize: 10, color: "#fed7aa", lineHeight: 1.5 }}>
-                                            Send this opportunity into Validate with the topic, buyer hint, and pain context prefilled.
-                                        </div>
-                                    </Link>
+                                            textAlign: "left",
+                                        }}>
+                                            <span>
+                                                <span style={{ display: "block", fontSize: 10, color: "#fdba74", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                                                    Next move
+                                                </span>
+                                                <span style={{ display: "block", fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
+                                                    Validate this idea
+                                                </span>
+                                            </span>
+                                            <span style={{ fontSize: 10, color: "#fed7aa", lineHeight: 1.5 }}>
+                                                Send this opportunity into Validate with the topic, buyer hint, and pain context prefilled.
+                                            </span>
+                                        </span>
+                                    </ValidationDepthChooser>
                                     <button
                                         onClick={handlePromote}
                                         style={{
@@ -1150,16 +1298,16 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                     >
                                         <div>
                                             <div style={{ fontSize: 10, color: promoteState === "saved" ? "#bbf7d0" : "#bfdbfe", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                                                Opportunity board
+                                                Opportunity radar
                                             </div>
                                             <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc", lineHeight: 1.1 }}>
-                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to board"}
+                                                {promoteState === "saved" ? "Saved to radar" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to radar"}
                                             </div>
                                         </div>
                                         <div style={{ fontSize: 10, color: promoteState === "saved" ? "#dcfce7" : "#dbeafe", lineHeight: 1.5 }}>
                                             {promoteMessage || (isGuest
-                                                ? "Guest beta is read-only. Join the beta with Google to save ideas into your board."
-                                                : "Create a curated opportunity row without rewriting the live board.")}
+                                                ? "Guest beta is read-only. Join the beta with Google to save ideas into your radar."
+                                                : "Create a curated opportunity row without rewriting the live radar.")}
                                         </div>
                                     </button>
                                 </div>
@@ -1344,7 +1492,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                     ) : (
                                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                                            No representative proof yet. Refresh the board to gather more evidence.
+                                            No representative proof yet. Refresh the radar to gather more evidence.
                                         </div>
                                     )}
                                 </div>
@@ -1566,7 +1714,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
             background: "rgba(148,163,184,0.12)",
         };
     const signalBadgeLabel = signalContract ? getSupportLevelLabel(signalContract.support_level) : conf.label;
-    const validateHref = buildMarketValidationHref(
+    const validationPrefill = buildMarketValidationPrefill(
         idea,
         representativePosts,
         signalContract?.summary || null,
@@ -1584,13 +1732,28 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
     const trendTone = getTrendTone(idea.trend_direction);
     const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
     const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
+    const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const verdictSummary = summarizeReasonForUser(
         idea.public_verdict || signalContract?.summary,
         `${displayTopic} is getting enough repeated discussion to review, but the idea still needs proof.`,
     );
+    const evidenceSummary = directBuyerCount > 0
+        ? `${formatCountLabel(directBuyerCount, "buyer quote")} and ${formatCountLabel(idea.source_count, "source")} support this idea.`
+        : `${formatCountLabel(idea.post_count_total, "post")} and ${formatCountLabel(idea.source_count, "source")} are visible, but stronger buyer proof is still missing.`;
     const nextStepSummary = summarizeReasonForUser(
         idea.public_next_step || marketHint?.recommended_board_action,
         isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next before you commit to it.",
+    );
+    const rawPainPost = getTransformationRawPainPost(representativePosts);
+    const rawPainTitle = rawPainPost ? decodeHtml(rawPainPost.title) : `People are repeatedly describing friction around ${displayTopic}.`;
+    const repeatedPattern = getTransformationPatternSummary(
+        verdictSummary,
+        signalContract?.summary || null,
+        displayTopic,
+    );
+    const whyNowSummary = summarizeReasonForUser(
+        marketHint?.why_it_matters_now || idea.public_verdict || signalContract?.summary,
+        `${displayTopic} is moving enough right now to justify a tighter validation pass.`,
     );
 
     return (
@@ -1692,15 +1855,19 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                     className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-foreground transition-colors hover:bg-white/[0.05]"
                 >
                     {expanded ? <Minus style={{ width: 14, height: 14 }} /> : <Plus style={{ width: 14, height: 14 }} />}
-                    {expanded ? "Hide details" : "See details"}
+                    {expanded ? "Hide details" : "Why this opportunity?"}
                 </button>
-                <Link
-                    href={isGuest ? BETA_AUTH_HREF : validateHref}
-                    className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-primary/25 bg-primary/10 px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-primary transition-colors hover:bg-primary/15"
+                <ValidationDepthChooser
+                    prefill={validationPrefill}
+                    isGuest={isGuest}
+                    className="min-h-[48px] flex-1"
+                    nextPath="/dashboard"
                 >
-                    <Zap style={{ width: 14, height: 14 }} />
-                    {isGuest ? "Join beta" : "Validate"}
-                </Link>
+                    <span className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl border border-primary/25 bg-primary/10 px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-primary transition-colors hover:bg-primary/15">
+                        <Zap style={{ width: 14, height: 14 }} />
+                        {isGuest ? "Join beta" : "Validate"}
+                    </span>
+                </ValidationDepthChooser>
             </div>
 
             <AnimatePresence>
@@ -1713,6 +1880,37 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                         style={{ overflow: "hidden" }}
                     >
                         <div className="mt-4 space-y-3 border-t border-white/8 pt-4">
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                                <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">Why this opportunity?</div>
+                                <div className="mt-3 grid gap-2">
+                                    <TransformationStep
+                                        label="Raw pain"
+                                        value={rawPainTitle}
+                                        hint={getTransformationSourceLabel(rawPainPost)}
+                                        tone="rgba(249,115,22,0.06)"
+                                        border="rgba(249,115,22,0.14)"
+                                        labelColor="#fdba74"
+                                    />
+                                    <TransformationStep label="Repeated pattern" value={repeatedPattern} hint={sourceSummary || evidenceSummary} />
+                                    <TransformationStep
+                                        label="Product angle"
+                                        value={secondaryAngle || primaryTitle}
+                                        hint={browseSummary}
+                                        tone="rgba(59,130,246,0.08)"
+                                        border="rgba(59,130,246,0.16)"
+                                        labelColor="#93c5fd"
+                                    />
+                                    <TransformationStep
+                                        label="Why now"
+                                        value={whyNowSummary}
+                                        hint={nextStepSummary}
+                                        tone="rgba(34,197,94,0.08)"
+                                        border="rgba(34,197,94,0.16)"
+                                        labelColor="#86efac"
+                                    />
+                                </div>
+                            </div>
+
                             <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
                                 <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">Verdict</div>
                                 <p className="mt-2 text-xs leading-6 text-slate-200">{verdictSummary}</p>
@@ -1867,13 +2065,13 @@ function IntelligencePromoteButton({
                 return;
             }
             setState("error");
-            setMessage("Join the beta to save this idea to the board.");
+            setMessage("Join the beta to save this idea to the radar.");
             return;
         }
 
         let label = cleanText(suggestedLabel || "");
         if (!label && typeof window !== "undefined") {
-            const entered = window.prompt("Shape the board title before saving this idea.", topic);
+            const entered = window.prompt("Shape the radar title before saving this idea.", topic);
             label = cleanText(entered || "");
             if (!label) return;
         }
@@ -1890,7 +2088,7 @@ function IntelligencePromoteButton({
             setMessage("Saved to Opportunities.");
         } catch (error) {
             setState("error");
-            setMessage(error instanceof Error ? error.message : "Could not save this idea to the board.");
+            setMessage(error instanceof Error ? error.message : "Could not save this idea to the radar.");
         }
     };
 
@@ -1913,7 +2111,7 @@ function IntelligencePromoteButton({
                     fontWeight: 700,
                 }}
             >
-                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to board"}
+                {state === "saved" ? "Saved to radar" : state === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to radar"}
             </button>
             {message && (
                 <div style={{ fontSize: 10, color: state === "error" ? "#fca5a5" : "#bfdbfe", lineHeight: 1.5 }}>
@@ -2193,9 +2391,9 @@ function MarketIntelligenceSection({
     isGuest: boolean;
 }) {
     const tabs: Array<{ key: IntelligenceTab; label: string; icon: LucideIcon; color: string }> = [
-        { key: "emerging", label: "Emerging opportunities", icon: Target, color: "#f97316" },
-        { key: "themes", label: "Themes to refine", icon: Lightbulb, color: "#3b82f6" },
-        { key: "competitors", label: "Competitor Pressure", icon: ShieldAlert, color: "#ef4444" },
+        { key: "emerging", label: "Emerging", icon: Target, color: "#f97316" },
+        { key: "themes", label: "Refine", icon: Lightbulb, color: "#3b82f6" },
+        { key: "competitors", label: "Competitors", icon: ShieldAlert, color: "#ef4444" },
     ];
     const allRowCount =
         (intelligence?.emerging_wedges?.length || 0) +
@@ -2460,15 +2658,15 @@ export default function StockMarketDashboard() {
             <div className="surface-panel" style={{ padding: 18, borderRadius: 18, marginBottom: 18 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
                     <div style={{ maxWidth: 620 }}>
-                        <div className="section-kicker" style={{ marginBottom: 10 }}>Opportunity board</div>
+                        <div className="section-kicker" style={{ marginBottom: 10 }}>Opportunity radar</div>
                         <h1 style={{
                             fontSize: 26, fontWeight: 650, color: "#f8fafc",
                             fontFamily: "\"Space Grotesk\", var(--font-display)", marginBottom: 7, letterSpacing: "-0.04em", lineHeight: 0.98,
                         }}>
-                            Find ideas before you build.
+                            See live opportunities.
                         </h1>
                         <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 560 }}>
-                            Startup opportunities pulled from repeated complaints and buying signals across Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
+                            Repeated pain, shaped into product angles.
                         </p>
                         {lastUpdated && (
                             <div style={{ marginTop: 10, fontSize: 10.5, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
@@ -2501,7 +2699,7 @@ export default function StockMarketDashboard() {
                             {usingExternalWorker ? (
                                 <>
                                     <ShieldAlert style={{ width: 15, height: 15 }} />
-                                    Auto updates enabled
+                                    Auto updates
                                 </>
                             ) : scanning ? (
                                 <>
@@ -2516,12 +2714,12 @@ export default function StockMarketDashboard() {
                             ) : isGuest ? (
                                 <>
                                     <Zap style={{ width: 15, height: 15 }} />
-                                    Join beta to run scans
+                                    Join beta to scan
                                 </>
                             ) : (
                                 <>
                                     <Zap style={{ width: 15, height: 15 }} />
-                                    Refresh ideas
+                                    Refresh
                                 </>
                             )}
                         </motion.button>
@@ -2546,7 +2744,7 @@ export default function StockMarketDashboard() {
                     justifyContent: "space-between",
                 }}>
                     <span>
-                        Browse now. Join the beta with Google when you want to validate, save, or personalize.
+                        Browse now. Join with Google to validate or save.
                     </span>
                     <Link
                         href={BETA_AUTH_HREF}
@@ -2592,12 +2790,12 @@ export default function StockMarketDashboard() {
                         </motion.div>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#f97316" }}>
-                                Scanning the multi-source market stack...
+                                Refreshing sources...
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
                                 {usingExternalWorker
-                                    ? "Fresh market updates are running automatically for this environment."
-                                    : "Reddit (42 subreddits) • Hacker News • ProductHunt • IndieHackers — this takes 3-8 minutes"}
+                                    ? "Updates run automatically."
+                                    : "This usually takes a few minutes."}
                             </div>
                         </div>
                     </motion.div>
@@ -2649,16 +2847,16 @@ export default function StockMarketDashboard() {
 
             {/* Stats Row */}
             <div className="mb-5 -mx-1 flex gap-3 overflow-x-auto px-1 lg:hidden">
-                <div className="min-w-[180px]"><StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="on the board right now" /></div>
-                <div className="min-w-[180px]"><StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="moving up this cycle" /></div>
-                <div className="min-w-[180px]"><StatCard label="New 72h" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="fresh idea clusters" /></div>
-                <div className="min-w-[180px]"><StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="raw posts behind the board" /></div>
+                <div className="min-w-[180px]"><StatCard label="Live now" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="visible ideas" /></div>
+                <div className="min-w-[180px]"><StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="up this cycle" /></div>
+                <div className="min-w-[180px]"><StatCard label="New" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="last 72h" /></div>
+                <div className="min-w-[180px]"><StatCard label="Signals" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="posts scanned" /></div>
             </div>
             <div className="hidden lg:grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
-                <StatCard label="Live Opportunities" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="on the board right now" />
-                <StatCard label="Gaining traction" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="moving up this cycle" />
-                <StatCard label="New 72h" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="fresh idea clusters" />
-                <StatCard label="Posts analyzed" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="raw posts behind the board" />
+                <StatCard label="Live now" value={liveIdeaCount} icon={Eye} color="#f97316" subtitle="visible ideas" />
+                <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="up this cycle" />
+                <StatCard label="New" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="last 72h" />
+                <StatCard label="Signals" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="posts scanned" />
             </div>
 
             {/* Tabs + Category Filter */}
@@ -2779,7 +2977,7 @@ export default function StockMarketDashboard() {
                                     No opportunities match this filter
                                 </div>
                                 <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
-                                    Try another category or reveal early ideas to widen the board.
+                                    Try another filter or show early ideas.
                                 </div>
                             </>
                         )}
@@ -2862,7 +3060,7 @@ export default function StockMarketDashboard() {
                                         No opportunities match this filter
                                     </div>
                                     <div style={{ fontSize: 12, color: "#64748b", maxWidth: 420, margin: "0 auto" }}>
-                                        Try another category or reveal early ideas to widen the board.
+                                        Try another filter or show early ideas.
                                     </div>
                                 </>
                             )}

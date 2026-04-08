@@ -16,7 +16,9 @@ import {
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 import { useDashboardViewer } from "@/app/dashboard/viewer-context";
+import { ValidationDepthChooser } from "@/app/dashboard/components/ValidationDepthChooser";
 import { formatCountLabel, summarizeIdeaForBrowse } from "@/lib/user-facing-copy";
+import type { ValidationPrefill } from "@/lib/validation-entry";
 
 interface IdeaRow {
     id: string;
@@ -152,6 +154,23 @@ function describeIdea(idea: IdeaRow): string {
 
 function displayIdeaTitle(idea: IdeaRow): string {
     return idea.public_title || idea.topic;
+}
+
+function buildExploreValidationPrefill(idea: IdeaRow): ValidationPrefill {
+    const strongestPost = Array.isArray(idea.top_posts) && idea.top_posts.length > 0 ? idea.top_posts[0] : null;
+    const target = strongestPost?.subreddit
+        ? `People active in r/${strongestPost.subreddit}`
+        : idea.category
+          ? `${idea.category} operators`
+          : idea.source_count > 1
+            ? `Operators discussing this across ${idea.source_count} sources`
+            : "Operators repeatedly describing this pain";
+
+    return {
+        idea: displayIdeaTitle(idea),
+        target,
+        pain: idea.pain_summary || describeIdea(idea),
+    };
 }
 
 function getSourceMix(sources: IdeaRow["sources"]): string {
@@ -401,6 +420,7 @@ export default function ExplorePage() {
                                 : idea.current_score >= 40
                                   ? "text-risky"
                                   : "text-dont";
+                        const validationPrefill = buildExploreValidationPrefill(idea);
 
                         return (
                             <motion.article
@@ -512,13 +532,25 @@ export default function ExplorePage() {
                                         <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{getSourceMix(idea.sources)}</div>
                                     </div>
 
-                                    <Link
-                                        href={`/dashboard/idea/${idea.slug}`}
-                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-[12px] font-medium text-primary transition hover:bg-primary/15"
-                                    >
-                                        Open idea
-                                        <ArrowUpRight className="h-4 w-4" />
-                                    </Link>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        <ValidationDepthChooser
+                                            prefill={validationPrefill}
+                                            isGuest={isGuest}
+                                            nextPath="/dashboard/explore"
+                                            panelAlign="end"
+                                        >
+                                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground transition hover:bg-white/[0.06]">
+                                                Validate
+                                            </span>
+                                        </ValidationDepthChooser>
+                                        <Link
+                                            href={`/dashboard/idea/${idea.slug}`}
+                                            className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-3 py-2 text-[12px] font-medium text-primary transition hover:bg-primary/15"
+                                        >
+                                            Open idea
+                                            <ArrowUpRight className="h-4 w-4" />
+                                        </Link>
+                                    </div>
                                 </div>
                             </motion.article>
                         );
@@ -531,7 +563,7 @@ export default function ExplorePage() {
                     <p className="text-sm text-muted-foreground/60">
                         {searchQuery
                             ? "Try a different search query."
-                            : "The scraper has not collected any ideas yet. Run the scraper to populate the board."}
+                            : "The scraper has not collected any ideas yet. Run the scraper to populate the radar."}
                     </p>
                     <Link
                         href="/dashboard/validate"
