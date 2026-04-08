@@ -517,16 +517,16 @@ export default function ReportDetailPage() {
     if (loading) return (
         <div className="flex items-center justify-center p-20 gap-3">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            <span className="font-mono text-sm text-muted-foreground uppercase tracking-widest">Decoding Report Matrix</span>
+            <span className="font-mono text-sm text-muted-foreground uppercase tracking-widest">Loading Decision Report</span>
         </div>
     );
 
     if (!report) return (
         <div className="flex flex-col items-center justify-center p-20 text-center gap-4">
             <AlertCircle className="w-10 h-10 text-muted-foreground opacity-50" />
-            <p className="font-mono text-sm text-foreground">File not found or encrypted.</p>
+            <p className="font-mono text-sm text-foreground">This report could not be found.</p>
             <button onClick={() => router.push("/dashboard/reports")} className="text-primary font-mono text-[11px] uppercase tracking-widest hover:underline">
-                Return to Directory
+                Back to Reports
             </button>
         </div>
     );
@@ -1844,7 +1844,7 @@ ${first10Html}
                     {report.depth !== "deep" && (
                         <>
                             <div className="w-8 border-t border-white/10 my-0.5" />
-                            <button type="button" onClick={() => router.push("/dashboard/validate")} className="w-10 rounded-xl border border-primary/30 bg-primary/10 flex flex-col items-center justify-center py-1.5 gap-0.5 text-primary hover:bg-primary/20 transition-colors" title="Run Deep Validation">
+                            <button type="button" onClick={() => router.push(`/dashboard/validate?depth=deep&idea=${encodeURIComponent(report.idea_text)}`)} className="w-10 rounded-xl border border-primary/30 bg-primary/10 flex flex-col items-center justify-center py-1.5 gap-0.5 text-primary hover:bg-primary/20 transition-colors" title="Refine with Deep Validation">
                                 <Zap className="w-3.5 h-3.5" />
                                 <span className="text-[7px] font-mono uppercase leading-none">Deep</span>
                             </button>
@@ -1901,11 +1901,11 @@ ${first10Html}
                     {report.depth !== "deep" && (
                         <button
                             type="button"
-                            onClick={() => router.push("/dashboard/validate")}
+                            onClick={() => router.push(`/dashboard/validate?depth=deep&idea=${encodeURIComponent(report.idea_text)}`)}
                             className="mt-2 flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl border border-primary/30 bg-primary/10 text-[11px] font-mono uppercase tracking-[0.12em] text-primary"
                         >
                             <Zap className="h-4 w-4" />
-                            Run deep validation
+                            Refine with deep validation
                         </button>
                     )}
                 </div>

@@ -43,6 +43,7 @@ export default async function AdminValidationsPage({
                                     <th className="px-3 py-3">User</th>
                                     <th className="px-3 py-3">Depth</th>
                                     <th className="px-3 py-3">Status</th>
+                                    <th className="px-3 py-3">Coverage</th>
                                     <th className="px-3 py-3">Verdict</th>
                                     <th className="px-3 py-3">Created</th>
                                     <th className="px-3 py-3 text-right">Actions</th>
@@ -60,6 +61,18 @@ export default async function AdminValidationsPage({
                                             <AdminPill tone={row.status === "done" ? "healthy" : row.status === "failed" ? "degraded" : row.status === "running" || row.status === "starting" ? "warning" : "neutral"}>
                                                 {row.status}
                                             </AdminPill>
+                                        </td>
+                                        <td className="px-3 py-4">
+                                            <div className="space-y-2">
+                                                <AdminPill tone={row.coverage_status === "degraded" ? "warning" : "healthy"}>
+                                                    {row.coverage_status === "degraded" ? "degraded" : "healthy"}
+                                                </AdminPill>
+                                                {row.coverage_summary ? (
+                                                    <div className="max-w-[260px] text-xs leading-5 text-muted-foreground">
+                                                        {row.coverage_summary}
+                                                    </div>
+                                                ) : null}
+                                            </div>
                                         </td>
                                         <td className="px-3 py-4 text-muted-foreground">{row.verdict || "-"}</td>
                                         <td className="px-3 py-4 text-muted-foreground">{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>

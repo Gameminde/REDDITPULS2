@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { resolveRedditLabContextForValidation } from "@/lib/reddit-lab-server";
 import { type RedditLabValidationOptions } from "@/lib/reddit-lab";
+import { recordAdminEvent } from "@/lib/admin-events";
+import { summarizeValidationCoverage } from "@/lib/validation-coverage";
 
 export const VALIDATION_QUEUE = "idea-validation";
 const VALIDATION_RETRY_LIMIT = 2;
@@ -37,6 +39,175 @@ type ValidationProgressLine = {
     stream: "stdout" | "stderr";
     message: string;
 };
+
+const SUPPRESSED_PROGRESS_PATTERNS: RegExp[] = [
+    /pytrends not installed/i,
+    /aiohttp not installed/i,
+    /no official api credentials/i,
+    /apply for commercial access/i,
+    /using anonymous scraping/i,
+    /using proxy rotation/i,
+    /search error:/i,
+    /comments error/i,
+    /proxyerror/i,
+    /connecttimeouterror/i,
+    /max retries exceeded/i,
+    /connection reset by peer/i,
+    /read timed out/i,
+    /failed to establish a new connection/i,
+];
+
+function parseReportObject(report: unknown) {
+    if (typeof report === "string") {
+        try {
+            const parsed = JSON.parse(report);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed as Record<string, unknown>
+                : {};
+        } catch {
+            return {};
+        }
+    }
+
+    return report && typeof report === "object" && !Array.isArray(report)
+        ? report as Record<string, unknown>
+        : {};
+}
+
+function stripEmbeddedProgressTimestamp(line: string) {
+    return line.replace(/^\[\d{2}:\d{2}\]\s*/, "").trim();
+}
+
+function sanitizeUserFacingProgressLine(message: string) {
+    const normalized = stripEmbeddedProgressTimestamp(message);
+    if (!normalized) return null;
+
+    const platformFailures: Array<[RegExp, string]> = [
+        [/hacker news failed|hn scrape failed|hacker news scraper unavailable/i, "Hacker News was unavailable for this run. Continuing with the remaining sources."],
+        [/product ?hunt failed|product ?hunt scraper unavailable/i, "Product Hunt was unavailable for this run. Continuing with the remaining sources."],
+        [/indie ?hackers failed|indie ?hackers scraper unavailable/i, "Indie Hackers was unavailable for this run. Continuing with the remaining sources."],
+        [/stack overflow scrape failed|stack overflow: scraper not available/i, "Stack Overflow was unavailable for this run. Continuing with the remaining sources."],
+        [/github issues scrape failed|github issues: scraper not available/i, "GitHub Issues was unavailable for this run. Continuing with the remaining sources."],
+    ];
+
+    for (const [pattern, safeMessage] of platformFailures) {
+        if (pattern.test(normalized)) {
+            return safeMessage;
+        }
+    }
+
+    if (SUPPRESSED_PROGRESS_PATTERNS.some((pattern) => pattern.test(normalized))) {
+        return null;
+    }
+
+    const dbHistoryMatch = normalized.match(/Recent DB history:\s*(\d+)\s*posts/i);
+    if (dbHistoryMatch) {
+        return `Recent database history: ${dbHistoryMatch[1]} supporting posts loaded.`;
+    }
+
+    const dedupMatch = normalized.match(/Deduplicated evidence:\s*(\d+)\s*raw matches.*?(\d+)\s*unique items/i);
+    if (dedupMatch) {
+        return `Evidence normalized: ${dedupMatch[1]} raw matches -> ${dedupMatch[2]} unique items.`;
+    }
+
+    const sourcePatterns: Array<[RegExp, string]> = [
+        [/^Reddit:\s*(\d+)\s*posts/i, "Reddit: $1 posts found."],
+        [/^Reddit comments:\s*(\d+)\s*matching discussions/i, "Reddit comments: $1 matching discussions."],
+        [/^Connected Reddit:\s*(\d+)\s*posts.*$/i, "Connected Reddit: $1 posts from the authorized API."],
+        [/^Hacker News:\s*(\d+)\s*matching threads/i, "Hacker News: $1 matching threads."],
+        [/^Product Hunt:\s*(\d+)\s*launches\/discussions found/i, "Product Hunt: $1 launches or discussions found."],
+        [/^Indie Hackers:\s*(\d+)\s*founder discussions found/i, "Indie Hackers: $1 founder discussions found."],
+        [/^G2:\s*(\d+)\s*review complaints found/i, "G2: $1 review complaints found."],
+        [/^Jobs:\s*(\d+)\s*relevant postings found/i, "Jobs: $1 relevant postings found."],
+        [/^Vendor blogs:\s*(\d+)\s*supporting articles found/i, "Vendor blogs: $1 supporting articles found."],
+    ];
+
+    for (const [pattern, template] of sourcePatterns) {
+        const match = normalized.match(pattern);
+        if (match) {
+            return template.replace("$1", match[1] || "0");
+        }
+    }
+
+    if (/^keywords:/i.test(normalized) || /^colloquial keywords:/i.test(normalized) || /^target subreddits:/i.test(normalized) || /^competitors:/i.test(normalized) || /^audience:/i.test(normalized)) {
+        return null;
+    }
+
+    if (/^scan complete:/i.test(normalized)) {
+        return normalized.replace(/^scan complete:/i, "Scan complete:");
+    }
+
+    if (/^platform warnings/i.test(normalized)) {
+        return null;
+    }
+
+    if (/^mode/i.test(normalized) || /^config/i.test(normalized) || /^subs/i.test(normalized) || /^subreddits/i.test(normalized) || /^forced subs/i.test(normalized) || /^icp/i.test(normalized) || /^method/i.test(normalized) || /^enrichment/i.test(normalized)) {
+        return null;
+    }
+
+    return null;
+}
+
+async function maybeRecordDegradedCoverageAdminEvent(validationId: string) {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data, error } = await supabaseAdmin
+        .from("idea_validations")
+        .select("id, progress_log, report")
+        .eq("id", validationId)
+        .maybeSingle();
+
+    if (error || !data) {
+        return;
+    }
+
+    const report = parseReportObject(data.report);
+    const coverage = summarizeValidationCoverage({
+        platformWarnings: Array.isArray((report.data_quality as Record<string, unknown> | undefined)?.platform_warnings)
+            ? ((report.data_quality as Record<string, unknown>).platform_warnings as unknown[])
+            : Array.isArray(report.platform_warnings)
+                ? (report.platform_warnings as unknown[])
+                : [],
+        partialCoverage: Boolean((report.data_quality as Record<string, unknown> | undefined)?.partial_coverage),
+        progressLog: Array.isArray(data.progress_log) ? data.progress_log as unknown[] : [],
+    });
+
+    if (coverage.status !== "degraded") {
+        return;
+    }
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+        .from("admin_events")
+        .select("id")
+        .eq("action", "validation_source_degraded")
+        .eq("target_type", "validation")
+        .eq("target_id", validationId)
+        .limit(1)
+        .maybeSingle();
+
+    if (existingError) {
+        const message = String(existingError.message || "").toLowerCase();
+        if (!message.includes("relation") && !message.includes("does not exist")) {
+            throw existingError;
+        }
+        return;
+    }
+
+    if (existing) return;
+
+    await recordAdminEvent({
+        action: "validation_source_degraded",
+        targetType: "validation",
+        targetId: validationId,
+        severity: "warning",
+        message: coverage.summary || "Validation completed with degraded source coverage.",
+        metadata: {
+            warning_platforms: coverage.warningPlatforms,
+            warnings: coverage.warnings,
+            partial_coverage: coverage.partialCoverage,
+            used_database_fallback: coverage.usedDatabaseFallback,
+        },
+    });
+}
 
 let supabaseAdminClient: ReturnType<typeof createAdminClient<any>> | null = null;
 
@@ -273,6 +444,7 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
     let stderrBuffer = "";
     let progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let progressWritesEnabled = true;
+    const emittedSignals = new Set<string>();
 
     const normalizeProgressLine = (line: string) => line.replace(/\r/g, "").trim();
 
@@ -302,6 +474,40 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
             progressLines.splice(0, progressLines.length - 80);
         }
         persistProgressSoon();
+    };
+
+    const emitSafeSignalOnce = (key: string, message: string) => {
+        if (emittedSignals.has(key)) return;
+        emittedSignals.add(key);
+        pushProgressLine("stdout", message);
+    };
+
+    const pushUserFacingProgressLine = (stream: "stdout" | "stderr", rawLine: string) => {
+        const safeMessage = sanitizeUserFacingProgressLine(rawLine);
+        if (safeMessage) {
+            pushProgressLine("stdout", safeMessage);
+        }
+
+        if (/Reddit:\s*0\s*posts/i.test(rawLine)) {
+            emitSafeSignalOnce(
+                "reddit-zero-results",
+                "Reddit returned no usable posts for this run. CueIdea is continuing with other sources and recent database history.",
+            );
+        }
+
+        if (/reddit/i.test(rawLine) && SUPPRESSED_PROGRESS_PATTERNS.some((pattern) => pattern.test(rawLine))) {
+            emitSafeSignalOnce(
+                "reddit-degraded",
+                "Reddit access is limited for this run. Continuing with other sources and recent database history.",
+            );
+        }
+
+        if (/pytrends not installed/i.test(rawLine)) {
+            emitSafeSignalOnce(
+                "trends-unavailable",
+                "Trend enrichment is unavailable for this run. Continuing with the evidence already collected.",
+            );
+        }
     };
 
     const flushBufferedProgress = () => {
@@ -377,7 +583,7 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
                 const lines = stdoutBuffer.split(/\r?\n/);
                 stdoutBuffer = lines.pop() || "";
                 for (const line of lines) {
-                    pushProgressLine("stdout", line);
+                    pushUserFacingProgressLine("stdout", line);
                 }
             });
 
@@ -388,7 +594,7 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
                 const lines = stderrBuffer.split(/\r?\n/);
                 stderrBuffer = lines.pop() || "";
                 for (const line of lines) {
-                    pushProgressLine("stderr", line);
+                    pushUserFacingProgressLine("stderr", line);
                 }
             });
 
@@ -441,6 +647,9 @@ export async function startValidationWorker() {
 
         try {
             await runValidationCommand(job.data, job.signal);
+            await maybeRecordDegradedCoverageAdminEvent(job.data.validationId).catch((error) => {
+                console.error(`[Queue] Could not record degraded coverage admin event for ${job.data.validationId}:`, error);
+            });
             console.log(`[Queue] Validation ${job.data.validationId} completed successfully`);
             return { ok: true };
         } catch (error) {

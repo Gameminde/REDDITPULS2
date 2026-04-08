@@ -8,7 +8,7 @@ import { hasRedditLabOptions, type RedditLabValidationOptions } from "@/lib/redd
 import { getRedditConnectionSummary, loadSourcePackForUser, resolveRedditLabContextForValidation } from "@/lib/reddit-lab-server";
 import { createClient } from "@/lib/supabase-server";
 import { getRuntimeSettings } from "@/lib/runtime-settings";
-import { DEFAULT_DEPTH, isValidDepth, type ValidationDepth } from "@/lib/validation-depth";
+import { DEFAULT_DEPTH, getValidationDepthOption, isValidDepth, type ValidationDepth } from "@/lib/validation-depth";
 
 const validateTimestamps = new Map<string, number[]>();
 const MAX_VALIDATIONS_PER_HOUR = 5;
@@ -45,16 +45,22 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Rate limit exceeded - max 5 validations per hour" }, { status: 429 });
         }
 
+        const body = await req.json();
+        const depth: ValidationDepth = isValidDepth(body?.depth) ? body.depth : DEFAULT_DEPTH;
+        const depthOption = getValidationDepthOption(depth);
+
         const { isPremium } = await checkPremium(supabase, user.id);
-        if (!isPremium) {
+        if (depthOption.premiumRequired && !isPremium) {
             await trackServerEvent(req, {
                 eventName: "validation_failed",
                 scope: "product",
                 route: "/dashboard/validate",
                 userId: user.id,
-                properties: { reason: "not_premium" },
+                properties: { reason: "not_premium", depth },
             });
-            return NextResponse.json({ error: "Premium subscription required" }, { status: 403 });
+            return NextResponse.json({
+                error: `${depthOption.label} requires a premium plan. Use Quick Validation or upgrade.`,
+            }, { status: 403 });
         }
 
         const runtimeSettings = await getRuntimeSettings();
@@ -71,7 +77,6 @@ export async function POST(req: NextRequest) {
             }, { status: 503 });
         }
 
-        const body = await req.json();
         const idea = typeof body?.idea === "string" ? body.idea : "";
         if (idea.trim().length < 10) {
             await trackServerEvent(req, {
@@ -85,7 +90,6 @@ export async function POST(req: NextRequest) {
         }
 
         const trimmedIdea = idea.trim().slice(0, 2000);
-        const depth: ValidationDepth = isValidDepth(body?.depth) ? body.depth : DEFAULT_DEPTH;
         let redditLabOptions: RedditLabValidationOptions | null = hasRedditLabOptions(body?.reddit_lab)
             ? body.reddit_lab
             : null;

@@ -6,8 +6,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useUserPlan } from "@/lib/use-user-plan";
-import { PremiumGate } from "@/app/components/premium-gate";
-import { VALIDATION_DEPTHS, type ValidationDepth, DEFAULT_DEPTH } from "@/lib/validation-depth";
+import { VALIDATION_DEPTHS, type ValidationDepth, DEFAULT_DEPTH, getValidationDepthOption } from "@/lib/validation-depth";
 import { ValidationProgressPane, type ValidationProgressEvent } from "./ValidationProgressPane";
 
 /* ── Status pipeline constants ───────────────────────── */
@@ -29,17 +28,17 @@ const STATUS_ORDER = [
  */
 const STATUS_LOG: Record<string, { msg: string; type: string }> = {
     starting:               { msg: "[INIT] Validation pipeline activated", type: "info" },
-    queued:                 { msg: "[QUEUE] Waiting for execution slot...", type: "muted" },
-    decomposing:            { msg: "[PHASE 1] Decomposing idea → keywords, audience, competitors", type: "info" },
-    decomposed:             { msg: "[✓ PHASE 1] Keywords and competitors extracted", type: "success" },
+    queued:                 { msg: "[QUEUE] Waiting for execution slot…", type: "muted" },
+    decomposing:            { msg: "[PHASE 1] Decomposing idea -> keywords, audience, competitors", type: "info" },
+    decomposed:             { msg: "[DONE PHASE 1] Keywords and competitors extracted", type: "success" },
     scraping:               { msg: "[PHASE 2] Scraping Reddit, HN, ProductHunt, IndieHackers...", type: "info" },
-    scraped:                { msg: "[✓ PHASE 2] Market data collected", type: "success" },
-    analyzing_trends:       { msg: "[PHASE 2b] Analyzing Google Trends data...", type: "info" },
+    scraped:                { msg: "[DONE PHASE 2] Market data collected", type: "success" },
+    analyzing_trends:       { msg: "[PHASE 2b] Analyzing Google Trends data…", type: "info" },
     analyzing_competition:  { msg: "[PHASE 2c] Mapping competitive landscape...", type: "info" },
-    synthesizing:           { msg: "[PHASE 3] AI synthesis starting...", type: "debate" },
-    done:                   { msg: "[✓ COMPLETE] Report generated — redirecting...", type: "success" },
-    error:                  { msg: "[✗] Validation failed", type: "error" },
-    failed:                 { msg: "[✗] Process error", type: "error" },
+    synthesizing:           { msg: "[PHASE 3] AI synthesis starting…", type: "debate" },
+    done:                   { msg: "[DONE] Report generated. Redirecting…", type: "success" },
+    error:                  { msg: "[FAILED] Validation failed", type: "error" },
+    failed:                 { msg: "[FAILED] Process error", type: "error" },
 };
 
 /* Sub-status patterns for Phase 3 agent debate */
@@ -66,11 +65,11 @@ function getStatusLog(status: string): { msg: string; type: string } | null {
 }
 
 const BUTTON_STAGES = [
-    { label: "◉ DECOMPOSING...", detail: "Extracting keywords, audience, competitors" },
-    { label: "◌ SCRAPING...", detail: "Reddit, HN, ProductHunt, IndieHackers" },
-    { label: "◍ ANALYZING...", detail: "Trends + competition mapping" },
-    { label: "◑ DEBATING...", detail: "Multi-model AI synthesis" },
-    { label: "◈ COMPLETE", detail: "Report generated" },
+    { label: "DECOMPOSING…", detail: "Extracting keywords, audience, competitors" },
+    { label: "SCRAPING…", detail: "Reddit, HN, ProductHunt, IndieHackers" },
+    { label: "ANALYZING…", detail: "Trends and competition mapping" },
+    { label: "DEBATING…", detail: "Multi-model AI synthesis" },
+    { label: "COMPLETE", detail: "Report generated" },
 ];
 
 /* ── Types ───────────────────────────────────────────── */
@@ -259,6 +258,8 @@ const ValidatePage = () => {
     const [pain, setPain] = useState("");
     const [competitors, setCompetitors] = useState("");
     const [depth, setDepth] = useState<ValidationDepth>(DEFAULT_DEPTH);
+    const selectedDepthOption = getValidationDepthOption(depth);
+    const selectedDepthLocked = selectedDepthOption.premiumRequired && !isPremium;
 
     /* validation state */
     const [activeValidation, setActiveValidation] = useState<Validation | null>(null);
@@ -385,7 +386,6 @@ const ValidatePage = () => {
 
     /* ── Fetch AI config ────────────────────────────────── */
     useEffect(() => {
-        if (!isPremium) return;
         fetch("/api/settings/ai")
             .then((r) => r.json())
             .then((d) => {
@@ -395,11 +395,10 @@ const ValidatePage = () => {
                 }
             })
             .catch(() => {});
-    }, [isPremium]);
+    }, []);
 
     /* ── Fetch validation history ───────────────────────── */
     useEffect(() => {
-        if (!isPremium) return;
         fetch("/api/validate")
             .then((r) => r.json())
             .then((d) => {
@@ -409,7 +408,7 @@ const ValidatePage = () => {
                 setHistory(completed);
             })
             .catch(() => {});
-    }, [isPremium]);
+    }, []);
 
     useEffect(() => {
         const prefillIdea = searchParams.get("idea");
@@ -448,10 +447,10 @@ const ValidatePage = () => {
 
         let msg = label.msg;
         if (status === "scraped" && validation.posts_found) {
-            msg = `[✓ PHASE 2] Found ${validation.posts_found} posts — filtering for relevance`;
+            msg = `[DONE PHASE 2] Found ${validation.posts_found} posts. Filtering for relevance.`;
         }
         if ((status === "failed" || status === "error") && typeof validation.report?.error === "string" && validation.report.error.trim()) {
-            msg = `[✗] ${validation.report.error.trim()}`;
+            msg = `[FAILED] ${validation.report.error.trim()}`;
         }
         setLogEntries((prev) => [...prev, { time: `${mm}:${ss}`, msg, type: label.type }]);
     }, []);
@@ -596,7 +595,7 @@ const ValidatePage = () => {
                         lastStatusRef.current = validation.status;
                         lastProgressIdRef.current = 0;
                         setLogEntries([
-                            { time: "00:00", msg: `[SYS] Reconnected to validation ${savedId.slice(0, 8)}...`, type: "info" },
+                            { time: "00:00", msg: `[SYS] Reconnected to validation ${savedId.slice(0, 8)}…`, type: "info" },
                         ]);
                         appendLiveProgress(validation.report);
                     }
@@ -646,6 +645,10 @@ const ValidatePage = () => {
 
     const handleValidate = async () => {
         if (!idea.trim()) return;
+        if (selectedDepthLocked) {
+            router.push("/dashboard/pricing");
+            return;
+        }
         if (typeof window !== "undefined" && window.localStorage.getItem(ACTIVE_VALIDATION_ID_KEY)) {
             setActiveValidationWarning("A validation is already running. Wait for it to finish or cancel it first.");
             return;
@@ -692,7 +695,7 @@ const ValidatePage = () => {
                 });
                 setLogEntries((prev) => [
                     ...prev,
-                    { time: "00:00", msg: `[SYS] Validation ${String(jobId).slice(0, 8)}… queued`, type: "muted" },
+                    { time: "00:00", msg: `[SYS] Validation ${String(jobId).slice(0, 8)} queued`, type: "muted" },
                 ]);
             } else {
                 setIsValidating(false);
@@ -700,7 +703,7 @@ const ValidatePage = () => {
             }
         } catch (error) {
             setIsValidating(false);
-            setValidationError(error instanceof Error ? error.message : "Network error — check your connection");
+            setValidationError(error instanceof Error ? error.message : "Network error. Check your connection.");
         }
     };
 
@@ -734,23 +737,35 @@ const ValidatePage = () => {
         { label: "Debate", done: isdone, active: issynth },
         { label: "Report", done: isdone, active: false },
     ];
-    const validationDisabled = isValidating || !idea.trim() || Boolean(storedActiveValidationId);
-    const validationCtaLabel = isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation";
-
-    if (!isPremium) return <PremiumGate feature="Validate Idea" />;
+    const validationDisabled = isValidating || !idea.trim() || Boolean(storedActiveValidationId) || selectedDepthLocked;
+    const validationCtaLabel = isValidating
+        ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..."
+        : depth === "quick"
+            ? "Run Quick Validation"
+            : depth === "deep"
+                ? "Run Deep Validation"
+                : "Start Market Investigation";
 
     return (
         <div className="relative z-10 mx-auto max-w-[1120px] px-0 pt-2 pb-[120px] sm:pt-3">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6 sm:mb-8">
                 <div className="section-kicker mb-3 sm:mb-4">Validate one idea</div>
                 <h1 className="text-[26px] font-bold font-display tracking-tight-custom text-white sm:text-[30px] md:text-[38px]">
-                    Check the idea before you build it.
+                    Decide if the idea deserves to be built.
                 </h1>
                 <p className="mt-2.5 max-w-[720px] text-[13px] leading-6 text-muted-foreground md:text-[14px] md:leading-7">
-                    Paste one startup idea, describe the buyer and the pain, and CueIdea will collect proof from real discussions.
-                    You get a clear build, risky, or don&apos;t build recommendation with timing, competition, and next-step context.
+                    Describe one startup idea, the buyer, and the pain. CueIdea gathers proof from real discussions and turns it into a build, risky, or do not build decision with timing, competition, and next-step context.
                 </p>
             </motion.div>
+
+            {!isPremium && (
+                <div className="mb-4 bento-cell rounded-[14px] border border-primary/15 bg-primary/5 p-4">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary">Beta access</div>
+                    <p className="mt-2 text-sm text-foreground/85">
+                        Quick Validation is available here. Deep Validation and Market Investigation stay premium because they use more time, more sources, and a heavier synthesis pass.
+                    </p>
+                </div>
+            )}
 
             {validationError && (
                 <div className="mb-4 bento-cell p-4 rounded-[14px] border border-dont/20 bg-dont/5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -822,15 +837,14 @@ const ValidatePage = () => {
                             <div className="text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
                                 Founder workflow
                             </div>
-                            <h2 className="mt-2 text-[22px] font-semibold text-white">Describe the idea you want to sanity-check.</h2>
+                            <h2 className="mt-2 text-[22px] font-semibold text-white">Describe the bet you want to test.</h2>
                             <p className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground">
-                                Be concrete about the buyer, the repeated pain, and what makes the workflow worth fixing.
-                                The clearer the idea, the better the proof, competition read, and recommendation you get back.
+                                Be concrete about the buyer, the repeated pain, and why this workflow matters. The sharper the setup, the sharper the recommendation.
                             </p>
                         </div>
                         <div className="verdict-badge">
                             <Terminal className="h-3 w-3" />
-                            Live validation run
+                            Decision run
                         </div>
                     </div>
 
@@ -922,6 +936,11 @@ const ValidatePage = () => {
                                 );
                             })}
                         </div>
+                        {selectedDepthLocked && (
+                            <p className="mt-3 text-xs text-muted-foreground">
+                                {selectedDepthOption.label} needs premium. Switch to Quick Validation or upgrade to run the heavier sweep.
+                            </p>
+                        )}
                     </div>
 
                     <div className="mt-4 grid grid-cols-2 gap-3 xl:hidden">
@@ -959,11 +978,11 @@ const ValidatePage = () => {
                     >
                         <div className="mb-4">
                             <div className="text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-primary">
-                                Launch
+                                Decision
                             </div>
-                            <h3 className="mt-2 text-lg font-semibold text-white">Run the full validation flow.</h3>
+                            <h3 className="mt-2 text-lg font-semibold text-white">{selectedDepthOption.label}</h3>
                             <p className="mt-2 text-[13px] leading-6 text-muted-foreground">
-                                Scrape. Analyze. Debate. Report. One launch, one verdict.
+                                {selectedDepthOption.uiCopy}
                             </p>
                         </div>
 
@@ -987,7 +1006,9 @@ const ValidatePage = () => {
                         <p className="mt-3 text-center text-[11px] font-mono text-muted-foreground">
                             {storedActiveValidationId
                                 ? "A validation is already running for this account."
-                                : "Full report with evidence, timing, competition, and multi-model debate."}
+                                : selectedDepthLocked
+                                    ? `${selectedDepthOption.label} needs premium.`
+                                    : "You will get a report with evidence, timing, competition, and the next move."}
                         </p>
                     </motion.div>
 
@@ -1032,10 +1053,23 @@ const ValidatePage = () => {
                                                 </div>
                                             </div>
                                         </div>
+                                        {opt.premiumRequired && !isPremium ? (
+                                            <div className="mt-2 text-[10px] font-mono uppercase tracking-[0.12em] text-risky">
+                                                Premium
+                                            </div>
+                                        ) : null}
                                     </button>
                                 );
                             })}
                         </div>
+                        {selectedDepthLocked ? (
+                            <Link
+                                href="/dashboard/pricing"
+                                className="mt-3 inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+                            >
+                                Unlock {selectedDepthOption.label}
+                            </Link>
+                        ) : null}
                     </motion.div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1209,7 +1243,9 @@ const ValidatePage = () => {
                         <div className="mt-1 text-xs leading-5 text-muted-foreground">
                             {storedActiveValidationId
                                 ? "A validation is already running for this account."
-                                : "Launch the full validation flow with one tap."}
+                                : selectedDepthLocked
+                                    ? `${selectedDepthOption.label} needs premium.`
+                                    : "Run this validation with one tap."}
                         </div>
                     </div>
                     <button
@@ -1226,304 +1262,7 @@ const ValidatePage = () => {
                 </div>
             </div>
 
-            <div className="hidden grid-cols-12 gap-2.5" style={{ gridAutoRows: "80px" }}>
-
-                {/* Idea textarea — 8 cols, 4 rows */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 }}
-                    className="bento-cell col-span-8 row-span-4 p-5 flex flex-col"
-                >
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3 font-sans">
-                        Describe your idea
-                    </label>
-                    <textarea
-                        value={idea}
-                        onChange={(e) => setIdea(e.target.value)}
-                        disabled={isValidating}
-                        placeholder="e.g., A tool that scrapes Reddit to validate SaaS ideas using AI debate between multiple models..."
-                        className="flex-1 bg-transparent border-none text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none resize-none font-mono leading-relaxed"
-                    />
-                </motion.div>
-
-                {/* Launch button — 4 cols, 2 rows */}
-                <motion.button
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
-                    onClick={handleValidate}
-                    disabled={isValidating || !idea.trim() || Boolean(storedActiveValidationId)}
-                    whileHover={{ scale: 1.01, y: -2 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="col-span-4 row-span-2 rounded-[14px] flex flex-col items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{
-                        background: "linear-gradient(135deg, hsla(16,100%,50%,0.15), hsla(16,80%,55%,0.08))",
-                        border: "1px solid hsla(16,100%,50%,0.25)",
-                        boxShadow: isValidating
-                            ? "0 0 40px hsla(16,100%,50%,0.2), inset 0 0 20px hsla(16,100%,50%,0.05)"
-                            : "none",
-                    }}
-                >
-                    {isValidating ? (
-                        <Loader2 className="w-7 h-7 text-primary animate-spin mb-2" />
-                    ) : (
-                        <Zap className="w-7 h-7 text-primary mb-2" />
-                    )}
-                    <span className="font-mono text-[11px] font-semibold tracking-[0.12em] text-primary uppercase relative z-10 w-full text-center">
-                        {isValidating ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..." : "Launch Validation"}
-                    </span>
-                </motion.button>
-
-                {/* Depth mode selector — 4 cols, 2 rows */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.12 }}
-                    className="bento-cell col-span-4 row-span-2 p-4 flex flex-col"
-                >
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2 font-sans">
-                        Validation Depth
-                    </label>
-                    <div className="flex flex-col gap-1.5 flex-1 justify-center">
-                        {VALIDATION_DEPTHS.map((opt) => {
-                            const isActive = depth === opt.mode;
-                            const Icon = opt.mode === "quick" ? Search : opt.mode === "deep" ? FlaskConical : Telescope;
-                            return (
-                                <button
-                                    key={opt.mode}
-                                    onClick={() => setDepth(opt.mode)}
-                                    disabled={isValidating}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-all text-[11px] font-mono disabled:opacity-40 ${
-                                        isActive
-                                            ? "bg-primary/12 border border-primary/30 text-primary"
-                                            : "bg-white/3 border border-white/6 text-muted-foreground hover:bg-white/6 hover:border-white/12"
-                                    }`}
-                                >
-                                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
-                                    <span className="font-semibold">{opt.label}</span>
-                                    <span className="ml-auto text-[10px] opacity-60">
-                                        ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`}
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </motion.div>
-
-                {/* Posts stat — 2 cols, 2 rows */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 }}
-                    className="bento-cell col-span-2 row-span-2 p-4 flex flex-col items-center justify-center"
-                >
-                    <p
-                        className="font-mono text-[30px] font-extrabold leading-none text-primary tabular-nums"
-                        style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.4)" }}
-                    >
-                        {activeValidation
-                            ? activeValidation.posts_found ||
-                              Object.values(dataSources as Record<string, number>).reduce((a, b) => a + Number(b), 0) ||
-                              "—"
-                            : "—"}
-                    </p>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mt-2">Posts</p>
-                </motion.div>
-
-                {/* Platforms stat — 2 cols, 2 rows */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="bento-cell col-span-2 row-span-2 p-4 flex flex-col items-center justify-center"
-                >
-                    <p
-                        className="font-mono text-[30px] font-extrabold leading-none text-primary tabular-nums"
-                        style={{ textShadow: "0 0 24px hsla(16,100%,50%,0.4)" }}
-                    >
-                        {activeValidation ? Object.keys(dataSources).length || "—" : "—"}
-                    </p>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mt-2">Platforms</p>
-                </motion.div>
-
-                {/* Target — 3 cols, 1 row */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.25 }}
-                    className="bento-cell col-span-3 row-span-1 p-3 flex items-center gap-3"
-                >
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground whitespace-nowrap">
-                        Target
-                    </label>
-                    <input
-                        value={target}
-                        onChange={(e) => setTarget(e.target.value)}
-                        disabled={isValidating}
-                        placeholder="SaaS founders"
-                        className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
-                    />
-                </motion.div>
-
-                {/* Pain hypothesis — 9 cols, 1 row */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 }}
-                    className="bento-cell col-span-9 row-span-1 p-3 flex items-center gap-3"
-                >
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground whitespace-nowrap">
-                        Pain Hypothesis
-                    </label>
-                    <input
-                        value={pain}
-                        onChange={(e) => setPain(e.target.value)}
-                        disabled={isValidating}
-                        placeholder="Manual validation is slow and unreliable"
-                        className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
-                    />
-                </motion.div>
-
-                {/* Competitors — 12 cols, 1 row */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.35 }}
-                    className="bento-cell col-span-12 row-span-1 p-3 flex items-center gap-3"
-                >
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground whitespace-nowrap">
-                        Known Competitors
-                    </label>
-                    <input
-                        value={competitors}
-                        onChange={(e) => setCompetitors(e.target.value)}
-                        disabled={isValidating}
-                        placeholder="GummySearch, SparkToro, Exploding Topics"
-                        className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none font-mono"
-                    />
-                </motion.div>
-
-                {/* ─── Active Models — 4 cols, 3 rows ─── */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="bento-cell col-span-4 row-span-3 p-5"
-                >
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Active Models</p>
-                    {configuredModels.length > 0 ? (
-                        <div className="space-y-2.5">
-                            {configuredModels.slice(0, 3).map((m: string) => {
-                                const active = isValidating || activeValidation?.status === "done";
-                                return (
-                                    <div key={m} className="flex items-center gap-2">
-                                        <span
-                                            className={`w-[5px] h-[5px] rounded-full ${active ? "bg-build" : "bg-muted-foreground/30"}`}
-                                            style={active ? { animation: "pulse-green 2s ease infinite" } : {}}
-                                        />
-                                        <span className="text-xs font-medium text-foreground">{m}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="flex flex-col items-center justify-center h-[calc(100%-24px)] gap-2 text-center">
-                            <Settings className="w-4 h-4 text-muted-foreground/40" />
-                            <Link
-                                href="/dashboard/settings"
-                                className="text-[11px] font-mono text-muted-foreground hover:text-primary transition-colors"
-                            >
-                                Configure models →
-                            </Link>
-                        </div>
-                    )}
-                </motion.div>
-
-                {/* ─── Validation History — 4 cols, 3 rows (was: Activity 14d chart) ─── */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.45 }}
-                    className="bento-cell col-span-4 row-span-3 p-5 overflow-hidden"
-                >
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">
-                        Recent Validations
-                    </p>
-                    {history.length > 0 ? (
-                        <div className="space-y-2">
-                            {history.map((h) => (
-                                <Link key={h.id} href={`/dashboard/reports/${h.id}`} className="block group">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                                            <span
-                                                className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold uppercase border shrink-0 ${getVerdictBg(h.verdict)} ${getVerdictColor(h.verdict)}`}
-                                            >
-                                                {(h.verdict || "?").length > 7
-                                                    ? (h.verdict || "?").slice(0, 5)
-                                                    : h.verdict}
-                                            </span>
-                                            <span className="text-[11px] text-foreground/70 truncate group-hover:text-primary transition-colors">
-                                                {h.idea_text.length > 35
-                                                    ? h.idea_text.slice(0, 35) + "…"
-                                                    : h.idea_text}
-                                            </span>
-                                        </div>
-                                        <span className="text-[11px] font-mono text-muted-foreground/50 whitespace-nowrap">
-                                            {h.confidence}%
-                                        </span>
-                                    </div>
-                                </Link>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="flex flex-col items-center justify-center h-[calc(100%-24px)] gap-1 opacity-40">
-                            <Clock className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-[11px] font-mono text-muted-foreground">No validations yet</span>
-                        </div>
-                    )}
-                </motion.div>
-
-                {/* ─── Pipeline Status — 4 cols, 3 rows (was: Avg Score dial) ─── */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 }}
-                    className="bento-cell col-span-4 row-span-3 p-5"
-                >
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Pipeline</p>
-                    <div className="space-y-2">
-                        {pipelinePhases.map((phase, i) => (
-                            <div key={i} className="flex items-center gap-2.5">
-                                <div
-                                    className={`w-[7px] h-[7px] rounded-full flex-shrink-0 transition-all duration-300 ${
-                                        phase.done
-                                            ? "bg-build shadow-[0_0_6px_hsla(142,76%,45%,0.5)]"
-                                            : phase.active
-                                              ? "bg-primary shadow-[0_0_8px_hsla(16,100%,50%,0.5)] animate-pulse"
-                                              : "bg-muted-foreground/20"
-                                    }`}
-                                />
-                                <span
-                                    className={`text-[11px] font-mono transition-colors ${
-                                        phase.done
-                                            ? "text-build"
-                                            : phase.active
-                                              ? "text-primary font-semibold"
-                                              : "text-muted-foreground/40"
-                                    }`}
-                                >
-                                    {phase.label}
-                                </span>
-                                {phase.done && <CheckCircle2 className="w-3 h-3 text-build ml-auto" />}
-                                {phase.active && <Loader2 className="w-3 h-3 text-primary ml-auto animate-spin" />}
-                            </div>
-                        ))}
-                    </div>
-                </motion.div>
-            </div>
-
-            {/* ── Live Terminal — expandable phase log with debate cards ── */}
+            {/* Live run log */}
             {(activeValidation || isValidating) && (
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -1540,7 +1279,7 @@ const ValidatePage = () => {
                                 <span className="w-2 h-2 rounded-full bg-risky/60" />
                                 <span className="w-2 h-2 rounded-full bg-build/60" />
                             </div>
-                            <span className="text-[11px] font-mono text-muted-foreground ml-2">validation.stream</span>
+                            <span className="text-[11px] font-mono text-muted-foreground ml-2">Run Log</span>
                             <span className="text-[11px] font-mono text-muted-foreground/50 ml-1">
                                 {termExpanded ? "click to collapse" : "click to expand"}
                             </span>
@@ -1597,14 +1336,14 @@ const ValidatePage = () => {
                                     "Signal Scanner": "border-l-amber-400 bg-amber-500/5",
                                 };
                                 const roleIcons: Record<string, string> = {
-                                    "Market Analyst": "🔬",
-                                    "Strategist": "♟️",
-                                    "GTM Planner": "🚀",
-                                    "Consensus Engine": "⚡",
-                                    "Signal Scanner": "📡",
+                                    "Market Analyst": "AN",
+                                    "Strategist": "ST",
+                                    "GTM Planner": "GTM",
+                                    "Consensus Engine": "AI",
+                                    "Signal Scanner": "SC",
                                 };
                                 const cardStyle = roleColors[roleName] || "border-l-white/20 bg-white/5";
-                                const icon = roleIcons[roleName] || "🤖";
+                                const icon = roleIcons[roleName] || "AI";
 
                                 return (
                                     <motion.div

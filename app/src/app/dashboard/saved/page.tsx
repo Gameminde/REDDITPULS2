@@ -224,7 +224,7 @@ export default function SavedPage() {
                             <Radar className="w-5 h-5 text-primary" /> Monitors
                         </h1>
                         <p className="text-[13px] text-muted-foreground mt-1">
-                            Track opportunity movement, validation confidence, and live pain signals in one recurring workflow.
+                            Track what changed so you do not need to keep checking opportunities and validations manually.
                         </p>
                     </div>
 

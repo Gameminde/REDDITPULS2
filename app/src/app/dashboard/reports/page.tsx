@@ -94,11 +94,11 @@ export default function ReportsDirectoryPage() {
                     <div className="flex items-center gap-3 mb-2">
                         <FileText className="w-6 h-6 text-primary" />
                         <h1 className="font-display text-4xl font-extrabold text-white tracking-tight-custom">
-                            Directory
+                            Validation Reports
                         </h1>
                     </div>
                     <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                        Archive of synthesized intelligence reports.
+                        Finished decision reports with evidence, verdict, and next steps.
                     </p>
                 </div>
                 
@@ -107,7 +107,7 @@ export default function ReportsDirectoryPage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <input 
                         type="text" 
-                        placeholder="SEARCH ARCHIVE..." 
+                        placeholder="SEARCH REPORTS..." 
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="w-full bg-surface-1 border border-white/10 rounded-lg pl-10 pr-4 py-2 font-mono text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 transition-colors"

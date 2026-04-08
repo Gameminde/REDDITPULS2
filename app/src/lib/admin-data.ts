@@ -12,6 +12,7 @@ import { enqueueValidationJob } from "@/lib/queue";
 import { getRuntimeSettings, updateRuntimeSettings } from "@/lib/runtime-settings";
 import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
 import { createAdmin } from "@/lib/supabase-admin";
+import { summarizeValidationCoverage } from "@/lib/validation-coverage";
 
 const execAsync = promisify(exec);
 const DAY_MS = 86_400_000;
@@ -427,18 +428,40 @@ export async function getAdminValidationsData(filters?: { status?: string; depth
         .filter((row) => !filters?.status || String(row.status || "").toLowerCase() === filters.status.toLowerCase())
         .filter((row) => !filters?.depth || String(row.depth || "").toLowerCase() === filters.depth.toLowerCase())
         .filter((row) => !cutoff || Date.parse(String(row.created_at || "")) >= cutoff)
-        .map((row) => ({
-            id: String(row.id || ""),
-            idea_text: String(row.idea_text || ""),
-            user_id: String(row.user_id || ""),
-            user_email: String(profileMap.get(String(row.user_id || ""))?.email || row.user_id || "unknown"),
-            depth: String(row.depth || "quick"),
-            status: String(row.status || "queued"),
-            verdict: row.verdict ? String(row.verdict) : null,
-            confidence: row.confidence == null ? null : Number(row.confidence),
-            created_at: row.created_at ? String(row.created_at) : null,
-            completed_at: row.completed_at ? String(row.completed_at) : null,
-        }))
+        .map((row) => {
+            const report = row.report && typeof row.report === "object" && !Array.isArray(row.report)
+                ? row.report as Record<string, unknown>
+                : {};
+            const dataQuality = report.data_quality && typeof report.data_quality === "object" && !Array.isArray(report.data_quality)
+                ? report.data_quality as Record<string, unknown>
+                : {};
+            const coverage = summarizeValidationCoverage({
+                platformWarnings: Array.isArray(dataQuality.platform_warnings)
+                    ? dataQuality.platform_warnings as unknown[]
+                    : Array.isArray(report.platform_warnings)
+                        ? report.platform_warnings as unknown[]
+                        : [],
+                partialCoverage: Boolean(dataQuality.partial_coverage),
+                progressLog: Array.isArray(row.progress_log) ? row.progress_log as unknown[] : [],
+            });
+
+            return {
+                id: String(row.id || ""),
+                idea_text: String(row.idea_text || ""),
+                user_id: String(row.user_id || ""),
+                user_email: String(profileMap.get(String(row.user_id || ""))?.email || row.user_id || "unknown"),
+                depth: String(row.depth || "quick"),
+                status: String(row.status || "queued"),
+                verdict: row.verdict ? String(row.verdict) : null,
+                confidence: row.confidence == null ? null : Number(row.confidence),
+                created_at: row.created_at ? String(row.created_at) : null,
+                completed_at: row.completed_at ? String(row.completed_at) : null,
+                coverage_status: coverage.status,
+                coverage_summary: coverage.summary,
+                warning_platforms: coverage.warningPlatforms,
+                used_database_fallback: coverage.usedDatabaseFallback,
+            };
+        })
         .filter((row) => !filters?.user || row.user_email.toLowerCase().includes(filters.user.toLowerCase()));
 
     return {

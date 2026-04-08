@@ -164,7 +164,7 @@ export default function OpportunitiesPage() {
                         Opportunity Radar
                     </h1>
                     <p style={{ fontSize: 13, color: "#64748b", maxWidth: 760, lineHeight: 1.6 }}>
-                        Promoted opportunities become structured decision cards here. The radar stays small, evidence-first, and built for action.
+                        Saved opportunities live here as the tighter shortlist worth revisiting, validating, and tracking.
                     </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(160px, 1fr))", gap: 12, minWidth: 360 }}>

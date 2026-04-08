@@ -172,7 +172,7 @@ export default function DigestPage() {
             <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                 <div>
                     <h1 className="text-[24px] font-bold text-white">Brief</h1>
-                    <p className="text-sm text-muted-foreground">What changed across your monitors and what deserves action next.</p>
+                    <p className="text-sm text-muted-foreground">Your shortest view of what changed and what deserves action next.</p>
                 </div>
                 <button
                     onClick={() => {

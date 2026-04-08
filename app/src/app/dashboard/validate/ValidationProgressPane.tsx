@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckCircle2, Circle, Clock3, Loader2, MessageSquare, Rocket, Search, ShieldAlert } from "lucide-react";
+import { sanitizeValidationProgressMessage, summarizeValidationCoverage } from "@/lib/validation-coverage";
 
 export type ValidationProgressEvent = {
     ts?: number;
@@ -31,7 +32,8 @@ type SourceKey =
     | "producthunt"
     | "indiehackers"
     | "g2_review"
-    | "job_posting";
+    | "job_posting"
+    | "db_history";
 
 const SOURCE_ORDER: Array<{ key: SourceKey; label: string; color: string }> = [
     { key: "reddit", label: "Reddit", color: "text-orange-300" },
@@ -42,6 +44,7 @@ const SOURCE_ORDER: Array<{ key: SourceKey; label: string; color: string }> = [
     { key: "indiehackers", label: "Indie Hackers", color: "text-sky-300" },
     { key: "g2_review", label: "G2", color: "text-orange-300" },
     { key: "job_posting", label: "Jobs", color: "text-emerald-300" },
+    { key: "db_history", label: "DB history", color: "text-violet-300" },
 ];
 
 function normalizeWarning(value: string | Record<string, unknown>) {
@@ -106,7 +109,7 @@ function formatSourceDetail(event?: ValidationProgressEvent) {
     if (count != null) {
         return `${count} items`;
     }
-    return event.message || "updated";
+    return sanitizeValidationProgressMessage(event.message || "", event.source) || "updated";
 }
 
 export function ValidationProgressPane({
@@ -120,12 +123,21 @@ export function ValidationProgressPane({
     for (const event of progressEvents) {
         if (event.source && SOURCE_ORDER.some((item) => item.key === event.source)) {
             sourceEvents.set(event.source as SourceKey, event);
+            continue;
+        }
+        const message = String(event.message || "").toLowerCase();
+        if (message.includes("recent db history") || message.includes("recent database history")) {
+            sourceEvents.set("db_history", { ...event, source: "db_history" });
         }
     }
 
-    const warningText = platformWarnings.map(normalizeWarning).filter(Boolean);
+    const coverage = summarizeValidationCoverage({
+        platformWarnings,
+        progressLog: progressEvents as unknown[],
+    });
+    const warningText = coverage.warnings.map((warning) => warning.issue).filter(Boolean);
     const latestEvents = [...progressEvents]
-        .filter((event) => event.message)
+        .filter((event) => sanitizeValidationProgressMessage(event.message || "", event.source))
         .slice(-4)
         .reverse();
 
@@ -140,9 +152,9 @@ export function ValidationProgressPane({
                 <div>
                     <div className="flex items-center gap-2 text-primary">
                         <Search className="w-4 h-4" />
-                        <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Validating your idea</span>
+                        <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Validation run</span>
                     </div>
-                    <h2 className="mt-2 text-xl font-semibold text-white">Live source progress</h2>
+                    <h2 className="mt-2 text-xl font-semibold text-white">Evidence scan</h2>
                     <p className="mt-1 text-sm text-muted-foreground">{phaseLabel}</p>
                 </div>
 
@@ -187,6 +199,15 @@ export function ValidationProgressPane({
                 })}
             </div>
 
+            {coverage.summary ? (
+                <div className={`mt-4 rounded-xl border px-4 py-3 ${coverage.status === "degraded" ? "border-amber-500/20 bg-amber-500/8" : "border-white/10 bg-black/20"}`}>
+                    <div className={`text-[11px] font-mono uppercase tracking-[0.12em] ${coverage.status === "degraded" ? "text-amber-300" : "text-muted-foreground"}`}>
+                        {coverage.status === "degraded" ? "Coverage update" : "Supporting context"}
+                    </div>
+                    <p className="mt-2 text-sm text-foreground/85">{coverage.summary}</p>
+                </div>
+            ) : null}
+
             <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-4">
                 <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-muted-foreground">
@@ -196,7 +217,7 @@ export function ValidationProgressPane({
                     <div className="mt-3 space-y-2">
                         {latestEvents.length > 0 ? latestEvents.map((event, index) => (
                             <div key={`${event.ts || index}-${index}`} className="text-xs text-foreground/80">
-                                {event.message}
+                                {sanitizeValidationProgressMessage(event.message || "", event.source)}
                             </div>
                         )) : (
                             <div className="text-xs text-muted-foreground">Waiting for the first platform update…</div>
