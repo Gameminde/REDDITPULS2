@@ -135,6 +135,7 @@ export function DashboardLayout({
                         postCount={postCount}
                         modelCount={modelCount}
                         ideaCount={ideaCount}
+                        userEmail={isGuest ? "" : userEmail}
                     />
                     <main className="relative z-10 flex-1 overflow-y-auto px-2 pb-28 pt-2 sm:px-2.5 sm:pt-2.5 md:px-3.5 md:pt-3.5 lg:px-4 lg:pt-3 lg:pb-24">
                         {children}

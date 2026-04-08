@@ -19,11 +19,13 @@ export function TopBar({
     postCount,
     modelCount,
     ideaCount,
+    userEmail,
 }: {
     isGuest: boolean;
     postCount: number;
     modelCount: number;
     ideaCount: number;
+    userEmail?: string;
 }) {
     const [clock, setClock] = useState("");
     const [redditState, setRedditState] = useState<RedditLabTopbarState | null>(null);
@@ -177,6 +179,11 @@ export function TopBar({
             </div>
 
             <div className="flex items-center gap-1.5 sm:gap-2 md:gap-2.5">
+                {!isGuest && userEmail ? (
+                    <span className="hidden max-w-[220px] truncate rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1 font-mono text-[10px] text-muted-foreground md:inline-flex">
+                        {userEmail}
+                    </span>
+                ) : null}
                 {!isGuest && (
                     <Link
                         href="/dashboard/settings"
@@ -196,7 +203,7 @@ export function TopBar({
                             Pricing
                         </Link>
                         <Link
-                            href="/login"
+                            href="/login?mode=signup&next=/dashboard"
                             className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/15 sm:px-3"
                         >
                             <LogIn className="h-3 w-3" />

@@ -323,13 +323,13 @@ export default function LandingPageClient({
                     </div>
 
                     <Link
-                        href="/dashboard"
+                        href="/login?mode=signup&next=/dashboard"
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_28px_rgba(255,90,31,0.26)] transition hover:-translate-y-0.5"
                         data-track-event="open_beta_nav_click"
                         data-track-scope="marketing"
                         data-track-label="nav open beta"
                     >
-                        Open beta
+                        Join beta
                         <ChevronDown className="h-3.5 w-3.5" />
                     </Link>
                 </div>
@@ -406,7 +406,7 @@ export default function LandingPageClient({
                         className="mt-10 flex flex-col items-center gap-3 sm:flex-row"
                     >
                         <Link
-                            href="/dashboard"
+                            href="/login?mode=signup&next=/dashboard"
                             className="inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-bold text-white shadow-[0_0_45px_rgba(255,90,31,0.32)] transition hover:-translate-y-0.5"
                             data-track-event="open_beta_hero_click"
                             data-track-scope="marketing"
@@ -692,13 +692,13 @@ export default function LandingPageClient({
 
                             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
                                 <Link
-                                    href="/dashboard"
+                                    href="/login?mode=signup&next=/dashboard"
                                     className="inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-bold text-white shadow-[0_0_45px_rgba(255,90,31,0.32)] transition hover:-translate-y-0.5"
                                     data-track-event="open_beta_footer_click"
                                     data-track-scope="marketing"
                                     data-track-label="footer open beta"
                                 >
-                                    Open the app
+                                    Join beta
                                     <ArrowRight className="h-3.5 w-3.5" />
                                 </Link>
                                 <Link

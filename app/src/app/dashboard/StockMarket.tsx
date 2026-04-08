@@ -229,6 +229,8 @@ const CATEGORIES = [
     { key: "data", label: "Data" },
 ];
 
+const BETA_AUTH_HREF = "/login?mode=signup&next=/dashboard";
+
 const CONFIDENCE_MAP: Record<string, { label: string; color: string; icon: string }> = {
     INSUFFICIENT: { label: "Needs data", color: "#6b7280", icon: "🔍" },
     LOW: { label: "Early proof", color: "#f59e0b", icon: "📡" },
@@ -674,11 +676,11 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         if (promoteState === "saving" || promoteState === "saved") return;
         if (isGuest) {
             if (typeof window !== "undefined") {
-                window.location.href = "/login";
+                window.location.href = BETA_AUTH_HREF;
                 return;
             }
             setPromoteState("error");
-            setPromoteMessage("Sign in to save this idea to Opportunities.");
+            setPromoteMessage("Join the beta to save this idea to Opportunities.");
             return;
         }
 
@@ -995,7 +997,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                                     fontWeight: 700,
                                                 }}
                                             >
-                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Save to board"}
+                                                {promoteState === "saved" ? "Saved to board" : promoteState === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Save to board"}
                                             </button>
                                         </div>
                                         {promoteMessage && (
@@ -1692,11 +1694,11 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                     {expanded ? "Hide details" : "See details"}
                 </button>
                 <Link
-                    href={isGuest ? "/login" : validateHref}
+                    href={isGuest ? BETA_AUTH_HREF : validateHref}
                     className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-2xl border border-primary/25 bg-primary/10 px-4 text-[11px] font-mono uppercase tracking-[0.12em] text-primary transition-colors hover:bg-primary/15"
                 >
                     <Zap style={{ width: 14, height: 14 }} />
-                    {isGuest ? "Log in" : "Validate"}
+                    {isGuest ? "Join beta" : "Validate"}
                 </Link>
             </div>
 
@@ -1860,11 +1862,11 @@ function IntelligencePromoteButton({
         if (state === "saving" || state === "saved") return;
         if (isGuest) {
             if (typeof window !== "undefined") {
-                window.location.href = "/login";
+                window.location.href = BETA_AUTH_HREF;
                 return;
             }
             setState("error");
-            setMessage("Sign in to save this idea to the board.");
+            setMessage("Join the beta to save this idea to the board.");
             return;
         }
 
@@ -1910,7 +1912,7 @@ function IntelligencePromoteButton({
                     fontWeight: 700,
                 }}
             >
-                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : isGuest ? "Sign in to save" : "Promote to board"}
+                {state === "saved" ? "Saved to board" : state === "saving" ? "Promoting..." : isGuest ? "Join beta to save" : "Promote to board"}
             </button>
             {message && (
                 <div style={{ fontSize: 10, color: state === "error" ? "#fca5a5" : "#bfdbfe", lineHeight: 1.5 }}>
@@ -2382,7 +2384,7 @@ export default function StockMarketDashboard() {
         if (scanning) return;
         if (isGuest) {
             if (typeof window !== "undefined") {
-                window.location.href = "/login";
+                window.location.href = BETA_AUTH_HREF;
             }
             return;
         }
@@ -2513,7 +2515,7 @@ export default function StockMarketDashboard() {
                             ) : isGuest ? (
                                 <>
                                     <Zap style={{ width: 15, height: 15 }} />
-                                    Sign in to run scans
+                                    Join beta to run scans
                                 </>
                             ) : (
                                 <>
@@ -2543,10 +2545,10 @@ export default function StockMarketDashboard() {
                     justifyContent: "space-between",
                 }}>
                     <span>
-                        Browse now. Sign in only when you want to validate, save, or personalize.
+                        Browse now. Join the beta with Google when you want to validate, save, or personalize.
                     </span>
                     <Link
-                        href="/login"
+                        href={BETA_AUTH_HREF}
                         style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -2562,7 +2564,7 @@ export default function StockMarketDashboard() {
                             whiteSpace: "nowrap",
                         }}
                     >
-                        Create account
+                        Join beta with Google
                     </Link>
                 </div>
             )}
