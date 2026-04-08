@@ -220,11 +220,11 @@ export function Dock({
             </div>
 
             <div
-                className="fixed bottom-2 left-1/2 z-[1000] hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto pointer-events-auto lg:block"
-                style={{ scrollbarWidth: "none" }}
+                className="fixed bottom-2 left-1/2 z-[1000] hidden -translate-x-1/2 overflow-x-auto pointer-events-auto lg:block"
+                style={{ scrollbarWidth: "none", maxWidth: "calc(100vw - 1rem)" }}
             >
             <nav
-                className="mx-auto flex min-w-max items-center gap-1"
+                className="mx-auto inline-flex min-w-max items-center gap-1"
                 style={{
                     background: "hsla(0,0%,4%,0.82)",
                     border: "1px solid hsl(0 0% 100% / 0.06)",

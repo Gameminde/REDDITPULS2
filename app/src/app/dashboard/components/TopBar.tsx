@@ -147,7 +147,7 @@ export function TopBar({
             }}
         >
             <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
-                <BrandLogo compact uppercase />
+                <BrandLogo compact uppercase href="/dashboard" className="transition-opacity hover:opacity-90" />
 
                 <div className="hidden h-3 w-px bg-border sm:block" />
 

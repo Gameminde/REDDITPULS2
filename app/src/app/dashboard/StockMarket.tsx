@@ -2178,14 +2178,12 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
 
 function MarketIntelligenceSection({
     intelligence,
-    archivePostCount,
     loading,
     tab,
     onTabChange,
     isGuest,
 }: {
     intelligence: MarketIntelligencePayload | null;
-    archivePostCount?: number;
     loading: boolean;
     tab: IntelligenceTab;
     onTabChange: (tab: IntelligenceTab) => void;
@@ -2196,6 +2194,11 @@ function MarketIntelligenceSection({
         { key: "themes", label: "Themes to refine", icon: Lightbulb, color: "#3b82f6" },
         { key: "competitors", label: "Competitor Pressure", icon: ShieldAlert, color: "#ef4444" },
     ];
+    const allRowCount =
+        (intelligence?.emerging_wedges?.length || 0) +
+        (intelligence?.themes_to_shape?.length || 0) +
+        (intelligence?.competitor_pressure?.length || 0);
+    const showTabs = allRowCount > 0;
 
     const currentRows = tab === "emerging"
         ? intelligence?.emerging_wedges || []
@@ -2204,102 +2207,59 @@ function MarketIntelligenceSection({
             : intelligence?.competitor_pressure || [];
 
     return (
-        <div style={{ marginBottom: 24 }}>
-            <div className="surface-panel" style={{ padding: 18, borderRadius: 18 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 16 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{
-                                width: 36,
-                                height: 36,
-                                borderRadius: 12,
-                                background: "rgba(249,115,22,0.12)",
-                                display: "flex",
+        <div style={{ marginBottom: currentRows.length > 0 ? 20 : 14 }}>
+            <div
+                className="surface-panel"
+                style={{
+                    padding: "10px 12px",
+                    borderRadius: 16,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-start",
+                    gap: 8,
+                    flexWrap: "wrap",
+                }}
+            >
+                {tabs.map((entry) => {
+                    const Icon = entry.icon;
+                    return (
+                        <button
+                            key={entry.key}
+                            onClick={() => onTabChange(entry.key)}
+                            style={{
+                                display: "inline-flex",
                                 alignItems: "center",
-                                justifyContent: "center",
-                                border: "1px solid rgba(249,115,22,0.2)",
-                            }}>
-                                <Radar style={{ width: 16, height: 16, color: "#f97316" }} />
-                            </div>
-                            <div>
-                                <div style={{ fontSize: 16, color: "#f8fafc", fontWeight: 800 }}>Signals to review</div>
-                                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
-                                    Promising lanes that are not ready for the main board yet.
-                                </div>
-                            </div>
-                        </div>
-                        {intelligence?.summary && (
-                            <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.6 }}>
-                                {intelligence.summary.emerging_wedge_count} lane{intelligence.summary.emerging_wedge_count === 1 ? "" : "s"} to review from {intelligence.summary.new_72h_count} new idea{intelligence.summary.new_72h_count === 1 ? "" : "s"} in the last 72h.
-                            </div>
-                        )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        {tabs.map((entry) => {
-                            const Icon = entry.icon;
-                            return (
-                                <button
-                                    key={entry.key}
-                                    onClick={() => onTabChange(entry.key)}
-                                    style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 6,
-                                        padding: "10px 14px",
-                                        borderRadius: 999,
-                                        border: tab === entry.key ? `1px solid ${entry.color}33` : "1px solid rgba(255,255,255,0.08)",
-                                        background: tab === entry.key ? `${entry.color}18` : "rgba(255,255,255,0.03)",
-                                        color: tab === entry.key ? entry.color : "#94a3b8",
-                                        cursor: "pointer",
-                                        fontSize: 12,
-                                        fontWeight: 700,
-                                    }}
-                                >
-                                    <Icon style={{ width: 13, height: 13 }} />
-                                    {entry.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {intelligence?.summary && (
-                    <div style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                        gap: 12,
-                        marginBottom: 14,
-                    }}>
-                        <DetailMetric label="Candidates" value={intelligence.summary.raw_idea_count} accent="#c4b5fd" />
-                        <DetailMetric label="On board" value={intelligence.summary.feed_visible_count} accent="#93c5fd" />
-                        <DetailMetric label="New 72h" value={intelligence.summary.new_72h_count} accent="#fbbf24" />
-                        {Number(archivePostCount || 0) > 0 && (
-                            <DetailMetric label="Posts analyzed" value={Number(archivePostCount || 0)} accent="#a78bfa" />
-                        )}
-                    </div>
-                )}
-
-                {loading ? (
-                    <div style={{ fontSize: 12, color: "#94a3b8" }}>Loading market intelligence...</div>
-                ) : currentRows.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, padding: "4px 2px" }}>
-                        Nothing worth elevating in this lane yet.
-                    </div>
-                ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
-                        {tab === "emerging" && (currentRows as EmergingWedgeCard[]).map((card) => (
-                            <EmergingWedgeTile key={card.slug} card={card} isGuest={isGuest} />
-                        ))}
-                        {tab === "themes" && (currentRows as ThemeToShapeCard[]).map((card) => (
-                            <ThemeToShapeTile key={card.slug} card={card} isGuest={isGuest} />
-                        ))}
-                        {tab === "competitors" && (currentRows as CompetitorPressureCard[]).map((card) => (
-                            <CompetitorPressureTile key={`${card.competitor}-${card.weakness_category}`} card={card} />
-                        ))}
-                    </div>
-                )}
+                                gap: 6,
+                                padding: "8px 12px",
+                                borderRadius: 999,
+                                border: tab === entry.key ? `1px solid ${entry.color}33` : "1px solid rgba(255,255,255,0.08)",
+                                background: tab === entry.key ? `${entry.color}18` : "rgba(255,255,255,0.03)",
+                                color: tab === entry.key ? entry.color : "#94a3b8",
+                                cursor: "pointer",
+                                fontSize: 11.5,
+                                fontWeight: 700,
+                            }}
+                        >
+                            <Icon style={{ width: 13, height: 13 }} />
+                            {entry.label}
+                        </button>
+                    );
+                })}
             </div>
+
+            {!loading && currentRows.length > 0 ? (
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+                    {tab === "emerging" && (currentRows as EmergingWedgeCard[]).map((card) => (
+                        <EmergingWedgeTile key={card.slug} card={card} isGuest={isGuest} />
+                    ))}
+                    {tab === "themes" && (currentRows as ThemeToShapeCard[]).map((card) => (
+                        <ThemeToShapeTile key={card.slug} card={card} isGuest={isGuest} />
+                    ))}
+                    {tab === "competitors" && (currentRows as CompetitorPressureCard[]).map((card) => (
+                        <CompetitorPressureTile key={`${card.competitor}-${card.weakness_category}`} card={card} />
+                    ))}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -2496,7 +2456,7 @@ export default function StockMarketDashboard() {
             {/* Header */}
             <div className="surface-panel" style={{ padding: 18, borderRadius: 18, marginBottom: 18 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
-                    <div style={{ maxWidth: 520 }}>
+                    <div style={{ maxWidth: 620 }}>
                         <div className="section-kicker" style={{ marginBottom: 10 }}>Opportunity board</div>
                         <h1 style={{
                             fontSize: 26, fontWeight: 650, color: "#f8fafc",
@@ -2504,31 +2464,17 @@ export default function StockMarketDashboard() {
                         }}>
                             Find ideas before you build.
                         </h1>
-                        <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 500 }}>
+                        <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 560 }}>
                             Startup opportunities pulled from repeated complaints and buying signals across Reddit, Hacker News, Product Hunt, Indie Hackers, and GitHub Issues.
                         </p>
+                        {lastUpdated && (
+                            <div style={{ marginTop: 10, fontSize: 10.5, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
+                                <Clock style={{ width: 11, height: 11 }} /> Updated {lastUpdated}
+                            </div>
+                        )}
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            {scanStatus && (scanStatus.archiveIdeaCount > 0 || scanStatus.ideaCount > 0) && (
-                                <span style={{
-                                    fontSize: 10, color: "#94a3b8", display: "flex",
-                                    alignItems: "center", gap: 6, background: "rgba(255,255,255,0.03)",
-                                    padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)",
-                                }}>
-                                    <Activity style={{ width: 12, height: 12 }} />
-                                    {liveIdeaCount.toLocaleString()} live opportunities
-                                </span>
-                            )}
-
-                            {lastUpdated && (
-                                <span style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
-                                    <Clock style={{ width: 11, height: 11 }} /> {lastUpdated}
-                                </span>
-                            )}
-                        </div>
-
                         <motion.button
                             onClick={launchScan}
                             disabled={scanning || usingExternalWorker}
@@ -2692,7 +2638,6 @@ export default function StockMarketDashboard() {
 
             <MarketIntelligenceSection
                 intelligence={marketIntelligence}
-                archivePostCount={scanStatus?.archivePostCount || 0}
                 loading={intelligenceLoading}
                 tab={intelligenceTab}
                 onTabChange={setIntelligenceTab}

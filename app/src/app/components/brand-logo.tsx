@@ -24,9 +24,15 @@ export function BrandLogo({
     const iconSize = compact ? 23 : 36;
     const innerRadius = compact ? 9 : 13;
     const alignItems = align === "center" ? "items-center text-center" : "items-start text-left";
+    const destinationLabel = href === "/dashboard" ? "Go to dashboard" : "Go to home";
 
     return (
-        <Link href={href} className={`inline-flex items-center gap-3 no-underline ${className}`}>
+        <Link
+            href={href}
+            aria-label={destinationLabel}
+            title={destinationLabel}
+            className={`inline-flex items-center gap-3 no-underline transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${className}`}
+        >
             <div
                 className="relative shrink-0 rounded-[14px] border border-primary/25"
                 style={{
