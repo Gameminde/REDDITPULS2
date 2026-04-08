@@ -168,7 +168,7 @@ export function Dock({
 
     return (
         <>
-            <div className="fixed bottom-3 left-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[420px] -translate-x-1/2 lg:hidden">
+            <div className="fixed bottom-3 left-1/2 z-[1000] w-[calc(100vw-1rem)] max-w-[420px] -translate-x-1/2 pointer-events-auto lg:hidden">
                 <nav
                     className="mx-auto flex items-end justify-between gap-1 rounded-[24px] border px-2 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] pt-2"
                     style={{
@@ -217,7 +217,7 @@ export function Dock({
             </div>
 
             <div
-                className="fixed bottom-3 left-1/2 hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto lg:block"
+                className="fixed bottom-3 left-1/2 z-[1000] hidden w-[calc(100vw-1rem)] max-w-[980px] -translate-x-1/2 overflow-x-auto pointer-events-auto lg:block"
                 style={{ scrollbarWidth: "none" }}
             >
             <nav
