@@ -573,6 +573,9 @@ export default function ReportDetailPage() {
     const businessValidity = (r.business_validity || {}) as Record<string, any>;
     const claimContract = normalizeClaimContract(r);
     const claimEntries = claimContract.entries;
+    const claimVerification = (r.claim_verification || {}) as Record<string, any>;
+    const evidenceQuality = (r.evidence_quality || {}) as Record<string, any>;
+    const moderatorSynthesis = (r.moderator_synthesis || {}) as Record<string, any>;
 
     // ICP arrays
     const communities = Array.isArray(icp.specific_communities) ? icp.specific_communities : [];
@@ -659,6 +662,21 @@ export default function ReportDetailPage() {
     const totalEvidenceBar = directCount + adjacentCount + irrelevantCount || 1;
     const primaryPersona = asString(icp.primary_persona);
     const betterKeywords = getMeaningfulKeywords(r, report.idea_text).slice(0, 3);
+    const verifiedClaims = Array.isArray(claimVerification.verified) ? claimVerification.verified : [];
+    const unverifiedClaims = Array.isArray(claimVerification.unverified) ? claimVerification.unverified : [];
+    const contradictedClaims = Array.isArray(claimVerification.contradicted) ? claimVerification.contradicted : [];
+    const speculativeClaims = Array.isArray(claimVerification.speculative) ? claimVerification.speculative : [];
+    const claimVerificationTotal = verifiedClaims.length + unverifiedClaims.length + contradictedClaims.length + speculativeClaims.length;
+    const firstMoveRaw = r.first_move ?? moderatorSynthesis.first_move;
+    const firstMove = typeof firstMoveRaw === "string"
+        ? firstMoveRaw
+        : asString(firstMoveRaw?.summary || firstMoveRaw?.action || firstMoveRaw?.title);
+    const timingAnalysis = ((r.timing_analysis || moderatorSynthesis.timing_analysis || {}) as Record<string, any>);
+    const timingHeadline = asString(
+        timingAnalysis.summary || timingAnalysis.why_now || timingAnalysis.read || timingAnalysis.note || timingAnalysis.message || market.market_timing
+    );
+    const timingStatus = asString(timingAnalysis.label || timingAnalysis.status || trends.overall_trend || "");
+    const confidenceReasoning = asString(r.confidence_reasoning || moderatorSynthesis.confidence_reasoning || "");
     const debateGuardrailNote = debateGuardrailOverride
         ? buildGuardrailContextNote(directCount, transcriptFinalVerdict, transcriptFinalConfidence)
         : "";
@@ -743,6 +761,29 @@ export default function ReportDetailPage() {
                 if (entry.summary) lines.push(`  - ${entry.summary}`);
                 if (entry.source_basis.length > 0) lines.push(`  - Basis: ${entry.source_basis.join(", ")}`);
             });
+            lines.push(``);
+        }
+
+        if (firstMove || timingHeadline || confidenceReasoning) {
+            lines.push(`## Founder Readout`);
+            lines.push(``);
+            if (firstMove) lines.push(`- **First move:** ${firstMove}`);
+            if (timingStatus || timingHeadline) lines.push(`- **Timing:** ${[timingStatus, timingHeadline].filter(Boolean).join(" — ")}`);
+            if (confidenceReasoning) lines.push(`- **Confidence reasoning:** ${confidenceReasoning}`);
+            lines.push(``);
+        }
+
+        if (claimVerificationTotal > 0 || evidenceQuality.strongest_evidence || evidenceQuality.weakest_point) {
+            lines.push(`## Claim Verification`);
+            lines.push(``);
+            if (claimVerificationTotal > 0) {
+                lines.push(`- **Verified:** ${verifiedClaims.length}`);
+                lines.push(`- **Unverified:** ${unverifiedClaims.length}`);
+                lines.push(`- **Contradicted:** ${contradictedClaims.length}`);
+                lines.push(`- **Speculative:** ${speculativeClaims.length}`);
+            }
+            if (evidenceQuality.strongest_evidence) lines.push(`- **Strongest evidence:** ${String(evidenceQuality.strongest_evidence)}`);
+            if (evidenceQuality.weakest_point) lines.push(`- **Weakest point:** ${String(evidenceQuality.weakest_point)}`);
             lines.push(``);
         }
 
@@ -892,6 +933,22 @@ export default function ReportDetailPage() {
                 </tr>`;
             }).join("")}
         </table>`
+            : "";
+        const founderReadoutHtml = (firstMove || timingHeadline || confidenceReasoning)
+            ? `<h2>Founder Readout</h2>
+        <ul>
+            ${firstMove ? `<li><strong>First move:</strong> ${esc(firstMove)}</li>` : ""}
+            ${timingStatus || timingHeadline ? `<li><strong>Timing:</strong> ${esc([timingStatus, timingHeadline].filter(Boolean).join(" — "))}</li>` : ""}
+            ${confidenceReasoning ? `<li><strong>Confidence reasoning:</strong> ${esc(confidenceReasoning)}</li>` : ""}
+        </ul>`
+            : "";
+        const claimVerificationHtml = (claimVerificationTotal > 0 || evidenceQuality.strongest_evidence || evidenceQuality.weakest_point)
+            ? `<h2>Claim Verification</h2>
+        <ul>
+            ${claimVerificationTotal > 0 ? `<li><strong>Verified:</strong> ${verifiedClaims.length} · <strong>Unverified:</strong> ${unverifiedClaims.length} · <strong>Contradicted:</strong> ${contradictedClaims.length} · <strong>Speculative:</strong> ${speculativeClaims.length}</li>` : ""}
+            ${evidenceQuality.strongest_evidence ? `<li><strong>Strongest evidence:</strong> ${esc(String(evidenceQuality.strongest_evidence))}</li>` : ""}
+            ${evidenceQuality.weakest_point ? `<li><strong>Weakest point:</strong> ${esc(String(evidenceQuality.weakest_point))}</li>` : ""}
+        </ul>`
             : "";
         const provenanceHtml = topSubredditCounts.length > 0
             ? `<h2>Source Provenance</h2><ul>${topSubredditCounts.map((row: { name: string; count: number }) => `<li><strong>r/${esc(row.name.replace(/^r\//i, ""))}</strong> — ${row.count} posts</li>`).join("")}</ul>`
@@ -1072,6 +1129,10 @@ ${execSummary ? `<h2>Executive Summary</h2><p>${esc(execSummary)}</p>` : ""}
 ${trendHtml}
 
 ${claimContractHtml}
+
+${founderReadoutHtml}
+
+${claimVerificationHtml}
 
 ${sourceWarningsHtml}
 
@@ -1266,6 +1327,71 @@ ${first10Html}
                     </div>
                 )}
 
+                {(firstMove || timingHeadline || confidenceReasoning) && (
+                    <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-3">
+                        {firstMove && (
+                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-primary">First Move</div>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground/90">{firstMove}</p>
+                            </div>
+                        )}
+                        {(timingStatus || timingHeadline) && (
+                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-primary">
+                                    <Clock className="h-3.5 w-3.5" />
+                                    Timing Read
+                                </div>
+                                {timingStatus && <div className="mt-2 text-xs font-mono uppercase tracking-widest text-build">{timingStatus}</div>}
+                                {timingHeadline && <p className="mt-2 text-sm leading-relaxed text-foreground/90">{timingHeadline}</p>}
+                            </div>
+                        )}
+                        {confidenceReasoning && (
+                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-primary">Confidence Reasoning</div>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground/90">{confidenceReasoning}</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {(claimVerificationTotal > 0 || evidenceQuality.strongest_evidence || evidenceQuality.weakest_point) && (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-primary">Claim Verification</div>
+                                <p className="mt-1 text-xs text-muted-foreground">A final verifier checked which report claims are grounded, weak, or contradicted by the evidence board.</p>
+                            </div>
+                            {claimVerificationTotal > 0 && (
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                                    {claimVerificationTotal} claims checked
+                                </div>
+                            )}
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            {verifiedClaims.length > 0 && <Badge text={`Verified ${verifiedClaims.length}`} className="border-build/20 bg-build/10 text-build" />}
+                            {unverifiedClaims.length > 0 && <Badge text={`Unverified ${unverifiedClaims.length}`} className="border-white/10 bg-white/5 text-muted-foreground" />}
+                            {contradictedClaims.length > 0 && <Badge text={`Contradicted ${contradictedClaims.length}`} className="border-dont/20 bg-dont/10 text-dont" />}
+                            {speculativeClaims.length > 0 && <Badge text={`Speculative ${speculativeClaims.length}`} className="border-risky/20 bg-risky/10 text-risky" />}
+                        </div>
+                        {(evidenceQuality.strongest_evidence || evidenceQuality.weakest_point) && (
+                            <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                {evidenceQuality.strongest_evidence && (
+                                    <div className="rounded-xl border border-build/15 bg-build/5 p-3">
+                                        <div className="font-mono text-[10px] uppercase tracking-widest text-build">Strongest evidence</div>
+                                        <p className="mt-2 text-xs leading-relaxed text-foreground/85">{asString(evidenceQuality.strongest_evidence)}</p>
+                                    </div>
+                                )}
+                                {evidenceQuality.weakest_point && (
+                                    <div className="rounded-xl border border-risky/15 bg-risky/5 p-3">
+                                        <div className="font-mono text-[10px] uppercase tracking-widest text-risky">Weakest point</div>
+                                        <p className="mt-2 text-xs leading-relaxed text-foreground/85">{asString(evidenceQuality.weakest_point)}</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {report.report?.reddit_lab_context?.enabled && (
                     <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 p-4">
                         <div className="flex items-center justify-between gap-3">
@@ -1350,7 +1476,13 @@ ${first10Html}
                 <div className="bento-cell p-5">
                     <SectionHeader icon={Zap} label="What To Do Next" color="text-blue-400" />
                     <div className="mt-3">
-                        {directCount >= 10 && roadmap.length > 0 ? (
+                        {firstMove ? (
+                            <div className="bg-blue-500/5 border border-blue-400/15 rounded-xl p-3">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-blue-400 mb-1">First Move</div>
+                                <p className="text-xs text-foreground font-medium">{firstMove}</p>
+                                {confidenceReasoning && <p className="text-[10px] text-muted-foreground mt-2 line-clamp-3">{confidenceReasoning}</p>}
+                            </div>
+                        ) : directCount >= 10 && roadmap.length > 0 ? (
                             <div className="bg-blue-500/5 border border-blue-400/15 rounded-xl p-3">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-blue-400 mb-1">First Launch Step</div>
                                 <p className="text-xs text-foreground font-medium">{asString(roadmap[0].title || roadmap[0].phase || roadmap[0].step)}</p>

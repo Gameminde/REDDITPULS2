@@ -13,6 +13,7 @@ import logging
 import requests
 import concurrent.futures
 from typing import Optional
+from ai_gateway import call_with_ai_policy, estimate_tokens as gateway_estimate_tokens, summarize_ai_telemetry
 
 # Add engine to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -744,12 +745,86 @@ def _extract_board_why(item) -> str:
     return "Referenced by the debate as supporting evidence."
 
 
+def _recon_summary_to_board_entries(recon_summary: dict | None) -> list[dict]:
+    if not isinstance(recon_summary, dict):
+        return []
+
+    entries = []
+
+    for signal in recon_summary.get("buyer_signals", [])[:3]:
+        quote = str(signal.get("quote") or signal.get("text") or "").strip()
+        if not quote:
+            continue
+        entries.append({
+            "text": quote[:140],
+            "tier": "DIRECT_BUYER",
+            "source_type": "buyer_signal",
+            "source_ref": signal.get("post_title") or signal.get("source_ref") or "recon",
+            "why_it_matters": "Direct buyer-native proof from the recon pass.",
+        })
+
+    for cluster in recon_summary.get("pain_clusters", [])[:3]:
+        label = str(cluster.get("problem") or cluster.get("summary") or "").strip()
+        if not label:
+            continue
+        post_count = cluster.get("post_count")
+        subreddits = cluster.get("subreddits") or cluster.get("sources") or []
+        refs = ", ".join(str(item) for item in subreddits[:3] if str(item).strip())
+        entries.append({
+            "text": f"{label} ({post_count or 'n/a'} posts)" if post_count else label,
+            "tier": "PAIN_CLUSTER",
+            "source_type": "pain_cluster",
+            "source_ref": refs or "recon",
+            "why_it_matters": "Repeated pain clustered before the debate so the room reasons over wedges, not noise.",
+        })
+
+    for comp in recon_summary.get("competitor_mentions", [])[:2]:
+        name = str(comp.get("product") or comp.get("name") or "").strip()
+        complaint = str(comp.get("complaint") or comp.get("gap") or "").strip()
+        if not name:
+            continue
+        text = f"Users mention {name}" + (f" but complain about {complaint}" if complaint else "")
+        entries.append({
+            "text": text,
+            "tier": "COMPETITOR_GAP",
+            "source_type": "competitor_gap",
+            "source_ref": comp.get("post_title") or "recon",
+            "why_it_matters": "Existing tools are in the market, but the recon pass found an unresolved gap.",
+        })
+
+    for price in recon_summary.get("price_anchors", [])[:2]:
+        text = str(price.get("text") or price.get("quote") or "").strip()
+        if not text:
+            continue
+        entries.append({
+            "text": text[:140],
+            "tier": "PRICE_SIGNAL",
+            "source_type": "price_anchor",
+            "source_ref": price.get("post_title") or "recon",
+            "why_it_matters": "Concrete pricing language grounds monetization assumptions.",
+        })
+
+    for timing in recon_summary.get("timing_markers", [])[:2]:
+        text = str(timing.get("text") or timing.get("summary") or "").strip()
+        if not text:
+            continue
+        entries.append({
+            "text": text[:140],
+            "tier": "TIMING_MARKER",
+            "source_type": "timing_marker",
+            "source_ref": timing.get("post_title") or "recon",
+            "why_it_matters": "Time-sensitive context that can change build timing without proving pain by itself.",
+        })
+
+    return entries
+
+
 def build_evidence_board(
     evidence_items,
     metadata=None,
     top_unknowns=None,
     risk_factors=None,
-    max_items: int = 8,
+    max_items: int = 10,
 ) -> list[dict]:
     metadata = metadata or {}
     board = []
@@ -784,6 +859,12 @@ def build_evidence_board(
             "source_type": _extract_board_source_type(item),
             "source_ref": _extract_board_source_ref(item),
             "why_it_matters": _extract_board_why(item),
+        })
+
+    for item in _recon_summary_to_board_entries(metadata.get("recon_summary")):
+        _push({
+            "id": f"E{len(board) + 1}",
+            **item,
         })
 
     trends = metadata.get("trends_data", {}) if isinstance(metadata.get("trends_data"), dict) else {}
@@ -1028,10 +1109,7 @@ def build_data_context(posts, metadata=None):
 
 def estimate_tokens(text: str) -> int:
     """Cheap token estimate good enough for prompt-budget guardrails."""
-    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
-    if not normalized:
-        return 0
-    return max(1, int(round(len(normalized) / 4)))
+    return gateway_estimate_tokens(text)
 
 
 def _truncate_words(text: str, max_words: int) -> str:
@@ -1091,20 +1169,31 @@ def call_provider(config, prompt, system_prompt):
     api_key = config["api_key"]
     model = resolve_model(config["selected_model"])  # Auto-correct model name
     endpoint_url = config.get("endpoint_url")
+    policy = dict(config.get("_policy") or {})
 
     fn = PROVIDER_FUNCTIONS.get(provider)
     if not fn:
         raise Exception(f"Unknown provider: {provider}")
 
-    kwargs = {"prompt": prompt, "system_prompt": system_prompt, "api_key": api_key, "model": model}
-    if provider == "ollama":
-        kwargs["endpoint_url"] = endpoint_url
-
     _t0 = _time.time()
     print(f"  [Brain] >>> CALLING {provider}/{model} at {_time.strftime('%H:%M:%S')} ...", flush=True)
-    text = fn(**kwargs)
+    text, telemetry = call_with_ai_policy(
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        api_key=api_key,
+        provider_fn=fn,
+        endpoint_url=endpoint_url,
+        task_type=str(policy.get("task_type") or "general"),
+        stage=str(policy.get("stage") or "general"),
+        expect_json=bool(policy.get("expect_json", False)),
+        max_retries=int(policy.get("max_retries", 2) or 2),
+        observer=policy.get("observer"),
+    )
     _elapsed = _time.time() - _t0
-    print(f"  [Brain] <<< {provider}/{model} responded in {_elapsed:.1f}s ({len(text)} chars)", flush=True)
+    retry_suffix = f", retries={telemetry.retry_count}" if telemetry.retry_count else ""
+    print(f"  [Brain] <<< {provider}/{model} responded in {_elapsed:.1f}s ({len(text)} chars{retry_suffix})", flush=True)
     if _elapsed > 30:
         logger.warning(f"[Brain] ⚠ {provider} took {_elapsed:.1f}s — consider replacing")
     return provider, model, text
@@ -1219,6 +1308,7 @@ class AIBrain:
             raise Exception("No active AI models configured. Go to Settings → AI to add your API keys.")
         self._call_counter = 0
         self._unavailable_config_ids = set()
+        self._ai_telemetry = []
         print(f"  [Brain] Initialized with {len(self.configs)} agents:")
         for c in self.configs:
             print(f"    [{c['priority']}] {c['provider']}/{c['selected_model']} (id={c['id'][:8]})")
@@ -1237,7 +1327,14 @@ class AIBrain:
             candidates.append((idx, config))
         return candidates
 
-    def single_call(self, prompt, system_prompt, pinned_index=None):
+    def _record_ai_telemetry(self, event: dict):
+        if isinstance(event, dict):
+            self._ai_telemetry.append(event)
+
+    def get_usage_summary(self) -> dict:
+        return summarize_ai_telemetry(self._ai_telemetry)
+
+    def single_call(self, prompt, system_prompt, pinned_index=None, *, task_type="general", stage="single_call", expect_json=False, max_retries=2):
         """
         Route sequential passes across configured models without shrinking the prompt.
         413 responses mark a model unavailable for the rest of the validation run.
@@ -1251,7 +1348,15 @@ class AIBrain:
 
         for idx, config in candidates:
             try:
-                provider, model, text = call_provider(config, prompt, system_prompt)
+                call_config = dict(config)
+                call_config["_policy"] = {
+                    "task_type": task_type,
+                    "stage": stage,
+                    "expect_json": expect_json,
+                    "max_retries": max_retries,
+                    "observer": self._record_ai_telemetry,
+                }
+                provider, model, text = call_provider(call_config, prompt, system_prompt)
                 print(
                     f"  [Brain] Single call #{self._call_counter} → {provider}/{model} "
                     f"(pinned agent {idx+1}/{len(self.configs)}, {len(text)} chars)"
@@ -1265,12 +1370,79 @@ class AIBrain:
                     print(f"  {msg}")
                     logger.warning(msg)
                     continue
-                print(
-                    f"  [Brain] Single call failed on {config['provider']}/{config['selected_model']}: {e}",
-                    flush=True,
-                )
+                    print(
+                        f"  [Brain] Single call failed on {config['provider']}/{config['selected_model']}: {e}",
+                        flush=True,
+                    )
 
         raise last_error or Exception("All AI models failed for this call.")
+
+    def _run_moderator_synthesis(
+        self,
+        *,
+        weighted_verdict: str,
+        weighted_confidence: int,
+        round1_entries: list[dict],
+        round2_entries: list[dict],
+        evidence_board: list[dict],
+        round2_summary: str,
+    ) -> dict:
+        round1_lines = [
+            f"- [{entry.get('role', 'ANALYST')}] {entry.get('verdict', 'RISKY')} at {entry.get('confidence', 50)}% — {entry.get('stance_summary', '')}"
+            for entry in round1_entries[:5]
+        ]
+        round2_lines = [
+            f"- [{entry.get('role', 'ANALYST')}] {'HELD' if entry.get('held', True) else 'CHANGED'} to {entry.get('verdict', 'RISKY')} ({entry.get('confidence', 50)}%) — {entry.get('argument_text', '')[:240]}"
+            for entry in round2_entries[:5]
+        ]
+        prompt = f"""You are the hidden moderator for a startup validation debate.
+
+WEIGHTED CONSENSUS:
+- Verdict: {weighted_verdict}
+- Confidence: {weighted_confidence}%
+- Round 2 summary: {round2_summary or 'No rebuttal summary available.'}
+
+ROUND 1 POSITIONS:
+{chr(10).join(round1_lines) or '- None'}
+
+ROUND 2 REBUTTALS:
+{chr(10).join(round2_lines) or '- No round 2 rebuttals'}
+
+EVIDENCE BOARD:
+{render_evidence_board_for_prompt(evidence_board)}
+
+Return valid JSON with:
+{{
+  "executive_summary": "30-second founder-ready summary",
+  "ideal_customer_profile": {{
+    "title": "specific buyer title",
+    "company_shape": "company size / type",
+    "current_workaround": "how they handle it today",
+    "budget_range": "directional budget",
+    "where_they_hang_out": ["community 1", "community 2"]
+  }},
+  "first_move": "single most important action this week",
+  "confidence_reasoning": "why the room is confident or cautious, citing evidence IDs like [E1]",
+  "timing_analysis": {{
+    "label": "growing | stable | early | late | unclear",
+    "summary": "timing read with evidence IDs"
+  }}
+}}
+
+Write as the moderator, not as 'the models'. Keep every claim narrow and grounded in the evidence board."""
+        try:
+            raw = self.single_call(
+                prompt,
+                "You synthesize startup-validation debates into one founder-ready answer.",
+                task_type="moderator_synthesis",
+                stage="moderator_synthesis",
+                expect_json=True,
+                max_retries=1,
+            )
+            return extract_json(raw)
+        except Exception as exc:
+            logger.warning(f"[Brain] Moderator synthesis failed: {exc}")
+            return {}
 
     def debate(self, prompt, system_prompt, on_progress=None, metadata=None):
         """
@@ -1326,7 +1498,15 @@ class AIBrain:
                 contextualized_prompt = context_block + prompt
 
             try:
-                provider, model, text = call_provider(config, contextualized_prompt, role_prompt)
+                call_config = dict(config)
+                call_config["_policy"] = {
+                    "task_type": "debate_round1",
+                    "stage": f"round1_{role_name.lower()}",
+                    "expect_json": True,
+                    "max_retries": 2,
+                    "observer": self._record_ai_telemetry,
+                }
+                provider, model, text = call_provider(call_config, contextualized_prompt, role_prompt)
                 result = extract_json(text)
                 # Ensure top_unknowns exists for weighted consensus
                 if "top_unknowns" not in result:
@@ -1597,7 +1777,15 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             try:
                 config = next(c for c in self.configs if c["id"] == a["config_id"])
                 role_prompt = get_round2_role_system_prompt(a["agent_index"], system_prompt)
-                _, _, text = call_provider(config, debate_prompt, role_prompt)
+                call_config = dict(config)
+                call_config["_policy"] = {
+                    "task_type": "debate_round2",
+                    "stage": f"round2_{a['role'].lower()}",
+                    "expect_json": True,
+                    "max_retries": 2,
+                    "observer": self._record_ai_telemetry,
+                }
+                _, _, text = call_provider(call_config, debate_prompt, role_prompt)
                 result = extract_json(text)
                 if "top_unknowns" not in result:
                     result["top_unknowns"] = []
@@ -1890,7 +2078,7 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             metadata=metadata,
             top_unknowns=all_unknowns[:2],
             risk_factors=all_risks[:1],
-            max_items=8,
+            max_items=10,
         )
         round1_entries_normalized = []
         for entry in round1_entries or []:
@@ -2002,17 +2190,31 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             },
         }
 
+        moderator_synthesis = self._run_moderator_synthesis(
+            weighted_verdict=final_verdict,
+            weighted_confidence=avg_confidence,
+            round1_entries=round1_entries_normalized,
+            round2_entries=round2_entries_normalized,
+            evidence_board=evidence_board,
+            round2_summary=round2_summary,
+        )
+        ai_usage = self.get_usage_summary()
+
         merged = {
             "verdict": final_verdict,
             "confidence": avg_confidence,
-            "executive_summary": _pick_longest("executive_summary") or _pick_longest("summary"),
-            "summary": _pick_longest("executive_summary") or _pick_longest("summary"),
+            "executive_summary": moderator_synthesis.get("executive_summary") or _pick_longest("executive_summary") or _pick_longest("summary"),
+            "summary": moderator_synthesis.get("executive_summary") or _pick_longest("executive_summary") or _pick_longest("summary"),
             "evidence": all_evidence[:25],
             "evidence_count": len(all_evidence),
             "audience_validation": _pick_longest("audience_validation"),
             "competitor_gaps": _pick_longest("competitor_gaps"),
             "price_signals": _pick_longest("price_signals"),
             "market_size_estimate": _pick_longest("market_size_estimate"),
+            "ideal_customer_profile": moderator_synthesis.get("ideal_customer_profile", {}),
+            "first_move": moderator_synthesis.get("first_move", ""),
+            "confidence_reasoning": moderator_synthesis.get("confidence_reasoning", ""),
+            "timing_analysis": moderator_synthesis.get("timing_analysis", {}),
             "risk_factors": all_risks[:8],
             "suggestions": all_suggestions[:10],
             "action_plan": all_actions[:8],
@@ -2025,6 +2227,8 @@ Respond with the same JSON format. Add a "debate_note" field explaining why you 
             "debate_log": debate_log or [],
             "debate_rounds": max((entry.get("round", 1) for entry in (debate_log or [])), default=1),
             "debate_transcript": debate_transcript,
+            "moderator_synthesis": moderator_synthesis,
+            "ai_usage": ai_usage,
             # Weighted consensus metadata
             "consensus_strength": f"{len(top_verdicts)}-way tie/{total_models}" if tie_detected else f"{majority_count}/{total_models}",
             "consensus_type": consensus_note,

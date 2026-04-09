@@ -4322,6 +4322,241 @@ def _build_claim_contract(report, pass1, pass2, intel, data_quality, source_coun
     }
 
 
+def _rank_posts_for_recon(posts: list[dict], limit: int = 30) -> list[dict]:
+    ranked = sorted(
+        posts or [],
+        key=lambda p: (
+            int(p.get("weighted_score", 0) or 0),
+            int(p.get("score", 0) or 0),
+            int(p.get("num_comments", 0) or 0),
+        ),
+        reverse=True,
+    )
+    return ranked[:limit]
+
+
+def _run_recon_pass(idea_text: str, decomposition: dict, posts: list[dict], brain, validation_id: str) -> dict:
+    if not posts:
+        return {}
+
+    condensed = []
+    for post in _rank_posts_for_recon(posts, limit=30):
+        condensed.append({
+            "title": str(post.get("title", ""))[:160],
+            "body": str(post.get("selftext", "") or post.get("body", "") or post.get("text", "") or "")[:220],
+            "source": str(post.get("source", post.get("subreddit", "unknown"))),
+            "subreddit": str(post.get("subreddit", "")),
+            "score": int(post.get("score", 0) or 0),
+            "comments": int(post.get("num_comments", 0) or 0),
+        })
+
+    prompt = f"""Idea: {idea_text}
+Audience: {decomposition.get('audience', 'unknown')}
+Pain hypothesis: {decomposition.get('pain_hypothesis', 'unknown')}
+Keywords: {', '.join(decomposition.get('keywords', [])[:10])}
+
+Analyze these posts and return JSON with:
+{{
+  "pain_clusters": [{{"problem": "...", "post_count": 3, "subreddits": ["r/x"], "summary": "..."}}],
+  "buyer_signals": [{{"quote": "...", "post_title": "...", "source_ref": "...", "why_it_matters": "..."}}],
+  "competitor_mentions": [{{"product": "...", "complaint": "...", "post_title": "..."}}],
+  "timing_markers": [{{"text": "...", "post_title": "...", "summary": "..."}}],
+  "price_anchors": [{{"text": "...", "post_title": "...", "summary": "..."}}]
+}}
+
+Rules:
+- Keep only concrete signals from the posts.
+- Buyer signals should reflect active need, urgency, or willingness to pay.
+- If a category has no grounded evidence, return an empty array.
+
+Posts:
+{json.dumps(condensed, ensure_ascii=False)}"""
+
+    try:
+        log_progress(validation_id, {
+            "phase": "synthesis",
+            "message": "Recon pass is clustering pain, buyer signals, and competitor gaps",
+        })
+        raw = brain.single_call(
+            prompt,
+            "You are a market recon analyst. Cluster evidence before the startup debate begins.",
+            task_type="recon",
+            stage="recon_pass",
+            expect_json=True,
+            max_retries=1,
+        )
+        return extract_json(raw)
+    except Exception as exc:
+        print(f"  [!] Recon pass failed (non-fatal): {exc}")
+        return {}
+
+
+def _format_recon_summary_for_prompt(recon_summary: dict) -> str:
+    if not isinstance(recon_summary, dict) or not recon_summary:
+        return ""
+
+    def _lines(items: list[dict], formatter):
+        output = []
+        for item in items:
+            try:
+                text = formatter(item)
+            except Exception:
+                text = ""
+            if text:
+                output.append(f"- {text}")
+        return output
+
+    sections = []
+    buyer_lines = _lines(
+        recon_summary.get("buyer_signals", [])[:3],
+        lambda item: f"{item.get('quote', '')} ({item.get('post_title', 'recon')})",
+    )
+    if buyer_lines:
+        sections.append("RECON BUYER SIGNALS:\n" + "\n".join(buyer_lines))
+
+    pain_lines = _lines(
+        recon_summary.get("pain_clusters", [])[:3],
+        lambda item: f"{item.get('problem', '')} ({item.get('post_count', 'n/a')} posts)",
+    )
+    if pain_lines:
+        sections.append("RECON PAIN CLUSTERS:\n" + "\n".join(pain_lines))
+
+    competitor_lines = _lines(
+        recon_summary.get("competitor_mentions", [])[:2],
+        lambda item: f"{item.get('product', '')}: {item.get('complaint', '')}",
+    )
+    if competitor_lines:
+        sections.append("RECON COMPETITOR GAPS:\n" + "\n".join(competitor_lines))
+
+    timing_lines = _lines(
+        recon_summary.get("timing_markers", [])[:2],
+        lambda item: item.get("text", "") or item.get("summary", ""),
+    )
+    if timing_lines:
+        sections.append("RECON TIMING MARKERS:\n" + "\n".join(timing_lines))
+
+    price_lines = _lines(
+        recon_summary.get("price_anchors", [])[:2],
+        lambda item: item.get("text", "") or item.get("summary", ""),
+    )
+    if price_lines:
+        sections.append("RECON PRICE ANCHORS:\n" + "\n".join(price_lines))
+
+    return "\n\n".join(section for section in sections if section).strip()
+
+
+def _run_claim_verification_pass(report: dict, claim_contract: dict, brain, validation_id: str) -> dict:
+    debate_transcript = dict(report.get("debate_transcript") or {})
+    evidence_board = debate_transcript.get("evidence_board") or []
+    if not evidence_board:
+        return {"verified": [], "unverified": [], "contradicted": [], "speculative": []}
+
+    claim_entries = list((claim_contract or {}).get("entries") or [])[:6]
+    claim_payload = [
+        {
+            "claim_id": entry.get("claim_id"),
+            "label": entry.get("label"),
+            "value": entry.get("value"),
+            "summary": entry.get("summary"),
+            "trust_tier": entry.get("trust_tier"),
+        }
+        for entry in claim_entries
+        if entry.get("value")
+    ]
+
+    if report.get("executive_summary"):
+        claim_payload.insert(0, {
+            "claim_id": "executive_summary",
+            "label": "Executive Summary",
+            "value": str(report.get("executive_summary", ""))[:260],
+            "summary": "Top-line verdict framing",
+            "trust_tier": "T5",
+        })
+
+    if report.get("first_move"):
+        claim_payload.append({
+            "claim_id": "first_move",
+            "label": "First Move",
+            "value": str(report.get("first_move", ""))[:220],
+            "summary": "Recommended immediate action",
+            "trust_tier": "T4",
+        })
+
+    prompt = f"""You are a claim verifier for a startup validation report.
+
+EVIDENCE BOARD:
+{json.dumps(evidence_board, ensure_ascii=False)}
+
+CLAIMS TO CHECK:
+{json.dumps(claim_payload, ensure_ascii=False)}
+
+Return JSON:
+{{
+  "verified": [{{"claim_id": "...", "claim": "...", "evidence_ids": ["E1"], "reason": "..."}}],
+  "unverified": [{{"claim_id": "...", "claim": "...", "reason": "..."}}],
+  "contradicted": [{{"claim_id": "...", "claim": "...", "reason": "..."}}],
+  "speculative": [{{"claim_id": "...", "claim": "...", "reason": "..."}}]
+}}
+
+Rules:
+- Use only the evidence board, not outside knowledge.
+- "verified" requires a specific evidence-board match.
+- "contradicted" means the claim clashes with the evidence board.
+- "speculative" means the claim may be directionally useful but is not grounded strongly enough.
+- Keep the reasoning concise."""
+
+    try:
+        log_progress(validation_id, {
+            "phase": "synthesis",
+            "message": "Verifying which report claims are proven versus speculative",
+        })
+        raw = brain.single_call(
+            prompt,
+            "You are a strict verifier. Mark unsupported startup claims as unverified or speculative.",
+            task_type="verification",
+            stage="claim_verification",
+            expect_json=True,
+            max_retries=1,
+        )
+        result = extract_json(raw)
+        return {
+            "verified": list(result.get("verified", []) or []),
+            "unverified": list(result.get("unverified", []) or []),
+            "contradicted": list(result.get("contradicted", []) or []),
+            "speculative": list(result.get("speculative", []) or []),
+        }
+    except Exception as exc:
+        print(f"  [!] Claim verification failed (non-fatal): {exc}")
+        return {"verified": [], "unverified": [], "contradicted": [], "speculative": []}
+
+
+def _build_evidence_quality_summary(report: dict, claim_verification: dict) -> dict:
+    evidence = list(report.get("debate_evidence") or report.get("evidence") or report.get("market_analysis", {}).get("evidence", []) or [])
+    strongest_evidence = ""
+    if evidence:
+        first = evidence[0]
+        if isinstance(first, dict):
+            strongest_evidence = str(first.get("what_it_proves") or first.get("post_title") or first.get("title") or "").strip()
+        else:
+            strongest_evidence = str(first).strip()
+
+    weakest_point = ""
+    for bucket in ("contradicted", "unverified", "speculative"):
+        items = list((claim_verification or {}).get(bucket) or [])
+        if items:
+            weakest_point = str(items[0].get("reason") or items[0].get("claim") or "").strip()
+            break
+
+    return {
+        "verified_claims": len((claim_verification or {}).get("verified", []) or []),
+        "unverified_claims": len((claim_verification or {}).get("unverified", []) or []),
+        "contradicted_claims": len((claim_verification or {}).get("contradicted", []) or []),
+        "speculative_claims": len((claim_verification or {}).get("speculative", []) or []),
+        "strongest_evidence": strongest_evidence,
+        "weakest_point": weakest_point,
+    }
+
+
 def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
                       source_counts=None, intel=None, depth_config=None, **kwargs):
     """Phase 3: Multi-pass synthesis — 3 focused AI passes + debate verdict."""
@@ -4404,6 +4639,8 @@ def phase3_synthesize(idea_text, posts, decomposition, brain, validation_id,
     )
 
     posts_filtered_count = len(pre_filtered)  # for pipeline UI display
+    recon_summary = _run_recon_pass(idea_text, decomposition, pre_filtered, brain, validation_id)
+    recon_block = _format_recon_summary_for_prompt(recon_summary)
     sampled_posts = _smart_sample(pre_filtered, budget=100)
     post_summaries = []
     for p in sampled_posts:
@@ -4489,7 +4726,14 @@ Return ONLY this JSON (no markdown, no explanation):
 Posts:
 {posts_text}"""
             try:
-                raw = brain.single_call(prompt, BATCH_SYSTEM)
+                raw = brain.single_call(
+                    prompt,
+                    BATCH_SYSTEM,
+                    task_type="batch_signal_scan",
+                    stage="batch_signal_scan",
+                    expect_json=True,
+                    max_retries=1,
+                )
                 data = extract_json(raw)
                 print(f"  [Batch {batch_idx+1}/{len(batches)}] ✓ {len(batch_posts)} posts", flush=True)
                 return {
@@ -4577,6 +4821,9 @@ TOP {len(post_summaries)} REPRESENTATIVE POSTS (for title/score reference):
         posts_block = f"TOP {len(post_summaries)} POSTS:\n{json.dumps(post_summaries, indent=2)}"
         posts_analyzed_count = len(sampled_posts)
 
+    if recon_block:
+        posts_block = f"{recon_block}\n\n{posts_block}"
+
     # ── Shared context block ──
     context_block = f"""IDEA: {idea_text}
 
@@ -4607,7 +4854,14 @@ DATA: {posts_filtered_count} filtered posts (from {len(posts)} total scraped) ac
 
 Analyze the MARKET signal. Find pain validation, WTP signals, and cite specific evidence posts."""
     try:
-        pass1_raw = brain.single_call(pass1_prompt, PASS1_SYSTEM)
+        pass1_raw = brain.single_call(
+            pass1_prompt,
+            PASS1_SYSTEM,
+            task_type="synthesis",
+            stage="pass1_market_analysis",
+            expect_json=True,
+            max_retries=2,
+        )
         pass1 = extract_json(pass1_raw)
         normalized_evidence, code_breakdown = _normalize_pass1_evidence(
             pass1,
@@ -4649,7 +4903,14 @@ MARKET ANALYSIS (from Pass 1):
 Design the full strategy: ICP, competition landscape, pricing, and monetization.
 (Do NOT re-analyze raw posts — reason from the market analysis above.)"""
     try:
-        pass2_raw = brain.single_call(pass2_prompt, PASS2_SYSTEM)
+        pass2_raw = brain.single_call(
+            pass2_prompt,
+            PASS2_SYSTEM,
+            task_type="synthesis",
+            stage="pass2_strategy",
+            expect_json=True,
+            max_retries=2,
+        )
         pass2 = extract_json(pass2_raw)
         competitors = pass2.get("competition_landscape", {}).get("direct_competitors", [])
         print(f"  [✓] Pass 2 done: {len(competitors)} competitors found, pricing model={pass2.get('pricing_strategy', {}).get('recommended_model', '?')}")
@@ -4712,6 +4973,10 @@ Create the launch roadmap, revenue projections, risk matrix, and first 10 custom
         pass3_raw = brain.single_call(
             pass3_prompt,
             PASS3_SYSTEM,
+            task_type="synthesis",
+            stage="pass3_action_plan",
+            expect_json=True,
+            max_retries=2,
             pinned_index=1,  # Use second configured model — avoids Groq 8K token truncation
         )
         pass3 = extract_json(pass3_raw)
@@ -4813,7 +5078,21 @@ ACTION PLAN RESULTS:
 Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If data is thin (<20 posts), your confidence MUST reflect that uncertainty."""
 
     try:
-        verdict_report = brain.debate(verdict_prompt, VERDICT_SYSTEM, on_progress=on_progress)
+        verdict_report = brain.debate(
+            verdict_prompt,
+            VERDICT_SYSTEM,
+            on_progress=on_progress,
+            metadata={
+                "posts": pre_filtered,
+                "trends_data": intel.get("trends", {}),
+                "competition_data": intel.get("competition", {}),
+                "recon_summary": recon_summary,
+                "source_counts": source_counts,
+                "total_scraped": len(posts),
+                "date_range": kwargs.get("date_range", "recent window"),
+                "platforms": ", ".join(sorted(source_counts.keys())) if source_counts else "unknown",
+            },
+        )
         verdict_report["_source"] = "debate_engine"  # Fix A: mark as real computed result
         changed_roles = []
         for entry in verdict_report.get("debate_log", []) or []:
@@ -5031,6 +5310,12 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     )
 
     # Risk fallback: Pass 3 often truncates on Groq 8K limit — use debate risks if empty
+    report["recon_summary"] = recon_summary or {}
+    report["moderator_synthesis"] = verdict_report.get("moderator_synthesis", {}) or {}
+    report["first_move"] = verdict_report.get("first_move", "") or ""
+    report["timing_analysis"] = verdict_report.get("timing_analysis", {}) or {}
+    report["confidence_reasoning"] = verdict_report.get("confidence_reasoning", "") or ""
+    report["ai_usage"] = verdict_report.get("ai_usage", {}) or brain.get_usage_summary()
     pass3_risks = pass3.get("risk_matrix", [])
     if not pass3_risks:
         # Extract risks from debate output — they're always generated, even when Pass 3 fails
@@ -5117,6 +5402,16 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["debate_transcript"] = verdict_report.get("debate_transcript")
     report["final_verdict"] = verdict_report.get("verdict", report.get("verdict", ""))
     report["verdict_source"] = verdict_report.get("_source", "unknown")
+    report["claim_verification"] = _run_claim_verification_pass(
+        report,
+        report["claim_contract"],
+        brain,
+        validation_id,
+    )
+    report["evidence_quality"] = _build_evidence_quality_summary(
+        report,
+        report["claim_verification"],
+    )
 
     # Metadata
     report["data_sources"] = source_counts
@@ -5199,6 +5494,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     direct_count = int(data_quality.get("direct_evidence_count", 0) or 0)
     insufficient_direct_message = _direct_evidence_quality_message(direct_count, adjacent_heavy=adjacent_heavy)
     force_insufficient_direct = direct_count < 3 and not kwargs.get("test_mode", False)
+    thin_business_signal = direct_count < 5 and not _wtp_ok
     report["_quality_flags"] = {
         "insufficient_direct_evidence": direct_count < 3,
         "direct_evidence_count": direct_count,
@@ -5220,6 +5516,9 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
             "market_saturation": report.get("competition_landscape", {}).get("market_saturation", ""),
             "direct_competitors": report.get("competition_landscape", {}).get("direct_competitors", []),
         }
+        report["first_move"] = "Talk to 5 potential buyers before writing code."
+        report["timing_analysis"] = {"speculative": True, "message": insufficient_direct_message}
+        report["confidence_reasoning"] = insufficient_direct_message
         report["pricing_strategy"] = {"speculative": True, "message": insufficient_direct_message}
         report["monetization_channels"] = []
         report["launch_roadmap"] = []
@@ -5233,6 +5532,25 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         report["data_quality"]["cap_reason"] = insufficient_direct_message
         report["data_quality"]["warnings"] = list(report["data_quality"].get("warnings", [])) + [insufficient_direct_message]
         print(f"  [Q] Forcing verdict to INSUFFICIENT DATA (direct evidence={direct_count})")
+    elif thin_business_signal:
+        thin_business_message = (
+            "Business sections stay directional only here because direct buyer proof is still thin and no willingness-to-pay signals survived the evidence contract."
+        )
+        pricing_strategy = dict(report.get("pricing_strategy", {}) or {})
+        pricing_strategy["speculative"] = True
+        pricing_strategy["message"] = thin_business_message
+        report["pricing_strategy"] = pricing_strategy
+
+        financial_reality = dict(report.get("financial_reality", {}) or {})
+        financial_reality["speculative"] = True
+        financial_reality["message"] = thin_business_message
+        report["financial_reality"] = financial_reality
+
+        business_validity = dict(report.get("business_validity", {}) or {})
+        business_validity["summary"] = thin_business_message
+        report["business_validity"] = business_validity
+
+        report["data_quality"]["warnings"] = list(report["data_quality"].get("warnings", [])) + [thin_business_message]
 
     verdict = report["verdict"]
     confidence = report["confidence"]
