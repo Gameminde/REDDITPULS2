@@ -564,6 +564,7 @@ export default function ReportDetailPage() {
     const topPosts = Array.isArray(r.top_posts) ? r.top_posts : [];
     const evidence = debateEvidence.length > 0 ? debateEvidence : (marketEvidence.length > 0 ? marketEvidence : topPosts);
     const evidencePoints = Number(r.evidence_count || debateEvidence.length || marketEvidence.length || topPosts.length || 0);
+    const evidenceFunnel = (r.evidence_funnel || {}) as Record<string, any>;
 
     const dataSources = (r.data_sources || {}) as Record<string, number>;
     const trends = (r.trends_data || {}) as Record<string, any>;
@@ -608,6 +609,22 @@ export default function ReportDetailPage() {
         ? toNumber(audit.direct_evidence_count, 0)
         : toNumber(trust?.direct_evidence_count, 0);
     const adjacentCount = toNumber(audit.adjacent_evidence_count, 0);
+    const rawCollectedCount = toNumber(
+        evidenceFunnel.raw_collected_posts,
+        toNumber(audit.raw_collected_posts, toNumber(signalSummary.posts_scraped, postsFound))
+    );
+    const filteredCorpusCount = toNumber(
+        evidenceFunnel.filtered_posts_for_synthesis,
+        toNumber(audit.filtered_posts_for_synthesis, toNumber(signalSummary.posts_filtered, postsAnalyzed || rawCollectedCount))
+    );
+    const filteredAnalyzedCount = toNumber(
+        evidenceFunnel.filtered_posts_analyzed,
+        toNumber(audit.filtered_posts_analyzed, toNumber(signalSummary.posts_analyzed, postsAnalyzed || filteredCorpusCount))
+    );
+    const dbHistoryContribution = toNumber(
+        evidenceFunnel.db_history_posts,
+        toNumber(audit.db_history_posts, toNumber(signalSummary.db_history_posts, 0))
+    );
     const explicitPainQuotes = toNumber(
         problemValidity.pain_quotes_found ?? signalSummary.pain_quotes_found ?? audit.raw_pain_quotes?.length,
         0
@@ -645,6 +662,13 @@ export default function ReportDetailPage() {
     const debateGuardrailNote = debateGuardrailOverride
         ? buildGuardrailContextNote(directCount, transcriptFinalVerdict, transcriptFinalConfidence)
         : "";
+    const evidenceFunnelNote = [
+        rawCollectedCount > 0 ? `${rawCollectedCount} raw hits collected` : "",
+        filteredCorpusCount > 0 ? `${filteredCorpusCount} passed the synthesis filter` : "",
+        filteredAnalyzedCount > 0 ? `${filteredAnalyzedCount} were used in the evidence scan` : "",
+        dbHistoryContribution > 0 ? `${dbHistoryContribution} came from recent DB history` : "",
+        `${directCount} canonical DIRECT ${directCount === 1 ? "post" : "posts"}`,
+    ].filter(Boolean).join(" · ");
     const problemValidityLabel = asString(problemValidity.label || (directCount >= 10 ? "HIGH" : directCount >= 5 ? "MODERATE" : directCount > 0 ? "LOW" : "INSUFFICIENT"));
     const businessValidityLabel = asString(businessValidity.label || (Object.keys(dataSources).length >= 3 ? "MODERATE" : "LOW"));
     const topRisks = risks.length > 0
@@ -699,6 +723,10 @@ export default function ReportDetailPage() {
         if (directCount > 0 || adjacentCount > 0) {
             lines.push(`## Evidence Quality`);
             lines.push(``);
+            lines.push(`- **Raw collected:** ${rawCollectedCount}`);
+            lines.push(`- **Filtered corpus:** ${filteredCorpusCount}`);
+            lines.push(`- **Filtered items used in synthesis:** ${filteredAnalyzedCount}`);
+            if (dbHistoryContribution > 0) lines.push(`- **Recent DB history contribution:** ${dbHistoryContribution}`);
             lines.push(`- **Direct evidence:** ${directCount}`);
             if (explicitPainQuotes > 0) lines.push(`- **Explicit pain quotes:** ${explicitPainQuotes}`);
             lines.push(`- **Adjacent evidence:** ${adjacentCount}`);
@@ -1034,7 +1062,8 @@ export default function ReportDetailPage() {
 <p><span class="verdict ${vs.label.includes("BUILD") ? "build" : vs.label.includes("DON") ? "dont" : "risky"}">${vs.label}</span></p>
 <p class="meta">Confidence: ${report.confidence}% · ${new Date(report.created_at).toLocaleDateString()} · Depth: ${report.depth || "standard"} · Sources: ${sourceLine}</p>
 <p class="meta">Evidence: ${directCount} direct · ${adjacentCount} adjacent · ${irrelevantCount} irrelevant · ${evidencePoints} total posts</p>
-<p class="meta">Posts scraped: ${postsFound} · Analyzed: ${postsAnalyzed}</p>
+<p class="meta">Raw collected: ${rawCollectedCount} · Filtered corpus: ${filteredCorpusCount} · Used in synthesis: ${filteredAnalyzedCount}</p>
+<p class="meta">DB history contribution: ${dbHistoryContribution} · Canonical DIRECT: ${directCount}</p>
 
 ${signalMetrics.length > 0 ? `<div class="metrics">${signalMetrics.map(m => { const [label, val] = m.split(": "); return `<div class="metric"><div class="metric-val">${val}</div><div class="metric-lbl">${label}</div></div>`; }).join("")}</div>` : ""}
 
@@ -1131,6 +1160,43 @@ ${first10Html}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 md:col-span-2">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-primary">Evidence Funnel</div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    Raw collection, filtered corpus, and canonical proof are different layers. The debate only reasons over the filtered corpus, not every raw hit.
+                                </p>
+                            </div>
+                            <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                                Explainable
+                            </div>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Raw collected</div>
+                                <div className="mt-2 text-2xl font-mono font-bold text-white">{rawCollectedCount}</div>
+                                <p className="mt-1 text-[11px] text-muted-foreground">All source hits before filtering.</p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Filtered corpus</div>
+                                <div className="mt-2 text-2xl font-mono font-bold text-white">{filteredCorpusCount}</div>
+                                <p className="mt-1 text-[11px] text-muted-foreground">Posts kept for synthesis after deterministic filtering.</p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">DB history</div>
+                                <div className="mt-2 text-2xl font-mono font-bold text-white">{dbHistoryContribution}</div>
+                                <p className="mt-1 text-[11px] text-muted-foreground">Relevant recent posts pulled from CueIdea memory.</p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Canonical direct</div>
+                                <div className="mt-2 text-2xl font-mono font-bold text-build">{directCount}</div>
+                                <p className="mt-1 text-[11px] text-muted-foreground">Buyer-native proof that survived the strict evidence contract.</p>
+                            </div>
+                        </div>
+                        <div className="mt-3 text-[11px] text-muted-foreground">{evidenceFunnelNote}</div>
+                    </div>
+
                     <div className={`rounded-2xl border p-4 ${getValidityTone(problemValidityLabel)}`}>
                         <div className="flex items-center justify-between gap-3">
                             <div className="font-mono text-[10px] uppercase tracking-widest">Problem Validity</div>
@@ -1343,6 +1409,10 @@ ${first10Html}
             {/* ═══════════ SECTION 4 — DEBATE ROOM (collapsed) ═══════════ */}
             <div className="mb-6">
                 <CollapsibleSection title="AI Debate Room" subtitle={`${debateSummary.models} models · ${debateSummary.rounds} rounds — ${debateSummary.summary}`} open={debateOpen} onToggle={() => setDebateOpen(o => !o)}>
+                    <div className="mb-4 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-foreground/80">
+                        <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Evidence used in this debate</div>
+                        <p className="mt-2">{evidenceFunnelNote}</p>
+                    </div>
                     {debateGuardrailOverride && (
                         <div className="mb-4 rounded-xl border border-zinc-500/20 bg-zinc-500/10 p-3 text-xs text-zinc-300">
                             Thin direct evidence triggered a final guardrail override to <span className="font-semibold text-white">{asString(report.verdict).replace(/_/g, " ")}</span>.

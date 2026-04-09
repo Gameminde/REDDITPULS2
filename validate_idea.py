@@ -4991,6 +4991,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "primary_filter_passed": (filter_diagnostics or {}).get("primary_pass_count", 0) if 'filter_diagnostics' in dir() else 0,
         "fallback_rescued": (filter_diagnostics or {}).get("fallback_rescued_count", 0) if 'filter_diagnostics' in dir() else 0,
         "posts_analyzed": posts_analyzed_count if 'posts_analyzed_count' in dir() else 0,
+        "db_history_posts": int((kwargs.get("scrape_audit", {}) or {}).get("db_history_posts", 0) or 0),
         "pain_quotes_found": len((batch_signals or {}).get("pain_quotes", [])) if 'batch_signals' in dir() else 0,
         "wtp_signals_found": len((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else 0,
         "competitor_mentions": len((batch_signals or {}).get("competitor_mentions", [])) if 'batch_signals' in dir() else 0,
@@ -5173,6 +5174,10 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "discovered_subreddits": list((kwargs.get("scrape_audit", {}) or {}).get("discovered_subreddits", [])),
         "subreddit_post_counts": dict((kwargs.get("scrape_audit", {}) or {}).get("subreddit_post_counts", {})),
         "source_taxonomy": dict((kwargs.get("scrape_audit", {}) or {}).get("source_taxonomy", {})),
+        "db_history_posts": int((kwargs.get("scrape_audit", {}) or {}).get("db_history_posts", 0) or 0),
+        "raw_collected_posts": len(posts),
+        "filtered_posts_for_synthesis": posts_filtered_count if 'posts_filtered_count' in dir() else len(posts),
+        "filtered_posts_analyzed": posts_analyzed_count if 'posts_analyzed_count' in dir() else 0,
         "raw_pain_quotes": list((batch_signals or {}).get("pain_quotes", [])) if 'batch_signals' in dir() else [],
         "raw_wtp_signals": list((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else [],
         "filter_rejected_sample": list((filter_diagnostics or {}).get("rejected_titles_sample", [])) if 'filter_diagnostics' in dir() else [],
@@ -5180,6 +5185,15 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         "direct_evidence_count": data_quality.get("direct_evidence_count", 0),
         "adjacent_evidence_count": data_quality.get("adjacent_evidence_count", 0),
         "direct_evidence_breakdown": list(pass1.get("_code_evidence_breakdown", data_quality.get("direct_evidence_breakdown", []))),
+    }
+
+    report["evidence_funnel"] = {
+        "raw_collected_posts": len(posts),
+        "filtered_posts_for_synthesis": posts_filtered_count if 'posts_filtered_count' in dir() else len(posts),
+        "filtered_posts_analyzed": posts_analyzed_count if 'posts_analyzed_count' in dir() else 0,
+        "db_history_posts": int((kwargs.get("scrape_audit", {}) or {}).get("db_history_posts", 0) or 0),
+        "canonical_direct_evidence": data_quality.get("direct_evidence_count", 0),
+        "canonical_adjacent_evidence": data_quality.get("adjacent_evidence_count", 0),
     }
 
     direct_count = int(data_quality.get("direct_evidence_count", 0) or 0)
