@@ -16,7 +16,7 @@ DEPTH_CONFIGS = {
         "mode": "quick",
         "label": "Quick Validation",
         "description": "Fast first-pass screening",
-        "target_duration_minutes": 5,
+        "target_duration_minutes": 10,
         # Phase 1 decomposition caps
         "formal_keyword_cap": 10,
         "colloquial_keyword_cap": 6,
@@ -54,13 +54,13 @@ DEPTH_CONFIGS = {
         "enable_extra_enrichment": False,
         "enable_followup_recheck": False,
         # Queue
-        "queue_timeout_seconds": 12 * 60,
+        "queue_timeout_seconds": 20 * 60,
     },
     "deep": {
         "mode": "deep",
         "label": "Deep Validation",
         "description": "Broader market scan with stronger evidence",
-        "target_duration_minutes": 35,
+        "target_duration_minutes": 45,
         "formal_keyword_cap": 18,
         "colloquial_keyword_cap": 12,
         "subreddit_cap": 10,
@@ -98,7 +98,7 @@ DEPTH_CONFIGS = {
         "mode": "investigation",
         "label": "Market Investigation",
         "description": "Exhaustive premium research for serious decisions",
-        "target_duration_minutes": 100,
+        "target_duration_minutes": 120,
         "formal_keyword_cap": 20,
         "colloquial_keyword_cap": 15,
         "subreddit_cap": 12,

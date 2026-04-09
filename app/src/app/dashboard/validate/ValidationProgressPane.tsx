@@ -22,6 +22,9 @@ type ValidationProgressPaneProps = {
     createdAt?: string;
     platformWarnings?: Array<string | Record<string, unknown>>;
     redditLabContext?: Record<string, unknown> | null;
+    canCancel?: boolean;
+    isCancelling?: boolean;
+    onCancel?: (() => void) | null;
 };
 
 type SourceKey =
@@ -110,6 +113,9 @@ export function ValidationProgressPane({
     createdAt: _createdAt,
     platformWarnings = [],
     redditLabContext = null,
+    canCancel = false,
+    isCancelling = false,
+    onCancel = null,
 }: ValidationProgressPaneProps) {
     const sourceEvents = new Map<SourceKey, ValidationProgressEvent>();
     for (const event of progressEvents) {
@@ -155,6 +161,24 @@ export function ValidationProgressPane({
                     <span>{progressHint}</span>
                 </div>
             </div>
+
+            {canCancel && onCancel ? (
+                <div className="mt-4 flex flex-col gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">Need to stop?</div>
+                        <p className="mt-1 text-sm text-foreground/85">Cancel this validation if you want to change the idea, switch depth, or start over.</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        disabled={isCancelling}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-mono text-foreground transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                        {isCancelling ? "Cancelling..." : "Cancel validation"}
+                    </button>
+                </div>
+            ) : null}
 
             <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {SOURCE_ORDER.map((source) => {

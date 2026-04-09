@@ -631,10 +631,15 @@ def run_keyword_scan(
             from reddit_async import scrape_all_async, AIOHTTP_AVAILABLE
 
             if AIOHTTP_AVAILABLE:
+                is_quick_mode = max_seconds <= 600
                 async_posts = asyncio.run(scrape_all_async(
                     subreddits=selected_subs,
                     sorts=["new"],
-                    max_concurrent=6,
+                    max_concurrent=4 if is_quick_mode else 6,
+                    retry_limit=1 if is_quick_mode else 3,
+                    request_timeout=8 if is_quick_mode else 20,
+                    allow_direct_fallback=not is_quick_mode,
+                    initial_jitter_max=1.0 if is_quick_mode else 5.0,
                 ))
                 for post_data in async_posts:
                     text_lower = post_data.get("full_text", "").lower()

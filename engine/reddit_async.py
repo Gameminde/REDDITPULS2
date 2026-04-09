@@ -133,6 +133,8 @@ async def _fetch_subreddit(
     subreddit: str,
     sort: str = "new",
     limit: int = 100,
+    retry_limit: int = RETRY_LIMIT,
+    timeout_seconds: int = TIMEOUT_SECONDS,
 ) -> dict:
     """Fetch posts from one subreddit with stealth headers, proxy rotation, and exponential backoff."""
     url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
@@ -147,7 +149,7 @@ async def _fetch_subreddit(
         "attempts": 0,
     }
 
-    for attempt in range(RETRY_LIMIT + 1):
+    for attempt in range(retry_limit + 1):
         # Fresh stealth headers every request (different UA each time)
         headers = stealth_json_headers()
         result["attempts"] = attempt + 1
@@ -160,7 +162,7 @@ async def _fetch_subreddit(
             async with session.get(
                 url, headers=headers, params=params,
                 proxy=proxy,
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
                 allow_redirects=False,
             ) as resp:
                 result["status"] = resp.status
@@ -198,9 +200,9 @@ async def _fetch_subreddit(
 
                     backoff = BACKOFF_BASE * (2 ** attempt) + random.uniform(JITTER_MIN, JITTER_MAX)
                     if using_proxy:
-                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - rotating proxy, backoff {backoff:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT + 1})")
+                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - rotating proxy, backoff {backoff:.1f}s (attempt {attempt + 1}/{retry_limit + 1})")
                     else:
-                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - direct mode, backoff {backoff:.1f}s (attempt {attempt + 1}/{RETRY_LIMIT + 1})")
+                        print(f"    [ASYNC] r/{subreddit} 403 BLOCKED - direct mode, backoff {backoff:.1f}s (attempt {attempt + 1}/{retry_limit + 1})")
                     limiter.release()
                     await asyncio.sleep(backoff)
                     continue
@@ -211,7 +213,7 @@ async def _fetch_subreddit(
                     _rotator.health.record_error()
                     print(f"    [ASYNC] r/{subreddit}/{sort} returned {resp.status}")
                     limiter.release()
-                    if attempt < RETRY_LIMIT:
+                    if attempt < retry_limit:
                         await asyncio.sleep(2 * (attempt + 1))
                         continue
                     return result
@@ -220,20 +222,20 @@ async def _fetch_subreddit(
             limiter.release()
             _rotator.health.record_timeout()
             result["error"] = "TimeoutError"
-            if attempt < RETRY_LIMIT:
+            if attempt < retry_limit:
                 await asyncio.sleep(2 * (attempt + 1))
             else:
-                print(f"    [ASYNC] r/{subreddit}/{sort} timed out after {RETRY_LIMIT + 1} attempts")
+                print(f"    [ASYNC] r/{subreddit}/{sort} timed out after {retry_limit + 1} attempts")
                 return result
 
         except (aiohttp.ClientError, OSError) as e:
             limiter.release()
             _rotator.health.record_error()
             result["error"] = f"{type(e).__name__}: {e}"
-            if attempt < RETRY_LIMIT:
+            if attempt < retry_limit:
                 await asyncio.sleep(2 * (attempt + 1))
             else:
-                print(f"    [ASYNC] r/{subreddit}/{sort} failed after {RETRY_LIMIT + 1} attempts: {e}")
+                print(f"    [ASYNC] r/{subreddit}/{sort} failed after {retry_limit + 1} attempts: {e}")
                 return result
 
         except Exception as e:
@@ -252,10 +254,20 @@ async def _fetch_subreddit_with_direct_fallback(
     subreddit: str,
     sort: str = "new",
     limit: int = 100,
+    retry_limit: int = RETRY_LIMIT,
+    timeout_seconds: int = TIMEOUT_SECONDS,
 ) -> dict:
     """Retry a failed proxy-backed request directly before giving up."""
     _rotator = get_rotator()
-    proxied = await _fetch_subreddit(session, limiter, subreddit, sort, limit)
+    proxied = await _fetch_subreddit(
+        session,
+        limiter,
+        subreddit,
+        sort,
+        limit,
+        retry_limit=retry_limit,
+        timeout_seconds=timeout_seconds,
+    )
     if proxied.get("posts") or not _rotator.has_proxies():
         return proxied
 
@@ -271,7 +283,7 @@ async def _fetch_subreddit_with_direct_fallback(
         "attempts": proxied.get("attempts", 0),
     }
 
-    for attempt in range(RETRY_LIMIT + 1):
+    for attempt in range(retry_limit + 1):
         headers = stealth_json_headers()
         result["attempts"] = proxied.get("attempts", 0) + attempt + 1
         await limiter.acquire()
@@ -281,7 +293,7 @@ async def _fetch_subreddit_with_direct_fallback(
                 headers=headers,
                 params=params,
                 proxy=None,
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
                 allow_redirects=False,
             ) as resp:
                 result["status"] = resp.status
@@ -295,7 +307,7 @@ async def _fetch_subreddit_with_direct_fallback(
                 if resp.status == 403:
                     # Direct IP is blocked too — give up
                     result["error"] = "HTTP 403 direct"
-                    if attempt < RETRY_LIMIT:
+                    if attempt < retry_limit:
                         await asyncio.sleep(BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 2))
                         continue
                     print(f"    [ASYNC] r/{subreddit}/{sort} 403 on direct fallback")
@@ -304,7 +316,7 @@ async def _fetch_subreddit_with_direct_fallback(
                 if resp.status != 200:
                     body = (await resp.text())[:160].replace("\n", " ").strip()
                     result["error"] = f"HTTP {resp.status}: {body}" if body else f"HTTP {resp.status}"
-                    if attempt < RETRY_LIMIT:
+                    if attempt < retry_limit:
                         await asyncio.sleep(2 * (attempt + 1))
                         continue
                     print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback returned {resp.status}")
@@ -323,10 +335,10 @@ async def _fetch_subreddit_with_direct_fallback(
                 return result
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             result["error"] = f"{type(e).__name__}: {e}"
-            if attempt < RETRY_LIMIT:
+            if attempt < retry_limit:
                 await asyncio.sleep(2 * (attempt + 1))
             else:
-                print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback failed after {RETRY_LIMIT + 1} attempts: {e}")
+                print(f"    [ASYNC] r/{subreddit}/{sort} direct fallback failed after {retry_limit + 1} attempts: {e}")
                 return result
         except Exception as e:
             result["error"] = f"{type(e).__name__}: {e}"
@@ -344,6 +356,10 @@ async def scrape_all_async(
     limit: int = 100,
     max_concurrent: int | None = None,
     on_progress=None,
+    retry_limit: int = RETRY_LIMIT,
+    request_timeout: int = TIMEOUT_SECONDS,
+    allow_direct_fallback: bool = True,
+    initial_jitter_max: float = 5.0,
 ) -> list[dict]:
     """
     Scrape all target subreddits concurrently with proxy support.
@@ -391,14 +407,32 @@ async def scrape_all_async(
 
     # Add random jitter per batch to look organic
     if _rotator.has_proxies():
-        initial_jitter = random.uniform(1.0, 5.0)
+        initial_jitter = random.uniform(0.2, max(0.2, initial_jitter_max))
         print(f"  [ASYNC] Initial jitter: {initial_jitter:.1f}s")
         await asyncio.sleep(initial_jitter)
 
     async with aiohttp.ClientSession() as session:
         # Create all tasks
         async def _task(sub, sort):
-            return await _fetch_subreddit_with_direct_fallback(session, limiter, sub, sort, limit)
+            if allow_direct_fallback:
+                return await _fetch_subreddit_with_direct_fallback(
+                    session,
+                    limiter,
+                    sub,
+                    sort,
+                    limit,
+                    retry_limit=retry_limit,
+                    timeout_seconds=request_timeout,
+                )
+            return await _fetch_subreddit(
+                session,
+                limiter,
+                sub,
+                sort,
+                limit,
+                retry_limit=retry_limit,
+                timeout_seconds=request_timeout,
+            )
 
         # Run all concurrently
         results = await asyncio.gather(

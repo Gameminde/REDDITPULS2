@@ -833,6 +833,9 @@ const ValidatePage = () => {
                     createdAt={activeValidation?.created_at}
                     platformWarnings={platformWarnings}
                     redditLabContext={parsedReport?.reddit_lab_context || null}
+                    canCancel={!["done", "failed", "error", "cancelled"].includes(currentStatus || "")}
+                    isCancelling={isCancelling}
+                    onCancel={handleCancelCurrentValidation}
                 />
             )}
 
