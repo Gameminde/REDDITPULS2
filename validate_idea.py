@@ -14,6 +14,7 @@ import re
 import argparse
 import traceback
 import requests
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import unescape as html_unescape
 from contextlib import contextmanager
