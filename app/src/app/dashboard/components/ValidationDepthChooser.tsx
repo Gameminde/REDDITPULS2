@@ -60,7 +60,7 @@ function ValidationDepthOption({
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">{option.description}</div>
                     <div className="mt-2 text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                        {option.uiCopy} · ~{option.targetDurationMinutes < 60 ? `${option.targetDurationMinutes}m` : `${Math.round(option.targetDurationMinutes / 60)}h`}
+                        {option.uiCopy} · {option.paceLabel}
                     </div>
                 </div>
             </div>

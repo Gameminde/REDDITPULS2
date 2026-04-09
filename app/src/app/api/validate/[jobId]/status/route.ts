@@ -6,7 +6,7 @@ import { createAdmin } from "@/lib/supabase-admin";
 import { buildEnrichedValidationView } from "@/lib/validation-insights";
 import { getValidationJobStatus } from "@/lib/queue";
 
-const TERMINAL_STATUSES = new Set(["done", "error", "failed"]);
+const TERMINAL_STATUSES = new Set(["done", "error", "failed", "cancelled"]);
 
 function analyticsTableMissing(error: { code?: string | null; message?: string | null } | null | undefined) {
     const code = String(error?.code || "").toUpperCase();

@@ -153,7 +153,7 @@ export function Dock({
                     window.localStorage.removeItem(ACTIVE_VALIDATION_IDEA_KEY);
                     window.localStorage.setItem(COMPLETED_VALIDATION_ID_KEY, activeValidationId);
                     emitValidationStorageChange();
-                } else if (status === "failed" || status === "error") {
+                } else if (status === "failed" || status === "error" || status === "cancelled") {
                     window.localStorage.removeItem(ACTIVE_VALIDATION_ID_KEY);
                     window.localStorage.removeItem(ACTIVE_VALIDATION_IDEA_KEY);
                     emitValidationStorageChange();

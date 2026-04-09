@@ -4,7 +4,7 @@ export interface ValidationDepthOption {
     mode: ValidationDepth;
     label: string;
     description: string;
-    targetDurationMinutes: number;
+    paceLabel: string;
     premiumRequired: boolean;
     uiCopy: string;
 }
@@ -14,7 +14,7 @@ export const VALIDATION_DEPTHS: ValidationDepthOption[] = [
         mode: "quick",
         label: "Quick Validation",
         description: "Fast first-pass screening",
-        targetDurationMinutes: 5,
+        paceLabel: "Fastest pass",
         premiumRequired: false,
         uiCopy: "Screen the idea fast with a lighter evidence pass.",
     },
@@ -22,7 +22,7 @@ export const VALIDATION_DEPTHS: ValidationDepthOption[] = [
         mode: "deep",
         label: "Deep Validation",
         description: "Broader market scan with stronger evidence",
-        targetDurationMinutes: 35,
+        paceLabel: "Broader sweep",
         premiumRequired: true,
         uiCopy: "Run a wider source sweep with stronger proof and sharper competition context.",
     },
@@ -30,7 +30,7 @@ export const VALIDATION_DEPTHS: ValidationDepthOption[] = [
         mode: "investigation",
         label: "Market Investigation",
         description: "Exhaustive premium research for serious decisions",
-        targetDurationMinutes: 100,
+        paceLabel: "Most thorough",
         premiumRequired: true,
         uiCopy: "Use the deepest sweep for high-stakes market research and strategy decisions.",
     },

@@ -270,6 +270,7 @@ const ValidatePage = () => {
     const [validationError, setValidationError] = useState<string | null>(null);
     const [activeValidationWarning, setActiveValidationWarning] = useState<string | null>(null);
     const [storedActiveValidationId, setStoredActiveValidationId] = useState<string | null>(null);
+    const [isCancelling, setIsCancelling] = useState(false);
     const [terminalTick, setTerminalTick] = useState(0);
     const [logEntries, setLogEntries] = useState<LogEntry[]>([
         { time: "00:00", msg: "[SYS] AI Engine stand-by — enter an idea to begin.", type: "muted" },
@@ -495,9 +496,10 @@ const ValidatePage = () => {
                             pushLog(newStatus, d.validation);
                         }
 
-                        if (newStatus === "done" || newStatus === "error" || newStatus === "failed") {
+                        if (newStatus === "done" || newStatus === "error" || newStatus === "failed" || newStatus === "cancelled") {
                             stopPolling();
                             setIsValidating(false);
+                            setIsCancelling(false);
                             if (newStatus === "done") {
                                 markValidationCompleted(d.validation.id || jobId);
                                 setActiveValidationWarning(null);
@@ -507,6 +509,13 @@ const ValidatePage = () => {
                             if (newStatus === "done") {
                                 setValidationError(null);
                                 router.push(`/dashboard/reports/${d.validation.id || jobId}`);
+                            } else if (newStatus === "cancelled") {
+                                setValidationError(null);
+                                setActiveValidationWarning("Validation cancelled. You can start a new one now.");
+                                setLogEntries((prev) => [
+                                    ...prev,
+                                    { time: formatElapsedTime(Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000))), msg: "[SYS] Validation cancelled.", type: "muted" },
+                                ]);
                             } else {
                                 setValidationError(
                                     getValidationFailureMessage(d) ||
@@ -580,7 +589,7 @@ const ValidatePage = () => {
             .then((data) => {
                 const validation = data?.validation;
                 const status = validation?.status || "";
-                if (status && !["done", "failed", "error"].includes(status)) {
+                if (status && !["done", "failed", "error", "cancelled"].includes(status)) {
                     if (savedIdea) {
                         setIdea((currentIdea) => currentIdea || savedIdea);
                     }
@@ -628,20 +637,40 @@ const ValidatePage = () => {
     }, [isValidating]);
 
     /* ── Launch validation ──────────────────────────────── */
-    const handleCancelCurrentValidation = useCallback(() => {
-        stopPolling();
-        clearStoredValidation();
-        setActiveValidation(null);
-        setIsValidating(false);
+    const handleCancelCurrentValidation = useCallback(async () => {
+        const validationId = activeValidation?.id || storedActiveValidationId;
+        if (!validationId || isCancelling) return;
+
+        setIsCancelling(true);
         setValidationError(null);
-        setActiveValidationWarning(null);
-        lastStatusRef.current = "";
-        lastProgressIdRef.current = 0;
-        scrapingStartedAtRef.current = null;
-        setLogEntries([
-            { time: "00:00", msg: "[SYS] Detached from background validation. You can start a new one now.", type: "muted" },
-        ]);
-    }, [clearStoredValidation, stopPolling]);
+
+        try {
+            const response = await fetch(`/api/validate/${validationId}`, {
+                method: "DELETE",
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(typeof payload?.error === "string" ? payload.error : "Could not cancel validation");
+            }
+
+            stopPolling();
+            clearStoredValidation();
+            setActiveValidation((current) => current ? { ...current, status: "cancelled" } : null);
+            setIsValidating(false);
+            setActiveValidationWarning("Validation cancelled. You can start a new one now.");
+            lastStatusRef.current = "cancelled";
+            lastProgressIdRef.current = 0;
+            scrapingStartedAtRef.current = null;
+            setLogEntries((prev) => [
+                ...prev,
+                { time: formatElapsedTime(Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000))), msg: "[SYS] Validation cancelled by user.", type: "muted" },
+            ]);
+        } catch (error) {
+            setValidationError(error instanceof Error ? error.message : "Could not cancel validation.");
+        } finally {
+            setIsCancelling(false);
+        }
+    }, [activeValidation?.id, clearStoredValidation, isCancelling, stopPolling, storedActiveValidationId]);
 
     const handleValidate = async () => {
         if (!idea.trim()) return;
@@ -654,6 +683,7 @@ const ValidatePage = () => {
             return;
         }
         setIsValidating(true);
+        setIsCancelling(false);
         setValidationError(null);
         setActiveValidationWarning(null);
         setActiveValidation(null);
@@ -762,7 +792,7 @@ const ValidatePage = () => {
                 <div className="mb-4 bento-cell rounded-[14px] border border-primary/15 bg-primary/5 p-4">
                     <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary">Beta access</div>
                     <p className="mt-2 text-sm text-foreground/85">
-                        Quick Validation is available here. Deep Validation and Market Investigation stay premium because they use more time, more sources, and a heavier synthesis pass.
+                        Quick Validation is available here. Deep Validation and Market Investigation stay premium because they use broader coverage, more sources, and a heavier synthesis pass.
                     </p>
                 </div>
             )}
@@ -806,20 +836,40 @@ const ValidatePage = () => {
                 />
             )}
 
+            {(activeValidation || isValidating) && !["done", "failed", "error", "cancelled"].includes(currentStatus || "") && (
+                <div className="mb-4 flex flex-col gap-3 rounded-[14px] border border-white/10 bg-black/20 p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <div className="mb-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">Need to stop?</div>
+                        <p className="text-sm text-foreground/85">Cancel this validation if you want to change the idea, switch depth, or start over.</p>
+                    </div>
+                    {currentStatus !== "cancelled" ? (
+                        <button
+                            onClick={handleCancelCurrentValidation}
+                            disabled={isCancelling}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-mono text-foreground transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                            {isCancelling ? "Cancelling..." : "Cancel validation"}
+                        </button>
+                    ) : null}
+                </div>
+            )}
+
             {activeValidationWarning && (
                 <div className="mb-4 bento-cell p-4 rounded-[14px] border border-primary/20 bg-primary/5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary mb-1">Validation In Progress</div>
+                        <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary mb-1">
+                            {currentStatus === "cancelled" ? "Validation Stopped" : "Validation In Progress"}
+                        </div>
                         <p className="text-sm text-foreground/85">{activeValidationWarning}</p>
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                            Canceling here only clears this page state. The background worker keeps running.
-                        </p>
                     </div>
                     <button
                         onClick={handleCancelCurrentValidation}
-                        className="px-4 py-2 rounded-lg text-xs font-mono bg-white/5 border border-white/10 text-foreground hover:bg-white/10 transition-colors"
+                        disabled={isCancelling}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-mono text-foreground transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        Cancel current validation
+                        {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                        {isCancelling ? "Cancelling..." : "Cancel validation"}
                     </button>
                 </div>
             )}
@@ -928,7 +978,7 @@ const ValidatePage = () => {
                                             <div className="min-w-0 flex-1">
                                                 <div className={`text-[13px] font-semibold ${isActive ? "text-white" : "text-foreground"}`}>{opt.label}</div>
                                                 <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                                                    ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`} target runtime
+                                                    {opt.paceLabel}
                                                 </div>
                                             </div>
                                         </div>
@@ -1023,7 +1073,7 @@ const ValidatePage = () => {
                                 Validation depth
                             </div>
                             <p className="mt-2 text-[13px] leading-6 text-muted-foreground">
-                                Choose how much time and how many sources CueIdea should use for this validation.
+                                Choose how much coverage and rigor CueIdea should use for this validation.
                             </p>
                         </div>
 
@@ -1049,7 +1099,7 @@ const ValidatePage = () => {
                                             <div className="min-w-0 flex-1">
                                                 <div className={`text-[13px] font-semibold ${isActive ? "text-white" : "text-foreground"}`}>{opt.label}</div>
                                                 <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                                                    ~{opt.targetDurationMinutes < 60 ? `${opt.targetDurationMinutes}m` : `${Math.round(opt.targetDurationMinutes / 60)}h`} target runtime
+                                                    {opt.paceLabel}
                                                 </div>
                                             </div>
                                         </div>

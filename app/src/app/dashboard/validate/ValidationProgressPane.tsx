@@ -47,15 +47,6 @@ const SOURCE_ORDER: Array<{ key: SourceKey; label: string; color: string }> = [
     { key: "db_history", label: "DB history", color: "text-violet-300" },
 ];
 
-function normalizeWarning(value: string | Record<string, unknown>) {
-    if (typeof value === "string") return value;
-    if (value && typeof value === "object") {
-        const record = value as Record<string, unknown>;
-        return String(record.issue || record.error_detail || record.warning || record.platform || "");
-    }
-    return "";
-}
-
 function inferPhaseLabel(status: string) {
     const normalized = (status || "").toLowerCase();
     if (normalized === "queued" || normalized === "starting") return "Waiting for execution slot";
@@ -66,36 +57,37 @@ function inferPhaseLabel(status: string) {
     if (normalized.startsWith("synthesizing")) return "Synthesizing report";
     if (normalized.startsWith("debating")) return "AI debate in progress";
     if (normalized === "done") return "Validation complete";
+    if (normalized === "cancelled") return "Validation cancelled";
     if (normalized === "failed" || normalized === "error") return "Validation failed";
     return "Processing";
 }
 
-function inferEta(status: string, events: ValidationProgressEvent[], createdAt?: string) {
+function inferProgressHint(status: string, events: ValidationProgressEvent[]) {
     const normalized = (status || "").toLowerCase();
     const latestRound = [...events]
         .reverse()
         .find((event) => typeof event.round === "number");
+
     if (latestRound && normalized.startsWith("debating")) {
         const totalRounds = latestRound.total_rounds || 2;
         return `Round ${latestRound.round} of ${totalRounds}`;
     }
 
-    const startedAt = createdAt ? Date.parse(createdAt) : NaN;
-    const elapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0;
-
     if (normalized.startsWith("scrap")) {
         const completedSources = events.filter((event) => event.phase === "scraping" && event.source).length;
-        const remaining = Math.max(15, 60 - elapsedSeconds, (SOURCE_ORDER.length - completedSources) * 8);
-        return `Estimated wait: ~${remaining} more seconds`;
+        return completedSources > 0
+            ? `Scanning source lanes · ${completedSources} updated`
+            : "Scanning live sources now";
     }
-    if (normalized.startsWith("synthesizing")) return "Estimated wait: ~30 more seconds";
-    if (normalized.startsWith("analyzing")) return "Estimated wait: ~20 more seconds";
+    if (normalized.startsWith("synthesizing")) return "Turning the evidence into a report";
+    if (normalized.startsWith("analyzing")) return "Pressure-testing the market signal";
     if (normalized === "queued" || normalized === "starting" || normalized.startsWith("decompos")) {
-        return "Estimated wait: ~60 more seconds";
+        return "Framing the validation run";
     }
-    if (normalized === "done") return "Redirecting to report…";
+    if (normalized === "done") return "Redirecting to report...";
+    if (normalized === "cancelled") return "Stopped by you";
     if (normalized === "failed" || normalized === "error") return "Check details below and retry";
-    return "Working…";
+    return "Working...";
 }
 
 function formatSourceDetail(event?: ValidationProgressEvent) {
@@ -115,7 +107,7 @@ function formatSourceDetail(event?: ValidationProgressEvent) {
 export function ValidationProgressPane({
     status,
     progressEvents,
-    createdAt,
+    createdAt: _createdAt,
     platformWarnings = [],
     redditLabContext = null,
 }: ValidationProgressPaneProps) {
@@ -142,16 +134,16 @@ export function ValidationProgressPane({
         .reverse();
 
     const phaseLabel = inferPhaseLabel(status);
-    const etaLabel = inferEta(status, progressEvents, createdAt);
+    const progressHint = inferProgressHint(status, progressEvents);
     const scrapingActive = (status || "").toLowerCase().startsWith("scrap");
     let activeAssigned = false;
 
     return (
-        <div className="bento-cell rounded-[16px] p-5 mb-6 border border-primary/15 bg-primary/5">
+        <div className="bento-cell mb-6 rounded-[16px] border border-primary/15 bg-primary/5 p-5">
             <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                 <div>
                     <div className="flex items-center gap-2 text-primary">
-                        <Search className="w-4 h-4" />
+                        <Search className="h-4 w-4" />
                         <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Validation run</span>
                     </div>
                     <h2 className="mt-2 text-xl font-semibold text-white">Evidence scan</h2>
@@ -159,12 +151,12 @@ export function ValidationProgressPane({
                 </div>
 
                 <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-muted-foreground">
-                    <Clock3 className="w-3.5 h-3.5" />
-                    <span>{etaLabel}</span>
+                    <Clock3 className="h-3.5 w-3.5" />
+                    <span>{progressHint}</span>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-5">
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {SOURCE_ORDER.map((source) => {
                     const event = sourceEvents.get(source.key);
                     const warning = warningText.find((item) => item.toLowerCase().includes(source.label.toLowerCase()) || item.toLowerCase().includes(source.key.replace("_", "")));
@@ -184,13 +176,13 @@ export function ValidationProgressPane({
                                 </div>
                                 <div className="shrink-0">
                                     {isFailed ? (
-                                        <ShieldAlert className="w-4 h-4 text-dont" />
+                                        <ShieldAlert className="h-4 w-4 text-dont" />
                                     ) : isDone ? (
-                                        <CheckCircle2 className="w-4 h-4 text-build" />
+                                        <CheckCircle2 className="h-4 w-4 text-build" />
                                     ) : isActive ? (
-                                        <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     ) : (
-                                        <Circle className="w-4 h-4 text-muted-foreground/50" />
+                                        <Circle className="h-4 w-4 text-muted-foreground/50" />
                                     )}
                                 </div>
                             </div>
@@ -208,10 +200,10 @@ export function ValidationProgressPane({
                 </div>
             ) : null}
 
-            <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-4">
+            <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[1.5fr_1fr]">
                 <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-muted-foreground">
-                        <MessageSquare className="w-3.5 h-3.5" />
+                        <MessageSquare className="h-3.5 w-3.5" />
                         <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Recent events</span>
                     </div>
                     <div className="mt-3 space-y-2">
@@ -220,25 +212,25 @@ export function ValidationProgressPane({
                                 {sanitizeValidationProgressMessage(event.message || "", event.source)}
                             </div>
                         )) : (
-                            <div className="text-xs text-muted-foreground">Waiting for the first platform update…</div>
+                            <div className="text-xs text-muted-foreground">Waiting for the first platform update...</div>
                         )}
                     </div>
                 </div>
 
                 <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-muted-foreground">
-                        <Rocket className="w-3.5 h-3.5" />
+                        <Rocket className="h-3.5 w-3.5" />
                         <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Current phase</span>
                     </div>
                     <div className="mt-3 text-sm text-white">{phaseLabel}</div>
-                    <p className="mt-2 text-xs text-muted-foreground">{etaLabel}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">{progressHint}</p>
                 </div>
             </div>
 
             {redditLabContext?.enabled ? (
                 <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 px-4 py-3">
                     <div className="flex items-center gap-2 text-primary">
-                        <Rocket className="w-3.5 h-3.5" />
+                        <Rocket className="h-3.5 w-3.5" />
                         <span className="text-[11px] font-mono uppercase tracking-[0.12em]">Reddit lab context</span>
                     </div>
                     <div className="mt-2 text-xs text-foreground/80">

@@ -13,6 +13,7 @@ import { summarizeValidationCoverage } from "@/lib/validation-coverage";
 export const VALIDATION_QUEUE = "idea-validation";
 const VALIDATION_RETRY_LIMIT = 2;
 const DEFAULT_VALIDATION_TIMEOUT_SECONDS = DEPTH_TIMEOUTS[DEFAULT_DEPTH];
+const TERMINAL_VALIDATION_STATUSES = new Set(["done", "failed", "error", "cancelled"]);
 
 export interface ValidationJobPayload {
     validationId: string;
@@ -340,6 +341,30 @@ export async function getValidationJobStatus(jobId: string): Promise<ValidationJ
     };
 }
 
+export async function cancelValidationJob(validationId: string) {
+    const boss = await getQueue();
+    const existing = await getValidationRow(validationId);
+
+    if (!existing) {
+        throw new Error("Validation not found");
+    }
+
+    const currentStatus = String(existing.status || "");
+    if (TERMINAL_VALIDATION_STATUSES.has(currentStatus)) {
+        return { status: currentStatus || "cancelled", alreadyTerminal: true };
+    }
+
+    await boss.cancel(VALIDATION_QUEUE, validationId).catch(() => null);
+
+    await updateValidation(validationId, {
+        status: "cancelled",
+        completed_at: new Date().toISOString(),
+        report: buildCancelledReport(existing.report),
+    });
+
+    return { status: "cancelled", alreadyTerminal: false };
+}
+
 async function updateValidation(validationId: string, updates: Record<string, unknown>) {
     const supabaseAdmin = getSupabaseAdmin();
     const { data, error } = await supabaseAdmin
@@ -354,6 +379,32 @@ async function updateValidation(validationId: string, updates: Record<string, un
             `Could not persist validation ${validationId}: ${error?.message || "row not found after update"}`,
         );
     }
+}
+
+async function getValidationRow(validationId: string) {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data, error } = await supabaseAdmin
+        .from("idea_validations")
+        .select("id, status, report")
+        .eq("id", validationId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Could not load validation ${validationId}: ${error.message}`);
+    }
+
+    return data as { id: string; status?: string | null; report?: unknown } | null;
+}
+
+function buildCancelledReport(report: unknown, reason = "Validation cancelled by user") {
+    const parsed = parseReportObject(report);
+    return {
+        ...parsed,
+        error: reason,
+        failure_stage: "cancelled",
+        cancelled: true,
+        cancelled_at: new Date().toISOString(),
+    };
 }
 
 async function updateValidationProgress(validationId: string, lines: ValidationProgressLine[]) {
@@ -371,7 +422,7 @@ async function updateValidationProgress(validationId: string, lines: ValidationP
         );
     }
 
-    if (current?.status === "done" || current?.status === "failed") {
+    if (TERMINAL_VALIDATION_STATUSES.has(String(current?.status || ""))) {
         return;
     }
 
@@ -393,8 +444,7 @@ async function updateValidationProgress(validationId: string, lines: ValidationP
         .from("idea_validations")
         .update({ report })
         .eq("id", validationId)
-        .neq("status", "done")
-        .neq("status", "failed")
+        .not("status", "in", "(done,failed,error,cancelled)")
         .select("id")
         .maybeSingle();
 
@@ -443,6 +493,7 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
     let stdoutBuffer = "";
     let stderrBuffer = "";
     let progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancellationCheckTimer: ReturnType<typeof setInterval> | null = null;
     let progressWritesEnabled = true;
     const emittedSignals = new Set<string>();
 
@@ -553,6 +604,10 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
                 if (settled) return;
                 settled = true;
                 clearTimeout(timeoutHandle);
+                if (cancellationCheckTimer) {
+                    clearInterval(cancellationCheckTimer);
+                    cancellationCheckTimer = null;
+                }
                 if (progressFlushTimer) {
                     clearTimeout(progressFlushTimer);
                     progressFlushTimer = null;
@@ -573,6 +628,20 @@ async function runValidationCommand(payload: ValidationJobPayload, signal: Abort
                 child.kill();
                 finish(() => reject(new Error(`Validation exceeded ${timeoutSeconds}s timeout`)));
             }, timeoutSeconds * 1000);
+
+            cancellationCheckTimer = setInterval(() => {
+                void getValidationRow(payload.validationId)
+                    .then((row) => {
+                        if (settled) return;
+                        if (String(row?.status || "") === "cancelled") {
+                            child.kill();
+                            finish(() => reject(new Error("Validation cancelled by user")));
+                        }
+                    })
+                    .catch((error) => {
+                        console.error(`[Queue] Cancellation check failed for ${payload.validationId}:`, error);
+                    });
+            }, 2000);
 
             signal.addEventListener("abort", onAbort, { once: true });
 
@@ -632,6 +701,12 @@ export async function startValidationWorker() {
             `(attempt ${job.retryCount + 1} of ${job.retryLimit + 1}, timeout ${getValidationTimeoutSeconds(job.data.depth)}s, depth ${job.data.depth})`,
         );
 
+        const existingValidation = await getValidationRow(job.data.validationId);
+        if (String(existingValidation?.status || "") === "cancelled") {
+            console.log(`[Queue] Skipping cancelled validation ${job.data.validationId}`);
+            return { ok: true };
+        }
+
         try {
             await updateValidation(job.data.validationId, {
                 status: "starting",
@@ -654,6 +729,13 @@ export async function startValidationWorker() {
             return { ok: true };
         } catch (error) {
             const message = error instanceof Error ? error.message : "Validation worker failed";
+            const cancelledByUser = /cancelled by user/i.test(message);
+
+            if (cancelledByUser) {
+                console.log(`[Queue] Validation ${job.data.validationId} cancelled by user`);
+                return { ok: true };
+            }
+
             const failurePayload = willRetry
                 ? {
                     status: "queued",
