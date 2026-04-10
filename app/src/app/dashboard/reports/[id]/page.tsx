@@ -671,6 +671,7 @@ export default function ReportDetailPage() {
     const firstMove = typeof firstMoveRaw === "string"
         ? firstMoveRaw
         : asString(firstMoveRaw?.summary || firstMoveRaw?.action || firstMoveRaw?.title);
+    const interviewQuestion = asString(r.interview_question || "");
     const timingAnalysis = ((r.timing_analysis || moderatorSynthesis.timing_analysis || {}) as Record<string, any>);
     const timingHeadline = asString(
         timingAnalysis.summary || timingAnalysis.why_now || timingAnalysis.read || timingAnalysis.note || timingAnalysis.message || market.market_timing
@@ -768,6 +769,7 @@ export default function ReportDetailPage() {
             lines.push(`## Founder Readout`);
             lines.push(``);
             if (firstMove) lines.push(`- **First move:** ${firstMove}`);
+            if (interviewQuestion) lines.push(`- **Interview question:** ${interviewQuestion}`);
             if (timingStatus || timingHeadline) lines.push(`- **Timing:** ${[timingStatus, timingHeadline].filter(Boolean).join(" — ")}`);
             if (confidenceReasoning) lines.push(`- **Confidence reasoning:** ${confidenceReasoning}`);
             lines.push(``);
@@ -934,10 +936,11 @@ export default function ReportDetailPage() {
             }).join("")}
         </table>`
             : "";
-        const founderReadoutHtml = (firstMove || timingHeadline || confidenceReasoning)
+        const founderReadoutHtml = (firstMove || interviewQuestion || timingHeadline || confidenceReasoning)
             ? `<h2>Founder Readout</h2>
         <ul>
             ${firstMove ? `<li><strong>First move:</strong> ${esc(firstMove)}</li>` : ""}
+            ${interviewQuestion ? `<li><strong>Interview question:</strong> ${esc(interviewQuestion)}</li>` : ""}
             ${timingStatus || timingHeadline ? `<li><strong>Timing:</strong> ${esc([timingStatus, timingHeadline].filter(Boolean).join(" — "))}</li>` : ""}
             ${confidenceReasoning ? `<li><strong>Confidence reasoning:</strong> ${esc(confidenceReasoning)}</li>` : ""}
         </ul>`
@@ -1071,7 +1074,7 @@ export default function ReportDetailPage() {
         <p>Only ${directCount} posts directly address this idea. Strategy sections should be validated with buyer interviews first.</p>
         <ol>
             <li><strong>Find Better Keywords:</strong> Current: ${betterKeywords.length > 0 ? betterKeywords.join(", ") : "none detected"}. Use the language your buyers actually use.</li>
-            <li><strong>Interview 5 ${primaryPersona ? esc(primaryPersona.split(/[,.(]/)[0].trim()) : "Potential Buyers"}:</strong> Ask about their current workflow and pain.</li>
+            <li><strong>Interview 5 ${primaryPersona ? esc(primaryPersona.split(/[,.(]/)[0].trim()) : "Potential Buyers"}:</strong> ${interviewQuestion ? esc(interviewQuestion) : "Ask about their current workflow and pain."}</li>
             <li><strong>Check Adjacent Communities:</strong> ${communities.length > 0 ? communities.slice(0, 3).map((c: any) => esc(getCommunityName(c))).filter(Boolean).join(", ") : "No target communities identified yet."}</li>
             <li><strong>Rerun Validation:</strong> After gathering more signal, run a deeper validation with refined keywords.</li>
         </ol>` : "";
@@ -1327,12 +1330,19 @@ ${first10Html}
                     </div>
                 )}
 
-                {(firstMove || timingHeadline || confidenceReasoning) && (
+                {(firstMove || interviewQuestion || timingHeadline || confidenceReasoning) && (
                     <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-3">
                         {firstMove && (
                             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-primary">First Move</div>
                                 <p className="mt-2 text-sm leading-relaxed text-foreground/90">{firstMove}</p>
+                                {interviewQuestion && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Interview ask: {interviewQuestion}</p>}
+                            </div>
+                        )}
+                        {!firstMove && interviewQuestion && (
+                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-primary">Interview Question</div>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground/90">{interviewQuestion}</p>
                             </div>
                         )}
                         {(timingStatus || timingHeadline) && (
@@ -1512,6 +1522,9 @@ ${first10Html}
                             <div className="font-mono text-[10px] uppercase tracking-widest text-risky mb-1">Step 2 — Interview 5 {primaryPersona ? truncateText(primaryPersona.split(/[,.(]/)[0].trim(), 40) : "Potential Buyers"}</div>
                             <p className="text-xs text-foreground/80">
                                 {(() => {
+                                    if (interviewQuestion) {
+                                        return `Ask: "${interviewQuestion}"`;
+                                    }
                                     const rawPainDesc = asString(market.pain_description || market.pain_summary || "");
                                     const painDesc = isReportSystemMessage(rawPainDesc) ? "" : rawPainDesc;
                                     const firstPainQuote = directEvidence.length > 0 ? getEvidenceTitle(directEvidence[0]) : "";

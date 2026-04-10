@@ -695,8 +695,13 @@ def _coerce_tier_label(raw_value, default="SUPPORTING") -> str:
     value = str(raw_value or "").strip().upper().replace("-", "_").replace(" ", "_")
     if not value:
         return default
-    if value in {"DIRECT", "DIRECT_BUYER", "BUYER_NATIVE_DIRECT", "DIRECT_SIGNAL"}:
+    if value in {"DIRECT", "BUYER_NATIVE_DIRECT", "DIRECT_SIGNAL"}:
         return "DIRECT"
+    # RECON_BUYER_SIGNAL must NOT be coerced to DIRECT — recon signals are
+    # AI-inferred, not canonical evidence.  Keep them visually distinct
+    # so the evidence board never contradicts the canonical direct count.
+    if value in {"DIRECT_BUYER", "RECON_BUYER_SIGNAL"}:
+        return "RECON_BUYER_SIGNAL"
     if value in {"ADJACENT", "SUPPORTING", "SUPPORTING_CONTEXT", "CONTEXT"}:
         return "SUPPORTING" if value != "CONTEXT" else "CONTEXT"
     if value in {"RISK", "UNKNOWN"}:
@@ -757,10 +762,10 @@ def _recon_summary_to_board_entries(recon_summary: dict | None) -> list[dict]:
             continue
         entries.append({
             "text": quote[:140],
-            "tier": "DIRECT_BUYER",
+            "tier": "RECON_BUYER_SIGNAL",
             "source_type": "buyer_signal",
             "source_ref": signal.get("post_title") or signal.get("source_ref") or "recon",
-            "why_it_matters": "Direct buyer-native proof from the recon pass.",
+            "why_it_matters": "AI-inferred buyer signal from recon pass — not canonical direct evidence.",
         })
 
     for cluster in recon_summary.get("pain_clusters", [])[:3]:
@@ -1411,14 +1416,20 @@ ROUND 2 REBUTTALS:
 EVIDENCE BOARD:
 {render_evidence_board_for_prompt(evidence_board)}
 
+EVIDENCE STRENGTH:
+- Canonical DIRECT evidence count: {sum(1 for e in evidence_board if e.get('tier') == 'DIRECT')}
+- RECON_BUYER_SIGNAL count: {sum(1 for e in evidence_board if e.get('tier') == 'RECON_BUYER_SIGNAL')}
+- If canonical DIRECT count is 0, the ICP MUST stay broad (role-level only, no years-of-experience, no MRR ranges, no failed-campaign counts).
+- If canonical DIRECT count is 0, budget_range MUST be "Unknown — no willingness-to-pay evidence found".
+
 Return valid JSON with:
 {{
   "executive_summary": "30-second founder-ready summary",
   "ideal_customer_profile": {{
-    "title": "specific buyer title",
-    "company_shape": "company size / type",
-    "current_workaround": "how they handle it today",
-    "budget_range": "directional budget",
+    "title": "specific buyer title — but stay broad if evidence is thin",
+    "company_shape": "company size / type — say 'unclear' if fewer than 3 DIRECT posts support it",
+    "current_workaround": "how they handle it today — cite evidence IDs or say 'unverified'",
+    "budget_range": "MUST be 'Unknown' if 0 WTP signals exist. Never invent dollar ranges.",
     "where_they_hang_out": ["community 1", "community 2"]
   }},
   "first_move": "single most important action this week",
@@ -1426,10 +1437,15 @@ Return valid JSON with:
   "timing_analysis": {{
     "label": "growing | stable | early | late | unclear",
     "summary": "timing read with evidence IDs"
-  }}
+  }},
+  "interview_question": "One clean, grammatically correct question a founder could ask a potential buyer in a discovery call. Do NOT paste raw post snippets — rewrite the pain in your own words."
 }}
 
-Write as the moderator, not as 'the models'. Keep every claim narrow and grounded in the evidence board."""
+RULES:
+- Write as the moderator, not as 'the models'.
+- Keep every claim narrow and grounded in the evidence board.
+- The interview_question must be a single complete sentence with proper grammar.
+- Never fabricate specificity (years of experience, MRR ranges, campaign counts) that the evidence does not support."""
         try:
             raw = self.single_call(
                 prompt,

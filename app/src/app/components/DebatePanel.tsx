@@ -443,6 +443,9 @@ function getTierTone(tier: string) {
     if (normalized === "DIRECT") {
         return "border-build/20 bg-build/10 text-build";
     }
+    if (normalized === "RECON_BUYER_SIGNAL") {
+        return "border-cyan-400/20 bg-cyan-500/10 text-cyan-200";
+    }
     if (normalized === "RISK") {
         return "border-dont/20 bg-dont/10 text-dont";
     }
@@ -450,6 +453,14 @@ function getTierTone(tier: string) {
         return "border-amber-400/20 bg-amber-400/10 text-amber-200";
     }
     return "border-white/10 bg-white/5 text-muted-foreground";
+}
+
+function getTierLabel(tier: string) {
+    const normalized = tier.toUpperCase();
+    if (normalized === "RECON_BUYER_SIGNAL") {
+        return "Recon Buyer Signal";
+    }
+    return tier.replace(/_/g, " ");
 }
 
 export function DebatePanel({ transcript, contextNote }: DebatePanelProps) {
@@ -728,7 +739,7 @@ export function DebatePanel({ transcript, contextNote }: DebatePanelProps) {
                                         <div className="flex items-start justify-between gap-3">
                                             <span className="text-sm font-semibold text-white">{item.id}</span>
                                             <span className={`rounded-full border px-2.5 py-1 text-[11px] font-mono uppercase tracking-widest ${getTierTone(item.tier)}`}>
-                                                {item.tier}
+                                                {getTierLabel(item.tier)}
                                             </span>
                                         </div>
                                         <div className="mt-3 text-sm leading-relaxed text-foreground/90">{item.text}</div>

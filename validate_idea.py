@@ -4138,7 +4138,11 @@ def _build_claim_contract(report, pass1, pass2, intel, data_quality, source_coun
     buyer_source_count = int(problem_validity.get("buyer_source_count", 0) or 0)
     overall_trend = str(trends.get("overall_trend", "") or "").upper()
 
-    explicit_wtp = wtp_signals > 0 or bool(icp.get("willingness_to_pay_evidence"))
+    # FIX: explicit_wtp MUST require actual signal count > 0.
+    # The AI may hallucinate icp.willingness_to_pay_evidence even when
+    # zero real WTP signals exist, causing pricing to show "evidence_backed"
+    # while the same report says "0 WTP signals" — a trust-breaking contradiction.
+    explicit_wtp = wtp_signals > 0
     pricing_value = str(pricing.get("recommended_price") or pricing.get("price_range") or pricing.get("recommended_model") or "")
     budget_value = str(icp.get("budget_range") or icp.get("budget") or "")
     tam_value = str(pass1.get("tam_estimate") or "")
@@ -4161,7 +4165,7 @@ def _build_claim_contract(report, pass1, pass2, intel, data_quality, source_coun
     else:
         business_support = "hypothesis"
 
-    if persona_value and (direct_count >= 3 or adjacent_heavy):
+    if persona_value and direct_count >= 3:
         persona_support = "supporting_context"
     else:
         persona_support = "hypothesis"
@@ -4172,6 +4176,9 @@ def _build_claim_contract(report, pass1, pass2, intel, data_quality, source_coun
         pricing_support = "hypothesis"
     else:
         pricing_support = "hypothesis"
+
+    if not explicit_wtp:
+        budget_value = "Unknown — no willingness-to-pay evidence found"
 
     if budget_value and explicit_wtp:
         budget_support = "supporting_context"
@@ -4233,10 +4240,14 @@ def _build_claim_contract(report, pass1, pass2, intel, data_quality, source_coun
         _claim_contract_entry(
             "ideal_customer_profile",
             "Ideal Customer Profile",
-            persona_value or "Not clearly grounded",
+            persona_value if direct_count >= 3 else (persona_value + " (speculative — thin evidence)" if persona_value else "Not clearly grounded"),
             "T3",
             persona_support,
-            summary="Persona fit is model-inferred from the evidence corpus and should guide interviews, not replace them.",
+            summary=(
+                "Persona fit is model-inferred from the evidence corpus and should guide interviews, not replace them."
+                if direct_count >= 3 else
+                "Persona is speculative — fewer than 3 direct buyer signals exist. Do not trust specific ranges (experience years, MRR, campaign counts)."
+            ),
             source_basis=[
                 f"{direct_count} direct buyer signals",
                 f"{adjacent_count} adjacent signals",
@@ -5236,6 +5247,13 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
 
     # Pass 2: Strategy
     report["ideal_customer_profile"] = pass2.get("ideal_customer_profile", {})
+    report_direct_count = int(data_quality.get("direct_evidence_count", 0) or 0)
+    report_wtp_signals = len((batch_signals or {}).get("wtp_signals", [])) if 'batch_signals' in dir() else 0
+    if report_direct_count < 3:
+        icp_sanitized = dict(report.get("ideal_customer_profile") or {})
+        if report_wtp_signals == 0:
+            icp_sanitized["budget_range"] = "Unknown — no willingness-to-pay evidence found"
+        report["ideal_customer_profile"] = icp_sanitized
     report["competition_landscape"] = pass2.get("competition_landscape", {})
     competition_data = dict(intel.get("competition") or {})
     report_competitors = []
@@ -5315,6 +5333,13 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
     report["first_move"] = verdict_report.get("first_move", "") or ""
     report["timing_analysis"] = verdict_report.get("timing_analysis", {}) or {}
     report["confidence_reasoning"] = verdict_report.get("confidence_reasoning", "") or ""
+    # Surface the clean interview question from moderator synthesis
+    _mod_synth = verdict_report.get("moderator_synthesis", {}) or {}
+    report["interview_question"] = (
+        _mod_synth.get("interview_question", "")
+        or verdict_report.get("interview_question", "")
+        or ""
+    )
     report["ai_usage"] = verdict_report.get("ai_usage", {}) or brain.get_usage_summary()
     pass3_risks = pass3.get("risk_matrix", [])
     if not pass3_risks:
@@ -5517,6 +5542,7 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
             "direct_competitors": report.get("competition_landscape", {}).get("direct_competitors", []),
         }
         report["first_move"] = "Talk to 5 potential buyers before writing code."
+        report["interview_question"] = "What is the most frustrating part of how you handle this problem today, and how much time or money does it cost you each week?"
         report["timing_analysis"] = {"speculative": True, "message": insufficient_direct_message}
         report["confidence_reasoning"] = insufficient_direct_message
         report["pricing_strategy"] = {"speculative": True, "message": insufficient_direct_message}

@@ -893,7 +893,7 @@ def test_claim_contract_marks_problem_as_evidence_backed_and_pricing_as_hypothes
     assert entries["market_timing"]["allowed_for_problem_validity"] is False
 
 
-def test_claim_contract_marks_problem_as_supporting_context_when_adjacent_heavy():
+def test_claim_contract_keeps_icp_as_hypothesis_when_direct_evidence_is_thin():
     report = {
         "problem_validity": {
             "label": "LOW",
@@ -931,7 +931,7 @@ def test_claim_contract_marks_problem_as_supporting_context_when_adjacent_heavy(
     entries = {entry["claim_id"]: entry for entry in claim_contract["entries"]}
 
     assert entries["problem_validity"]["support_level"] == "supporting_context"
-    assert entries["ideal_customer_profile"]["support_level"] == "supporting_context"
+    assert entries["ideal_customer_profile"]["support_level"] == "hypothesis"
     assert entries["tam_estimate"]["support_level"] == "hypothesis"
 
 
