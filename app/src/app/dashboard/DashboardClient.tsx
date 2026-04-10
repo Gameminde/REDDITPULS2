@@ -236,7 +236,7 @@ const NAV_ITEMS = [
     { id: "scan", icon: "🔍", label: "New Scan" },
     { id: "history", icon: "📋", label: "History" },
     { id: "wtp", icon: "💰", label: "Will Pay" },
-    { id: "saved", icon: "🔖", label: "Saved" },
+    { id: "saved", icon: "🔖", label: "Following" },
     { id: "settings", icon: "⚙️", label: "Settings" },
 ];
 

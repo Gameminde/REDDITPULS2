@@ -41,7 +41,7 @@ const validateItems: DockNavItem[] = [
 ];
 
 const monitorItems: DockNavItem[] = [
-    ...(FEATURE_FLAGS.SAVED_ENABLED ? [{ name: "Saved", path: "/dashboard/saved", icon: BookOpen }] : []),
+    ...(FEATURE_FLAGS.SAVED_ENABLED ? [{ name: "Following", path: "/dashboard/saved", icon: BookOpen }] : []),
     ...(FEATURE_FLAGS.ALERTS_ENABLED ? [{ name: "Alerts", path: "/dashboard/alerts", icon: Bell }] : []),
     ...(FEATURE_FLAGS.DIGEST_ENABLED ? [{ name: "Digest", path: "/dashboard/digest", icon: Mail }] : []),
 ];
@@ -56,7 +56,7 @@ const mobileItems: DockNavItem[] = [
     ...(FEATURE_FLAGS.EXPLORE_ENABLED ? [{ name: "Explore", path: "/dashboard/explore", icon: Compass }] : []),
     ...(FEATURE_FLAGS.VALIDATE_ENABLED ? [{ name: "Validate", path: "/dashboard/validate", icon: Lightbulb }] : []),
     ...(FEATURE_FLAGS.REPORTS_ENABLED ? [{ name: "Reports", path: "/dashboard/reports", icon: FileText }] : []),
-    ...(FEATURE_FLAGS.SAVED_ENABLED ? [{ name: "Saved", path: "/dashboard/saved", icon: BookOpen }] : []),
+    ...(FEATURE_FLAGS.SAVED_ENABLED ? [{ name: "Following", path: "/dashboard/saved", icon: BookOpen }] : []),
 ];
 
 const ACTIVE_VALIDATION_ID_KEY = "activeValidationId";

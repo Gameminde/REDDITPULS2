@@ -31,7 +31,7 @@ const validateItems = [
 ];
 
 const monitorItems = [
-    { title: "Saved Ideas", url: "/dashboard/saved", icon: Bookmark, premium: true },
+    { title: "Following", url: "/dashboard/saved", icon: Bookmark, premium: true },
     { title: "Alerts", url: "/dashboard/alerts", icon: BellRing },
     { title: "Digest", url: "/dashboard/digest", icon: Mail, premium: true },
     { title: "Competitors", url: "/dashboard/competitors", icon: Radar, premium: true },
