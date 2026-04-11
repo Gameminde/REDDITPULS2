@@ -318,9 +318,12 @@ export default function LandingPageClient({
                     </Link>
 
                     <div className="hidden items-center gap-8 md:flex">
-                        <a href="#how" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white">
-                            How it works
-                        </a>
+                        <Link href="/radar" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white">
+                            Radar
+                        </Link>
+                        <Link href="/startup-ideas" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white">
+                            Startup ideas
+                        </Link>
                         <Link href="/pricing" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white">
                             Pricing
                         </Link>
@@ -414,13 +417,13 @@ export default function LandingPageClient({
                         >
                             + Join the beta
                         </Link>
-                        <a
-                            href="#examples"
+                        <Link
+                            href="/radar"
                             className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/10 px-6 text-sm font-semibold text-white/65 transition hover:border-white/16 hover:text-white"
                         >
                             See the radar
                             <ArrowRight className="h-3.5 w-3.5" />
-                        </a>
+                        </Link>
                     </motion.div>
 
                     <motion.div
@@ -574,7 +577,7 @@ export default function LandingPageClient({
                                     Recent signals.
                                 </h2>
                             </div>
-                            <Link href="/dashboard" className="hidden items-center gap-2 text-sm font-semibold text-white/40 transition-colors hover:text-white md:inline-flex">
+                            <Link href="/radar" className="hidden items-center gap-2 text-sm font-semibold text-white/40 transition-colors hover:text-white md:inline-flex">
                                 Open radar
                                 <ArrowRight className="h-3.5 w-3.5" />
                             </Link>
@@ -720,6 +723,8 @@ export default function LandingPageClient({
                         <span>Startup opportunity intelligence.</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-4">
+                        <Link href="/radar" className="transition-colors hover:text-white">Radar</Link>
+                        <Link href="/startup-ideas" className="transition-colors hover:text-white">Startup ideas</Link>
                         <Link href="/pricing" className="transition-colors hover:text-white">Pricing</Link>
                         <Link href="/how-it-works" className="transition-colors hover:text-white">How it works</Link>
                         <Link href={DASHBOARD_LOGIN_HREF} className="transition-colors hover:text-white">Login</Link>
