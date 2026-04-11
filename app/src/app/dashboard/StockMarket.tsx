@@ -29,7 +29,7 @@ import { useDashboardViewer } from "./viewer-context";
 import { getJoinBetaHref } from "@/lib/beta-access";
 import type { ValidationPrefill } from "@/lib/validation-entry";
 
-interface Idea {
+export interface Idea {
     id: string;
     topic: string;
     public_title?: string;
@@ -135,7 +135,7 @@ interface CompetitorPressureCard {
     recommended_angle: string;
 }
 
-interface MarketIntelligencePayload {
+export interface MarketIntelligencePayload {
     summary: MarketIntelligenceSummary;
     emerging_wedges: EmergingWedgeCard[];
     themes_to_shape: ThemeToShapeCard[];
@@ -2465,16 +2465,26 @@ function MarketIntelligenceSection({
     );
 }
 
-export default function StockMarketDashboard() {
+export default function StockMarketDashboard({
+    initialIdeas,
+    initialMarketIntelligence,
+    initialTrendCounts,
+}: {
+    initialIdeas?: Idea[];
+    initialMarketIntelligence?: MarketIntelligencePayload | null;
+    initialTrendCounts?: { rising: number; falling: number };
+} = {}) {
     const { isGuest } = useDashboardViewer();
-    const [ideas, setIdeas] = useState<Idea[]>([]);
-    const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligencePayload | null>(null);
-    const [intelligenceLoading, setIntelligenceLoading] = useState(true);
+    const hasInitialIdeas = Array.isArray(initialIdeas);
+    const hasInitialIntelligence = initialMarketIntelligence !== undefined;
+    const [ideas, setIdeas] = useState<Idea[]>(initialIdeas || []);
+    const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligencePayload | null>(initialMarketIntelligence ?? null);
+    const [intelligenceLoading, setIntelligenceLoading] = useState(!hasInitialIntelligence);
     const [intelligenceTab, setIntelligenceTab] = useState<IntelligenceTab>("emerging");
     const [tab, setTab] = useState<TabType>("top");
     const [category, setCategory] = useState("");
     const [showEarlySignals, setShowEarlySignals] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!hasInitialIdeas);
     const [lastUpdated, setLastUpdated] = useState("");
     const [scanning, setScanning] = useState(false);
     const [scanStatus, setScanStatus] = useState<{
@@ -2495,7 +2505,7 @@ export default function StockMarketDashboard() {
         reddit_degraded_reason?: string | null;
     } | null>(null);
     const [scanError, setScanError] = useState("");
-    const [trendCounts, setTrendCounts] = useState({ rising: 0, falling: 0 });
+    const [trendCounts, setTrendCounts] = useState(initialTrendCounts || { rising: 0, falling: 0 });
     const isDocumentVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
 
     const fetchIdeas = useCallback(async () => {
