@@ -153,6 +153,32 @@ export interface MarketIntelligencePayload {
     competitor_pressure: CompetitorPressureCard[];
 }
 
+interface ScanStatusSnapshot {
+    latestRun: any;
+    ideaCount: number;
+    trackedPostCount: number;
+    archiveIdeaCount: number;
+    archivePostCount: number;
+    evidenceAttachedCount?: number;
+    lastObservedAt?: string | null;
+    funnel?: {
+        rawPostsAnalyzed: number;
+        candidateOpportunities: number;
+        visibleOnBoard: number;
+        evidenceAttached: number;
+    } | null;
+    executionMode?: "local" | "external";
+    healthy_sources: string[];
+    degraded_sources: string[];
+    run_health: "healthy" | "degraded" | "failed";
+    runner_label?: string | null;
+    reddit_access_mode?: "provider_api" | "authenticated_app" | "anonymous_public" | "connected_user" | "unknown";
+    reddit_post_count?: number;
+    reddit_successful_requests?: number;
+    reddit_failed_requests?: number;
+    reddit_degraded_reason?: string | null;
+}
+
 function decodeHtml(str?: string | null) {
     return String(str || "")
         .replace(/&quot;/g, '"')
@@ -218,6 +244,24 @@ function formatFreshnessHours(hours: number | null | undefined) {
     if (hours < 1) return "seen within the last hour";
     if (hours < 24) return `seen ${Math.round(hours)}h ago`;
     return `seen ${Math.round(hours / 24)}d ago`;
+}
+
+function formatRelativeTimestamp(value?: string | null) {
+    if (!value) return "";
+    const timestamp = new Date(value).getTime();
+    if (!Number.isFinite(timestamp)) return "";
+
+    const diffMs = Date.now() - timestamp;
+    if (diffMs < 60_000) return "just now";
+
+    const diffMinutes = Math.round(diffMs / 60_000);
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+    const diffHours = Math.round(diffMs / 3_600_000);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.round(diffMs / 86_400_000);
+    return `${diffDays}d ago`;
 }
 
 type TabType = "top" | "trending" | "dying" | "new";
@@ -2544,23 +2588,7 @@ export default function StockMarketDashboard({
     const [loading, setLoading] = useState(!hasInitialIdeas);
     const [lastUpdated, setLastUpdated] = useState("");
     const [scanning, setScanning] = useState(false);
-    const [scanStatus, setScanStatus] = useState<{
-        latestRun: any;
-        ideaCount: number;
-        trackedPostCount: number;
-        archiveIdeaCount: number;
-        archivePostCount: number;
-        executionMode?: "local" | "external";
-        healthy_sources: string[];
-        degraded_sources: string[];
-        run_health: "healthy" | "degraded" | "failed";
-        runner_label?: string | null;
-        reddit_access_mode?: "provider_api" | "authenticated_app" | "anonymous_public" | "connected_user" | "unknown";
-        reddit_post_count?: number;
-        reddit_successful_requests?: number;
-        reddit_failed_requests?: number;
-        reddit_degraded_reason?: string | null;
-    } | null>(null);
+    const [scanStatus, setScanStatus] = useState<ScanStatusSnapshot | null>(null);
     const [scanError, setScanError] = useState("");
     const [trendCounts, setTrendCounts] = useState(initialTrendCounts || { rising: 0, falling: 0 });
     const isDocumentVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
@@ -2575,7 +2603,6 @@ export default function StockMarketDashboard({
             const res = await fetch(`/api/market?sort=${sortMap[tab]}&category=${category}&limit=120${exploratoryParam}`);
             const data = await res.json();
             setIdeas(data.ideas || []);
-            setLastUpdated(new Date().toLocaleTimeString());
         } catch {
             console.error("Failed to fetch ideas");
         } finally {
@@ -2632,6 +2659,7 @@ export default function StockMarketDashboard({
             if (res.ok) {
                 const data = await res.json();
                 setScanStatus(data);
+                setLastUpdated(formatRelativeTimestamp(data.lastObservedAt));
                 // If a scan is running, keep polling
                 if (data.latestRun?.status === "running") {
                     setScanning(true);
@@ -2718,6 +2746,18 @@ export default function StockMarketDashboard({
     const newIdeaCount = marketIntelligence?.summary.new_72h_count || 0;
     const executionMode = scanStatus?.executionMode || "local";
     const usingExternalWorker = executionMode === "external";
+    const candidateOpportunityCount = Math.max(
+        scanStatus?.funnel?.candidateOpportunities || 0,
+        scanStatus?.archiveIdeaCount || 0,
+    );
+    const evidenceAttachedCount = Math.max(
+        scanStatus?.funnel?.evidenceAttached || 0,
+        scanStatus?.evidenceAttachedCount || 0,
+    );
+    const freshnessHours = scanStatus?.lastObservedAt
+        ? Math.max(0, (Date.now() - new Date(scanStatus.lastObservedAt).getTime()) / 3_600_000)
+        : null;
+    const staleData = freshnessHours != null && Number.isFinite(freshnessHours) && freshnessHours >= 24;
 
     return (
         <div style={{ padding: "12px 18px", maxWidth: 1200, margin: "0 auto" }}>
@@ -2736,8 +2776,29 @@ export default function StockMarketDashboard({
                             Repeated pain, shaped into product angles.
                         </p>
                         {lastUpdated && (
-                            <div style={{ marginTop: 10, fontSize: 10.5, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
-                                <Clock style={{ width: 11, height: 11 }} /> Updated {lastUpdated}
+                            <div style={{ marginTop: 10, fontSize: 10.5, color: "#64748b", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                    <Clock style={{ width: 11, height: 11 }} />
+                                    Last market run {lastUpdated}
+                                </span>
+                                {staleData ? (
+                                    <span style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 5,
+                                        padding: "3px 8px",
+                                        borderRadius: 999,
+                                        background: "rgba(245,158,11,0.12)",
+                                        border: "1px solid rgba(245,158,11,0.18)",
+                                        color: "#fbbf24",
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        letterSpacing: "0.04em",
+                                        textTransform: "uppercase",
+                                    }}>
+                                        Needs refresh
+                                    </span>
+                                ) : null}
                             </div>
                         )}
                     </div>
@@ -2924,6 +2985,78 @@ export default function StockMarketDashboard({
                 <StatCard label="Rising" value={trendCounts.rising} icon={TrendingUp} color="#22c55e" subtitle="up this cycle" />
                 <StatCard label="New" value={newIdeaCount} icon={Sparkles} color="#fbbf24" subtitle="last 72h" />
                 <StatCard label="Signals" value={rawPostsAnalyzed.toLocaleString()} icon={BarChart3} color="#8b5cf6" subtitle="posts scanned" />
+            </div>
+
+            <div
+                className="surface-panel"
+                style={{
+                    padding: "14px 16px",
+                    borderRadius: 16,
+                    marginBottom: 18,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                        <div className="section-kicker" style={{ marginBottom: 6 }}>Discovery funnel</div>
+                        <div style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.6, maxWidth: 720 }}>
+                            CueIdea filters raw posts into candidate opportunities, then only keeps the strongest ideas with enough attached evidence to show on the board.
+                        </div>
+                    </div>
+                    {scanStatus?.lastObservedAt ? (
+                        <div style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>
+                            Source run: {lastUpdated || "Unknown"}
+                        </div>
+                    ) : null}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                    {[
+                        {
+                            label: "Raw posts analyzed",
+                            value: rawPostsAnalyzed.toLocaleString(),
+                            tone: "#8b5cf6",
+                        },
+                        {
+                            label: "Candidate opportunities",
+                            value: candidateOpportunityCount.toLocaleString(),
+                            tone: "#3b82f6",
+                        },
+                        {
+                            label: "Visible on board",
+                            value: liveIdeaCount.toLocaleString(),
+                            tone: "#f97316",
+                        },
+                        {
+                            label: "Evidence attached",
+                            value: evidenceAttachedCount.toLocaleString(),
+                            tone: "#22c55e",
+                        },
+                    ].map((item) => (
+                        <div
+                            key={item.label}
+                            style={{
+                                borderRadius: 14,
+                                padding: "12px 14px",
+                                border: "1px solid rgba(255,255,255,0.08)",
+                                background: "rgba(255,255,255,0.03)",
+                                minHeight: 86,
+                            }}
+                        >
+                            <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, color: "#64748b", marginBottom: 10 }}>
+                                {item.label}
+                            </div>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: "#f8fafc", lineHeight: 1 }}>
+                                {item.value}
+                            </div>
+                            <div style={{ marginTop: 10, height: 3, borderRadius: 999, background: `${item.tone}22`, overflow: "hidden" }}>
+                                <div style={{ width: "100%", height: "100%", background: item.tone, opacity: 0.7 }} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
 
             {/* Tabs + Category Filter */}

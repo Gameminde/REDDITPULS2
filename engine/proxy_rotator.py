@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import random
 import threading
+import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable
@@ -132,23 +133,49 @@ class ProxyRotator:
         proxies = _parse_proxy_tokens(env_value)
         self.proxies = list(proxies)
         self._live_proxies = list(proxies)
+        self._quarantined_proxies: set[str] = set()
+        self._cooldown_until: dict[str, float] = {}
         self._lock = threading.Lock()
         self.health = ProxyHealth()
         self.mode = "proxy_pool" if self.proxies else "direct"
 
+    def _prune_cooldowns_locked(self) -> None:
+        if not self._cooldown_until:
+            return
+        now = time.monotonic()
+        expired = [proxy for proxy, until in self._cooldown_until.items() if until <= now]
+        for proxy in expired:
+            self._cooldown_until.pop(proxy, None)
+
+    def _eligible_proxies_locked(self) -> list[str]:
+        self._prune_cooldowns_locked()
+        return [
+            proxy
+            for proxy in self.proxies
+            if proxy not in self._quarantined_proxies and proxy not in self._cooldown_until
+        ]
+
     def has_proxies(self) -> bool:
-        return bool(self._live_proxies)
+        with self._lock:
+            self._restore_pool_if_needed()
+            return bool(self._live_proxies)
 
     def live_count(self) -> int:
         with self._lock:
+            self._restore_pool_if_needed()
             return len(self._live_proxies)
 
     def total_count(self) -> int:
         return len(self.proxies)
 
     def _restore_pool_if_needed(self) -> None:
+        self._prune_cooldowns_locked()
+        self._live_proxies = [
+            proxy for proxy in self._live_proxies
+            if proxy not in self._quarantined_proxies and proxy not in self._cooldown_until
+        ]
         if not self._live_proxies and self.proxies:
-            self._live_proxies = list(self.proxies)
+            self._live_proxies = self._eligible_proxies_locked()
 
     def next_proxy(self) -> str | None:
         with self._lock:
@@ -196,15 +223,37 @@ class ProxyRotator:
     def format_for_aiohttp(self) -> str | None:
         return self.random_http_proxy()
 
-    def cull_proxy(self, proxy: str | None) -> None:
+    def cull_proxy(self, proxy: str | None, quarantine: bool = True) -> None:
         if not proxy:
             return
         with self._lock:
             self._live_proxies = [item for item in self._live_proxies if item != proxy]
+            self._cooldown_until.pop(proxy, None)
+            if quarantine:
+                self._quarantined_proxies.add(proxy)
             self._restore_pool_if_needed()
 
     def mark_dead(self, proxy: str | None) -> None:
-        self.cull_proxy(proxy)
+        self.cull_proxy(proxy, quarantine=True)
+
+    def cooldown_proxy(self, proxy: str | None, seconds: float = 90.0) -> None:
+        if not proxy:
+            return
+        with self._lock:
+            self._live_proxies = [item for item in self._live_proxies if item != proxy]
+            self._quarantined_proxies.discard(proxy)
+            self._cooldown_until[proxy] = time.monotonic() + max(1.0, float(seconds))
+            self._restore_pool_if_needed()
+
+    def pool_stats(self) -> dict:
+        with self._lock:
+            self._restore_pool_if_needed()
+            return {
+                "total_proxies": len(self.proxies),
+                "live_proxies": len(self._live_proxies),
+                "quarantined_proxies": len(self._quarantined_proxies),
+                "cooldown_proxies": len(self._cooldown_until),
+            }
 
     def reset_health(self) -> None:
         self.health.reset()
@@ -212,7 +261,11 @@ class ProxyRotator:
     def summary(self) -> str:
         if not self.proxies:
             return "direct (no proxies)"
-        return f"{self.mode} ({self.live_count()} live / {self.total_count()} total)"
+        stats = self.pool_stats()
+        return (
+            f"{self.mode} ({stats['live_proxies']} live / {stats['total_proxies']} total, "
+            f"{stats['quarantined_proxies']} quarantined, {stats['cooldown_proxies']} cooling down)"
+        )
 
 
 def stealth_headers() -> dict:

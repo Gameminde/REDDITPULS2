@@ -6,7 +6,7 @@ import path from "path";
 import { checkProcessLimit, trackProcess, releaseProcess } from "@/lib/process-limiter";
 import { checkPremium } from "@/lib/check-premium";
 import { buildMarketIdeas } from "@/lib/market-feed";
-import { extractScraperRunHealth } from "@/lib/scraper-run-health";
+import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
 
 const discoverTimestamps = new Map<string, number[]>();
 const MAX_DISCOVERS_PER_HOUR = 3;
@@ -151,6 +151,19 @@ export async function GET() {
         });
 
         const trackedPostCount = visibleIdeas.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0);
+        const evidenceAttachedCount = visibleIdeas.filter((row) => {
+            const evidenceCount = Number((row as any)?.evidence_summary?.evidence_count || 0);
+            const directCount = Number((row as any)?.signal_contract?.buyer_native_direct_count || 0);
+            const supportingCount = Number((row as any)?.signal_contract?.supporting_signal_count || 0);
+            return evidenceCount > 0 || directCount > 0 || supportingCount > 0;
+        }).length;
+        const extractedFunnel = extractMarketFunnel(latestRun);
+        const lastObservedAt =
+            typeof latestRun?.completed_at === "string"
+                ? latestRun.completed_at
+                : typeof latestRun?.started_at === "string"
+                    ? latestRun.started_at
+                    : null;
 
         const [{ count: archivePostCount }, { count: archiveIdeaCount }] = await Promise.all([
             admin
@@ -168,6 +181,14 @@ export async function GET() {
             trackedPostCount,
             archiveIdeaCount: archiveIdeaCount || archiveIdeas.length,
             archivePostCount: archivePostCount || 0,
+            evidenceAttachedCount,
+            lastObservedAt,
+            funnel: {
+                rawPostsAnalyzed: extractedFunnel?.scraped_posts || archivePostCount || 0,
+                candidateOpportunities: extractedFunnel?.final_ideas || archiveIdeaCount || archiveIdeas.length,
+                visibleOnBoard: visibleIdeas.length,
+                evidenceAttached: evidenceAttachedCount,
+            },
             executionMode,
             ...extractScraperRunHealth(latestRun),
         });
@@ -178,6 +199,9 @@ export async function GET() {
             trackedPostCount: 0,
             archiveIdeaCount: 0,
             archivePostCount: 0,
+            evidenceAttachedCount: 0,
+            lastObservedAt: null,
+            funnel: null,
             executionMode: getScraperExecutionMode(),
             healthy_sources: [],
             degraded_sources: [],
