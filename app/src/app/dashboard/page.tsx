@@ -4,8 +4,22 @@ import { createAdmin } from "@/lib/supabase-admin";
 import { buildMarketIdeas } from "@/lib/market-feed";
 
 export const metadata: Metadata = {
-  title: "Opportunity Radar | CueIdea",
+  title: "Opportunity Radar",
   description: "Browse live startup opportunities shaped from repeated public pain across Reddit, Hacker News, Product Hunt, Indie Hackers, GitHub Issues, reviews, and hiring signals.",
+  alternates: {
+    canonical: "/dashboard",
+  },
+  openGraph: {
+    title: "CueIdea Opportunity Radar",
+    description: "See live startup opportunities shaped from repeated public pain before you build.",
+    url: `${process.env.NEXT_PUBLIC_SITE_URL || "https://cueidea.me"}/dashboard`,
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "CueIdea Opportunity Radar",
+    description: "See live startup opportunities shaped from repeated public pain before you build.",
+  },
 };
 
 async function getInitialDashboardData() {

@@ -314,7 +314,7 @@ export default function LandingPageClient({
             >
                 <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between px-4 sm:px-6 lg:px-8">
                     <Link href="/" className="inline-flex items-center">
-                        <BrandLogo compact uppercase />
+                        <BrandLogo compact uppercase href={null} />
                     </Link>
 
                     <div className="hidden items-center gap-8 md:flex">

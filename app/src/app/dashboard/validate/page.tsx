@@ -251,6 +251,7 @@ const ValidatePage = () => {
     const { isPremium } = useUserPlan();
     const router = useRouter();
     const searchParams = useSearchParams();
+    const settingsHref = "/dashboard/settings";
 
     /* form state */
     const [idea, setIdea] = useState("");
@@ -265,6 +266,9 @@ const ValidatePage = () => {
     const [activeValidation, setActiveValidation] = useState<Validation | null>(null);
     const [isValidating, setIsValidating] = useState(false);
     const [configuredModels, setConfiguredModels] = useState<string[]>([]);
+    const [aiConfigChecked, setAiConfigChecked] = useState(false);
+    const [aiConfigError, setAiConfigError] = useState<string | null>(null);
+    const [showAiSetupGate, setShowAiSetupGate] = useState(false);
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [termExpanded, setTermExpanded] = useState(false);
     const [validationError, setValidationError] = useState<string | null>(null);
@@ -387,15 +391,34 @@ const ValidatePage = () => {
 
     /* ── Fetch AI config ────────────────────────────────── */
     useEffect(() => {
+        let cancelled = false;
+
         fetch("/api/settings/ai")
-            .then((r) => r.json())
-            .then((d) => {
-                const active = (d.configs || []).filter((c: any) => c.is_active);
-                if (active.length > 0) {
-                    setConfiguredModels(active.map((c: any) => c.selected_model));
+            .then((r) => {
+                if (!r.ok) {
+                    throw new Error("Could not load AI settings");
                 }
+                return r.json();
             })
-            .catch(() => {});
+            .then((d) => {
+                if (cancelled) return;
+                const active = (d.configs || []).filter((c: any) => c.is_active);
+                setConfiguredModels(active.map((c: any) => c.selected_model));
+                setAiConfigError(null);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setConfiguredModels([]);
+                setAiConfigError("We could not verify your AI setup. Open Settings and try again.");
+            })
+            .finally(() => {
+                if (cancelled) return;
+                setAiConfigChecked(true);
+            });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     /* ── Fetch validation history ───────────────────────── */
@@ -410,6 +433,12 @@ const ValidatePage = () => {
             })
             .catch(() => {});
     }, []);
+
+    useEffect(() => {
+        if (configuredModels.length > 0) {
+            setShowAiSetupGate(false);
+        }
+    }, [configuredModels.length]);
 
     useEffect(() => {
         const prefillIdea = searchParams.get("idea");
@@ -674,6 +703,15 @@ const ValidatePage = () => {
 
     const handleValidate = async () => {
         if (!idea.trim()) return;
+        if (!aiConfigChecked) {
+            setValidationError("We are still checking your AI setup. Try again in a moment.");
+            return;
+        }
+        if (configuredModels.length === 0) {
+            setValidationError(null);
+            setShowAiSetupGate(true);
+            return;
+        }
         if (selectedDepthLocked) {
             router.push("/dashboard/pricing");
             return;
@@ -745,6 +783,13 @@ const ValidatePage = () => {
     const scrapingActivityPulse = Math.max(1, Math.floor(scrapingElapsedSeconds / 2) + 1 + terminalTick % 2);
     const statusIdx = STATUS_ORDER.indexOf(currentStatus);
     const dataSources = parsedReport.data_sources || {};
+    const hasActiveAiConfig = configuredModels.length > 0;
+    const aiConfigLoading = !aiConfigChecked;
+    const aiSetupMessage = aiConfigLoading
+        ? "Checking your AI setup..."
+        : hasActiveAiConfig
+            ? null
+            : aiConfigError || "Set at least one active API key for the agent debating room.";
 
     /* Normalize status for phase matching — sub-statuses like "synthesizing (1/3 market)" */
     const issynth = currentStatus.startsWith("synthesizing") || currentStatus.startsWith("debating");
@@ -767,7 +812,11 @@ const ValidatePage = () => {
         { label: "Debate", done: isdone, active: issynth },
         { label: "Report", done: isdone, active: false },
     ];
-    const validationDisabled = isValidating || !idea.trim() || Boolean(storedActiveValidationId) || selectedDepthLocked;
+    const validationDisabled = isValidating
+        || !idea.trim()
+        || Boolean(storedActiveValidationId)
+        || selectedDepthLocked
+        || aiConfigLoading;
     const validationCtaLabel = isValidating
         ? BUTTON_STAGES[currentStageIndex]?.label || "Processing..."
         : depth === "quick"
@@ -823,6 +872,73 @@ const ValidatePage = () => {
                             Open Reports
                         </Link>
                     </div>
+                </div>
+            )}
+
+            {showAiSetupGate && (
+                <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4"
+                    onClick={() => setShowAiSetupGate(false)}
+                >
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                        className="w-full max-w-[460px] rounded-[22px] border border-primary/20 bg-[#0d0a08] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-primary">
+                                    Validation locked
+                                </div>
+                                <h3 className="mt-2 text-xl font-semibold text-white">
+                                    Set at least one API key for the agent debating room.
+                                </h3>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowAiSetupGate(false)}
+                                className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-xs font-mono text-muted-foreground transition-colors hover:border-white/20 hover:text-white"
+                            >
+                                Close
+                            </button>
+                        </div>
+
+                        <p className="mt-3 text-sm leading-6 text-foreground/80">
+                            CueIdea cannot start the debate, synthesis, or report pass until one active AI provider is connected in Settings.
+                        </p>
+
+                        <div className="mt-4 rounded-[16px] border border-white/8 bg-white/[0.03] p-4">
+                            <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                                What to do
+                            </div>
+                            <div className="mt-3 space-y-2 text-sm text-foreground/80">
+                                <p>1. Open Settings</p>
+                                <p>2. Add one provider API key</p>
+                                <p>3. Mark it active</p>
+                                <p>4. Come back here and run validation</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-5 flex flex-wrap items-center gap-3">
+                            <Link
+                                href={settingsHref}
+                                className="inline-flex items-center gap-2 rounded-xl border border-primary/25 bg-primary/12 px-4 py-2.5 text-[11px] font-mono uppercase tracking-[0.14em] text-primary transition-colors hover:bg-primary/18"
+                            >
+                                <Settings className="h-4 w-4" />
+                                Add API key
+                            </Link>
+                            <button
+                                type="button"
+                                onClick={() => setShowAiSetupGate(false)}
+                                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-[11px] font-mono uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-white/20 hover:text-white"
+                            >
+                                Maybe later
+                            </button>
+                        </div>
+                    </motion.div>
                 </div>
             )}
 
@@ -1059,6 +1175,8 @@ const ValidatePage = () => {
                         <p className="mt-3 text-center text-[11px] font-mono text-muted-foreground">
                             {storedActiveValidationId
                                 ? "A validation is already running for this account."
+                                : aiSetupMessage
+                                    ? aiSetupMessage
                                 : selectedDepthLocked
                                     ? `${selectedDepthOption.label} needs premium.`
                                     : "You will get a report with evidence, timing, competition, and the next move."}
@@ -1189,11 +1307,14 @@ const ValidatePage = () => {
                     ) : (
                         <div className="flex min-h-[148px] flex-col items-center justify-center gap-2 text-center">
                             <Settings className="w-4 h-4 text-muted-foreground/40" />
+                            <p className="max-w-[220px] text-[11px] font-mono text-muted-foreground">
+                                Set one active API key to unlock the agent debating room.
+                            </p>
                             <Link
-                                href="/dashboard/settings"
+                                href={settingsHref}
                                 className="text-[11px] font-mono text-muted-foreground hover:text-primary transition-colors"
                             >
-                                Configure models →
+                                Open Settings →
                             </Link>
                         </div>
                     )}
@@ -1296,6 +1417,8 @@ const ValidatePage = () => {
                         <div className="mt-1 text-xs leading-5 text-muted-foreground">
                             {storedActiveValidationId
                                 ? "A validation is already running for this account."
+                                : aiSetupMessage
+                                    ? aiSetupMessage
                                 : selectedDepthLocked
                                     ? `${selectedDepthOption.label} needs premium.`
                                     : "Run this validation with one tap."}

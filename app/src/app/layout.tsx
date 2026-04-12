@@ -6,9 +6,51 @@ import { ThreeBackgroundWrapper } from '@/app/components/ThreeBackgroundWrapper'
 import { AnalyticsTracker } from '@/lib/analytics-client';
 import { APP_DESCRIPTION, APP_NAME } from '@/lib/brand';
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://cueidea.me";
+
 export const metadata: Metadata = {
-  title: APP_NAME,
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: `${APP_NAME} | Startup Idea Radar`,
+    template: `%s | ${APP_NAME}`,
+  },
   description: APP_DESCRIPTION,
+  applicationName: APP_NAME,
+  keywords: [
+    "CueIdea",
+    "startup ideas",
+    "startup opportunity radar",
+    "validate startup ideas",
+    "pain point radar",
+    "saas opportunities",
+    "indie hacker tools",
+  ],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    siteName: APP_NAME,
+    title: `${APP_NAME} | Startup Idea Radar`,
+    description: "See startup demand before you build. CueIdea turns repeated public pain into startup opportunities you can inspect and validate.",
+  },
+  twitter: {
+    card: "summary",
+    title: `${APP_NAME} | Startup Idea Radar`,
+    description: "See startup demand before you build. Live pain signals become product opportunities.",
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/favicon-16.png", type: "image/png", sizes: "16x16" },
+    ],
+    shortcut: ["/favicon.ico"],
+    apple: [{ url: "/brand/cueidea-logo-256.png", type: "image/png", sizes: "256x256" }],
+  },
+  manifest: "/manifest.webmanifest",
+  category: "business",
 };
 
 export default function RootLayout({

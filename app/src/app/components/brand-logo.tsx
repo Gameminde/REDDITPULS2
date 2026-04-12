@@ -1,5 +1,6 @@
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 
@@ -9,7 +10,7 @@ type BrandLogoProps = {
     showSubtitle?: boolean;
     align?: "left" | "center";
     className?: string;
-    href?: string;
+    href?: string | null;
 };
 
 export function BrandLogo({
@@ -21,73 +22,26 @@ export function BrandLogo({
     href = "/",
 }: BrandLogoProps) {
     const wordmark = uppercase ? APP_NAME.toUpperCase() : APP_NAME;
-    const iconSize = compact ? 23 : 36;
-    const innerRadius = compact ? 9 : 13;
+    const iconSize = compact ? 24 : 38;
     const alignItems = align === "center" ? "items-center text-center" : "items-start text-left";
     const destinationLabel = href === "/dashboard" ? "Go to dashboard" : "Go to home";
-
-    return (
-        <Link
-            href={href}
-            aria-label={destinationLabel}
-            title={destinationLabel}
-            className={`inline-flex items-center gap-3 no-underline transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${className}`}
-        >
+    const content = (
+        <>
             <div
-                className="relative shrink-0 rounded-[14px] border border-primary/25"
+                className="relative shrink-0"
                 style={{
                     width: iconSize,
                     height: iconSize,
-                    background:
-                        "radial-gradient(circle at 28% 24%, rgba(255,220,168,0.96), rgba(251,146,60,0.95) 34%, rgba(249,115,22,0.96) 58%, rgba(124,45,18,0.94) 100%)",
-                    boxShadow:
-                        "0 0 0 1px rgba(249,115,22,0.18), 0 0 24px rgba(249,115,22,0.28), inset 0 1px 0 rgba(255,255,255,0.24)",
+                    filter: "drop-shadow(0 0 18px rgba(249,115,22,0.28))",
                 }}
             >
-                <div
-                    className="absolute inset-[3px] rounded-[11px] border border-white/10"
-                    style={{
-                        background:
-                            "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.01))",
-                    }}
-                />
-                <div
-                    className="absolute rounded-full bg-white/90"
-                    style={{
-                        width: compact ? 4 : 6,
-                        height: compact ? 4 : 6,
-                        left: compact ? 6 : 9,
-                        top: compact ? 6 : 8,
-                        boxShadow: "0 0 16px rgba(255,255,255,0.8)",
-                    }}
-                />
-                <div
-                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20"
-                    style={{
-                        width: innerRadius,
-                        height: innerRadius,
-                        boxShadow: "inset 0 0 12px rgba(255,255,255,0.14)",
-                    }}
-                />
-                <div
-                    className="absolute left-1/2 top-1/2 rounded-full bg-white"
-                    style={{
-                        width: compact ? 3 : 5,
-                        height: compact ? 3 : 5,
-                        transform: "translate(-50%, -50%)",
-                        boxShadow: "0 0 18px rgba(255,255,255,0.95)",
-                    }}
-                />
-                <div
-                    className="absolute rounded-full"
-                    style={{
-                        width: compact ? 14 : 20,
-                        height: compact ? 14 : 20,
-                        right: compact ? -2 : -4,
-                        bottom: compact ? -2 : -4,
-                        background: "radial-gradient(circle, rgba(251,146,60,0.5), rgba(251,146,60,0))",
-                        filter: "blur(4px)",
-                    }}
+                <Image
+                    src="/brand/cueidea-logo-512.png"
+                    alt=""
+                    fill
+                    sizes={`${iconSize}px`}
+                    className="object-contain"
+                    aria-hidden="true"
                 />
             </div>
 
@@ -116,6 +70,28 @@ export function BrandLogo({
                     </span>
                 ) : null}
             </div>
+        </>
+    );
+
+    if (!href) {
+        return (
+            <div
+                className={`inline-flex items-center gap-3 no-underline ${className}`}
+                aria-label={wordmark}
+            >
+                {content}
+            </div>
+        );
+    }
+
+    return (
+        <Link
+            href={href}
+            aria-label={destinationLabel}
+            title={destinationLabel}
+            className={`inline-flex items-center gap-3 no-underline transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${className}`}
+        >
+            {content}
         </Link>
     );
 }

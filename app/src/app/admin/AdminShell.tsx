@@ -28,7 +28,7 @@ export function AdminShell({
             <div className="relative z-10 mx-auto flex min-h-screen max-w-[1600px] gap-6 px-4 py-4 lg:px-6">
                 <aside className="hidden w-[250px] shrink-0 rounded-[20px] border border-white/10 bg-[rgba(17,17,17,0.92)] p-4 shadow-[0_0_30px_-18px_rgba(249,115,22,0.4)] backdrop-blur-xl lg:flex lg:flex-col">
                     <Link href="/admin" className="mb-5 flex items-center gap-3 rounded-2xl border border-white/6 bg-white/[0.03] px-3 py-3">
-                        <BrandLogo compact />
+                        <BrandLogo compact href={null} />
                         <div>
                             <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-primary">Admin</div>
                             <div className="text-sm font-semibold text-white">Control Panel</div>

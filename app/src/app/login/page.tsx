@@ -1,13 +1,12 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { BrandLogo } from "@/app/components/brand-logo";
 import { trackClientEvent } from "@/lib/analytics-client";
 import { getBetaTargetPath } from "@/lib/beta-access";
 import { createClient } from "@/lib/supabase-browser";
-import { APP_NAME } from "@/lib/brand";
 
 type AuthMode = "login" | "signup";
 
@@ -173,10 +172,9 @@ function LoginForm() {
     return (
         <div className="min-h-screen flex items-center justify-center px-6">
             <div className="w-full max-w-md">
-                <Link href="/" className="flex items-center gap-2 justify-center mb-8">
-                    <span className="text-3xl">📡</span>
-                    <span className="font-bold text-2xl">{APP_NAME}</span>
-                </Link>
+                <div className="mb-8 flex justify-center">
+                    <BrandLogo compact uppercase />
+                </div>
 
                 <div className="card-glow p-8">
                     <h2 className="text-2xl font-bold mb-2 text-center">

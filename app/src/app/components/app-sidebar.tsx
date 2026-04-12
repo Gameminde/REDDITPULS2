@@ -131,7 +131,7 @@ export function AppSidebar({ userEmail }: { userEmail?: string }) {
                         }}
                         transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
                     >
-                        <BrandLogo compact />
+                        <BrandLogo compact href={null} />
                     </motion.div>
                 </Link>
             </div>

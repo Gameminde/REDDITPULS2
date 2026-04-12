@@ -116,23 +116,34 @@ interface ThemeToShapeCard {
     current_score: number;
     source_count: number;
     post_count_total: number;
+    direct_buyer_count: number;
+    supporting_signal_count: number;
     suggested_wedge_label: string | null;
     missing_proof: string;
     recommended_shape_direction: string;
+    recommended_shape_mode: "suggested_wedge" | "direct_buyer_language" | "cross_source_pattern" | "theme_watch";
+    observed_pattern: string;
 }
 
 interface CompetitorPressureCard {
     competitor: string;
     weakness_category: string;
     complaint_count: number;
+    source_count: number;
     latest_seen_at: string | null;
+    freshness_label: string;
     confidence: {
         level: "HIGH" | "MEDIUM" | "LOW";
         score: number;
         label: string;
     };
+    summary: string;
+    affected_segment: string | null;
+    direct_evidence_count: number;
     why_now: string;
     recommended_angle: string;
+    recommendation_mode: "evidence_led" | "heuristic";
+    inference_note: string;
 }
 
 export interface MarketIntelligencePayload {
@@ -2223,6 +2234,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
 }
 
 function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: boolean }) {
+    const suggestionIsGrounded = card.recommended_shape_mode === "suggested_wedge" || card.recommended_shape_mode === "direct_buyer_language";
     return (
         <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -2253,7 +2265,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                     </div>
                     {card.suggested_wedge_label && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Product angle: {card.suggested_wedge_label}
+                            Suggested wedge: {card.suggested_wedge_label}
                         </div>
                     )}
                 </div>
@@ -2265,13 +2277,27 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
                 <DetailMetric label="Sources" value={card.source_count} accent={card.source_count > 1 ? "#93c5fd" : "#fbbf24"} />
                 <DetailMetric label="Posts" value={card.post_count_total} accent="#e2e8f0" />
+                <DetailMetric label="Direct" value={card.direct_buyer_count} accent={card.direct_buyer_count > 0 ? "#4ade80" : "#94a3b8"} />
+                <DetailMetric label="Support" value={card.supporting_signal_count} accent={card.supporting_signal_count > 0 ? "#93c5fd" : "#94a3b8"} />
+            </div>
+
+            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                Observed: {summarizeReasonForUser(card.observed_pattern, `${card.topic} is repeating, but the wedge is still broad.`)}
             </div>
 
             <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                {card.suggested_wedge_label ? "Suggested wedge" : "Next focus"}:{" "}
                 {summarizeReasonForUser(card.recommended_shape_direction, `${card.topic} needs a more focused angle before it becomes a stronger bet.`)}
             </div>
+
+            {!suggestionIsGrounded && (
+                <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
+                    This direction is still heuristic. It is based on repeated signals, not a validated wedge yet.
+                </div>
+            )}
+
             <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Missing proof: {summarizeReasonForUser(card.missing_proof, "It still needs stronger buyer proof.")}
+                Still missing: {summarizeReasonForUser(card.missing_proof, "It still needs stronger buyer proof.")}
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -2336,8 +2362,8 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
                         </span>
                         <IntelligenceBadge label={card.confidence.label} color={confidenceColor} background={confidenceBg} />
                     </div>
-                    <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
-                        {card.why_now}
+                    <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                        Observed: {card.summary}
                     </div>
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-mono)", color: "#ef4444" }}>
@@ -2345,13 +2371,33 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
                 </div>
             </div>
 
-            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Product angle: {card.recommended_angle}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+                <DetailMetric label="Complaints" value={card.complaint_count} accent="#fca5a5" />
+                <DetailMetric label="Sources" value={card.source_count} accent={card.source_count > 1 ? "#93c5fd" : "#94a3b8"} />
+                <DetailMetric label="Direct" value={card.direct_evidence_count} accent={card.direct_evidence_count > 0 ? "#4ade80" : "#94a3b8"} />
+            </div>
+
+            {card.affected_segment && (
+                <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
+                    Most affected: {card.affected_segment}
+                </div>
+            )}
+
+            <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
+                Signal read: {card.why_now}
+            </div>
+
+            <div style={{ fontSize: 12, color: "#fca5a5", lineHeight: 1.6 }}>
+                Suggested wedge: {card.recommended_angle}
+            </div>
+
+            <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
+                {card.inference_note}
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, color: "#64748b" }}>
-                    Latest update: {card.latest_seen_at ? new Date(card.latest_seen_at).toLocaleString() : "Unknown"}
+                    Latest update: {card.latest_seen_at ? new Date(card.latest_seen_at).toLocaleString() : "Unknown"} · {card.freshness_label}
                 </span>
                 <Link
                     href="/dashboard/competitors"
@@ -2395,6 +2441,11 @@ function MarketIntelligenceSection({
         { key: "themes", label: "Refine", icon: Lightbulb, color: "#3b82f6" },
         { key: "competitors", label: "Competitors", icon: ShieldAlert, color: "#ef4444" },
     ];
+    const tabDescriptions: Record<IntelligenceTab, string> = {
+        emerging: "Fresh wedges with enough real signal to watch now.",
+        themes: "Broad themes from the live feed. Observed counts are real. The wedge line is a suggestion, not a verdict.",
+        competitors: "Real complaint clusters around incumbents. Observed weakness is grounded in complaints. The wedge line is inferred.",
+    };
     const allRowCount =
         (intelligence?.emerging_wedges?.length || 0) +
         (intelligence?.themes_to_shape?.length || 0) +
@@ -2447,6 +2498,12 @@ function MarketIntelligenceSection({
                     );
                 })}
             </div>
+
+            {!loading && showTabs ? (
+                <div style={{ marginTop: 10, fontSize: 11.5, color: "#94a3b8", lineHeight: 1.6 }}>
+                    {tabDescriptions[tab]}
+                </div>
+            ) : null}
 
             {!loading && currentRows.length > 0 ? (
                 <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>

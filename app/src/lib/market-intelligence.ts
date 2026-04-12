@@ -44,23 +44,34 @@ export interface ThemeToShapeCard {
     current_score: number;
     source_count: number;
     post_count_total: number;
+    direct_buyer_count: number;
+    supporting_signal_count: number;
     suggested_wedge_label: string | null;
     missing_proof: string;
     recommended_shape_direction: string;
+    recommended_shape_mode: "suggested_wedge" | "direct_buyer_language" | "cross_source_pattern" | "theme_watch";
+    observed_pattern: string;
 }
 
 export interface CompetitorPressureCard {
     competitor: string;
     weakness_category: string;
     complaint_count: number;
+    source_count: number;
     latest_seen_at: string | null;
+    freshness_label: string;
     confidence: {
         level: "HIGH" | "MEDIUM" | "LOW";
         score: number;
         label: string;
     };
+    summary: string;
+    affected_segment: string | null;
+    direct_evidence_count: number;
     why_now: string;
     recommended_angle: string;
+    recommendation_mode: "evidence_led" | "heuristic";
+    inference_note: string;
 }
 
 interface ValidationMemoryRow {
@@ -344,16 +355,41 @@ function getPromotionReadiness(idea: MarketHydratedIdea) {
 
 function buildRecommendedShapeDirection(idea: MarketHydratedIdea) {
     if (idea.suggested_wedge_label) {
-        return `Shape this theme into "${idea.suggested_wedge_label}".`;
+        return {
+            mode: "suggested_wedge" as const,
+            text: `Shape this theme into "${idea.suggested_wedge_label}".`,
+        };
     }
     const directCount = Number(idea.signal_contract?.buyer_native_direct_count || 0);
     if (directCount > 0) {
-        return `Use the direct buyer language to narrow ${idea.topic} into one workflow and one buyer segment.`;
+        return {
+            mode: "direct_buyer_language" as const,
+            text: `Use the direct buyer language to narrow ${idea.topic} into one workflow and one buyer segment.`,
+        };
     }
     if (idea.source_count >= 2) {
-        return `Find the repeated workflow behind ${idea.topic} across multiple sources before promoting it.`;
+        return {
+            mode: "cross_source_pattern" as const,
+            text: `Find the repeated workflow behind ${idea.topic} across multiple sources before promoting it.`,
+        };
     }
-    return `Keep this as a theme until it gains a clearer wedge or a second confirming source.`;
+    return {
+        mode: "theme_watch" as const,
+        text: `Keep this as a theme until it gains a clearer wedge or a second confirming source.`,
+    };
+}
+
+function buildThemeObservedPattern(idea: MarketHydratedIdea) {
+    const directCount = Number(idea.signal_contract?.buyer_native_direct_count || 0);
+    const supportingCount = Number(idea.signal_contract?.supporting_signal_count || 0);
+
+    if (directCount > 0) {
+        return `${directCount} direct buyer signal${directCount === 1 ? "" : "s"} across ${Number(idea.source_count || 0)} source${Number(idea.source_count || 0) === 1 ? "" : "s"}.`;
+    }
+    if (supportingCount > 0) {
+        return `${supportingCount} supporting signal${supportingCount === 1 ? "" : "s"} across ${Number(idea.source_count || 0)} source${Number(idea.source_count || 0) === 1 ? "" : "s"}.`;
+    }
+    return `${Number(idea.post_count_total || 0)} post${Number(idea.post_count_total || 0) === 1 ? "" : "s"} seen across ${Number(idea.source_count || 0)} source${Number(idea.source_count || 0) === 1 ? "" : "s"}.`;
 }
 
 function buildEmergingScore(idea: MarketHydratedIdea, historyRows: IdeaHistoryRow[], trendRows: TrendSignalRow[], validation: ValidationMemoryAssessment) {
@@ -463,21 +499,28 @@ export function buildThemesToShape(input: {
             const signalCount = Number(idea.signal_contract?.buyer_native_direct_count || 0) + Number(idea.signal_contract?.supporting_signal_count || 0);
             return Boolean(idea.suggested_wedge_label) || Number(idea.source_count || 0) >= 2 || signalCount >= 2;
         })
-        .map((idea) => ({
-            topic: idea.topic,
-            slug: idea.slug,
-            category: idea.category,
-            current_score: Number(idea.current_score || 0),
-            source_count: Number(idea.source_count || 0),
-            post_count_total: Number(idea.post_count_total || 0),
-            suggested_wedge_label: idea.suggested_wedge_label || null,
-            missing_proof: ensureSentence(
-                cleanText(idea.market_hint?.missing_proof || idea.board_stale_reason || ""),
-                "This theme still needs a sharper wedge before it becomes board-ready.",
-            ),
-            recommended_shape_direction: buildRecommendedShapeDirection(idea),
-            _rank: buildThemeScore(idea),
-        }))
+        .map((idea) => {
+            const shapeDirection = buildRecommendedShapeDirection(idea);
+            return {
+                topic: idea.topic,
+                slug: idea.slug,
+                category: idea.category,
+                current_score: Number(idea.current_score || 0),
+                source_count: Number(idea.source_count || 0),
+                post_count_total: Number(idea.post_count_total || 0),
+                direct_buyer_count: Number(idea.signal_contract?.buyer_native_direct_count || 0),
+                supporting_signal_count: Number(idea.signal_contract?.supporting_signal_count || 0),
+                suggested_wedge_label: idea.suggested_wedge_label || null,
+                missing_proof: ensureSentence(
+                    cleanText(idea.market_hint?.missing_proof || idea.board_stale_reason || ""),
+                    "This theme still needs a sharper wedge before it becomes board-ready.",
+                ),
+                recommended_shape_direction: shapeDirection.text,
+                recommended_shape_mode: shapeDirection.mode,
+                observed_pattern: buildThemeObservedPattern(idea),
+                _rank: buildThemeScore(idea),
+            };
+        })
         .sort((a, b) => b._rank - a._rank || b.current_score - a.current_score)
         .map(({ _rank, ...card }) => card as ThemeToShapeCard);
 }
@@ -510,10 +553,19 @@ export function buildCompetitorPressure(input: {
                 competitor: cluster.competitor,
                 weakness_category: cluster.weakness_category,
                 complaint_count: cluster.evidence_count,
+                source_count: cluster.source_count,
                 latest_seen_at: cluster.freshness.latest_observed_at,
+                freshness_label: cluster.freshness.freshness_label,
                 confidence: whyNow.confidence,
+                summary: ensureSentence(cluster.summary, `${cluster.competitor} is seeing repeated weakness signals.`),
+                affected_segment: cluster.affected_segment,
+                direct_evidence_count: cluster.direct_vs_inferred.direct_evidence_count,
                 why_now: whyNow.inferred_why_now_note,
                 recommended_angle: ensureSentence(cluster.wedge_opportunity_note, cluster.wedge_opportunity_note),
+                recommendation_mode: cluster.direct_vs_inferred.direct_evidence_count > 0 ? "evidence_led" : "heuristic",
+                inference_note: cluster.direct_vs_inferred.direct_evidence_count > 0
+                    ? "The suggested wedge is shaped from repeated complaints, but it still needs buyer validation."
+                    : "The suggested wedge is heuristic only. It is inferred from complaint clustering, not direct demand proof.",
             } satisfies CompetitorPressureCard;
         })
         .sort((a, b) =>

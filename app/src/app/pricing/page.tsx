@@ -27,7 +27,7 @@ export default function PublicPricingPage() {
             >
                 <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
                     <Link href="/">
-                        <BrandLogo compact uppercase />
+                        <BrandLogo compact uppercase href={null} />
                     </Link>
                     <div className="flex items-center gap-5 text-xs font-semibold">
                         <Link

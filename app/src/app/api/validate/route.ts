@@ -34,6 +34,37 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
+        const { count: activeAiConfigCount, error: aiConfigError } = await supabase
+            .from("user_ai_config")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .eq("is_active", true);
+
+        if (aiConfigError) {
+            console.error("AI config check error:", aiConfigError);
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "ai_config_check_failed" },
+            });
+            return NextResponse.json({ error: "Could not verify your AI setup right now." }, { status: 500 });
+        }
+
+        if (!activeAiConfigCount) {
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "missing_ai_config" },
+            });
+            return NextResponse.json({
+                error: "Add at least one active AI API key in Settings before starting a validation.",
+            }, { status: 400 });
+        }
+
         if (!checkRateLimit(user.id)) {
             await trackServerEvent(req, {
                 eventName: "validation_failed",

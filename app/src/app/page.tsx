@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import LandingPageClient, {
     type LandingPainExample,
     type LandingStats,
@@ -7,6 +8,27 @@ import { buildMarketIdeas, hydrateIdeaForMarket, type MarketHydratedIdea } from 
 import { createAdmin } from "@/lib/supabase-admin";
 
 export const revalidate = 300;
+
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://cueidea.me";
+
+export const metadata: Metadata = {
+    title: "CueIdea: See Startup Demand Before You Build",
+    description: "CueIdea turns live complaints from Reddit, Hacker News, Product Hunt, Indie Hackers, GitHub Issues, review complaints, and hiring signals into startup opportunities you can inspect and validate.",
+    alternates: {
+        canonical: "/",
+    },
+    openGraph: {
+        title: "CueIdea: See Startup Demand Before You Build",
+        description: "Live pain signals become startup opportunities you can inspect and validate before you build.",
+        url: siteUrl,
+        type: "website",
+    },
+    twitter: {
+        card: "summary",
+        title: "CueIdea: See Startup Demand Before You Build",
+        description: "Live pain signals become startup opportunities you can inspect and validate before you build.",
+    },
+};
 
 const fallbackPainExamples: LandingPainExample[] = [
     {
@@ -261,5 +283,28 @@ async function getLandingData() {
 
 export default async function LandingPage() {
     const data = await getLandingData();
-    return <LandingPageClient {...data} />;
+    const softwareApplicationSchema = {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        name: "CueIdea",
+        url: siteUrl,
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web",
+        description: "Startup idea radar that turns public pain points into validated product opportunities.",
+        offers: {
+            "@type": "Offer",
+            price: "0",
+            priceCurrency: "USD",
+        },
+    };
+
+    return (
+        <>
+            <script
+                type="application/ld+json"
+                dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApplicationSchema) }}
+            />
+            <LandingPageClient {...data} />
+        </>
+    );
 }
