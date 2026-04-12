@@ -357,25 +357,25 @@ function buildRecommendedShapeDirection(idea: MarketHydratedIdea) {
     if (idea.suggested_wedge_label) {
         return {
             mode: "suggested_wedge" as const,
-            text: `Shape this theme into "${idea.suggested_wedge_label}".`,
+            text: `Test the wedge "${idea.suggested_wedge_label}" against this broader pain cluster before treating it like a build-ready opportunity.`,
         };
     }
     const directCount = Number(idea.signal_contract?.buyer_native_direct_count || 0);
     if (directCount > 0) {
         return {
             mode: "direct_buyer_language" as const,
-            text: `Use the direct buyer language to narrow ${idea.topic} into one workflow and one buyer segment.`,
+            text: `Use the direct buyer language to narrow ${idea.topic} into one workflow, one buyer, and one first promise.`,
         };
     }
     if (idea.source_count >= 2) {
         return {
             mode: "cross_source_pattern" as const,
-            text: `Find the repeated workflow behind ${idea.topic} across multiple sources before promoting it.`,
+            text: `Find the repeated workflow behind ${idea.topic} across multiple sources before you turn it into a named wedge.`,
         };
     }
     return {
         mode: "theme_watch" as const,
-        text: `Keep this as a theme until it gains a clearer wedge or a second confirming source.`,
+        text: `Keep this as a watched theme until it gains a clearer wedge or a second confirming source.`,
     };
 }
 
@@ -564,8 +564,8 @@ export function buildCompetitorPressure(input: {
                 recommended_angle: ensureSentence(cluster.wedge_opportunity_note, cluster.wedge_opportunity_note),
                 recommendation_mode: cluster.direct_vs_inferred.direct_evidence_count > 0 ? "evidence_led" : "heuristic",
                 inference_note: cluster.direct_vs_inferred.direct_evidence_count > 0
-                    ? "The suggested wedge is shaped from repeated complaints, but it still needs buyer validation."
-                    : "The suggested wedge is heuristic only. It is inferred from complaint clustering, not direct demand proof.",
+                    ? "Observed weakness is grounded in repeated complaint rows. The wedge still needs buyer validation before it becomes a product thesis."
+                    : "Observed weakness is real, but the wedge is heuristic only. It is inferred from complaint clustering, not direct demand proof.",
             } satisfies CompetitorPressureCard;
         })
         .sort((a, b) =>

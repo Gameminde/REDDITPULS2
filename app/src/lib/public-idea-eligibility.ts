@@ -92,6 +92,17 @@ function areTitlesEquivalent(left: string, right: string) {
     return normalizedLeft === normalizedRight;
 }
 
+function shouldKeepObservedTopicVisible(input: PublicIdeaInput, candidateTitle: string, fallbackTopic: string) {
+    if (!candidateTitle || !fallbackTopic) return false;
+    if (areTitlesEquivalent(candidateTitle, fallbackTopic)) return false;
+    if (getPublicDirectBuyerProofCount(input) >= 2) return false;
+
+    const editorial = getVisibleMarketEditorial(input.market_editorial);
+    if (editorial?.visibility_decision === "public") return false;
+
+    return true;
+}
+
 export function normalizePublicOpportunityTitle(value?: string | null) {
     return cleanText(value)
         .replace(/^pain signals from\s+/i, "")
@@ -115,10 +126,22 @@ export function isBlockedPublicOpportunityTitle(value?: string | null) {
 }
 
 export function getPublicOpportunityTitle(input: PublicIdeaInput) {
+    const fallback = normalizePublicOpportunityTitle(input.topic);
     const approvedEditorial = getVisibleMarketEditorial(input.market_editorial);
     if (approvedEditorial) {
         const editorialTitle = normalizePublicOpportunityTitle(approvedEditorial.edited_title);
         const opportunityAngle = normalizePublicOpportunityTitle(approvedEditorial.product_angle);
+        const strongestEditorialAngle = opportunityAngle || editorialTitle;
+
+        if (
+            fallback
+            && !isBlockedPublicOpportunityTitle(fallback)
+            && approvedEditorial.visibility_decision === "needs_more_proof"
+            && shouldKeepObservedTopicVisible(input, strongestEditorialAngle, fallback)
+        ) {
+            return fallback;
+        }
+
         if (
             opportunityAngle
             && !isBlockedPublicOpportunityTitle(opportunityAngle)
@@ -132,11 +155,18 @@ export function getPublicOpportunityTitle(input: PublicIdeaInput) {
     }
 
     const preferred = normalizePublicOpportunityTitle(input.suggested_wedge_label);
+    if (
+        fallback
+        && !isBlockedPublicOpportunityTitle(fallback)
+        && shouldKeepObservedTopicVisible(input, preferred, fallback)
+    ) {
+        return fallback;
+    }
+
     if (preferred && !isBlockedPublicOpportunityTitle(preferred)) {
         return preferred;
     }
 
-    const fallback = normalizePublicOpportunityTitle(input.topic);
     if (fallback && !isBlockedPublicOpportunityTitle(fallback)) {
         return fallback;
     }

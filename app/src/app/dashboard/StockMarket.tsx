@@ -216,6 +216,27 @@ function getBoardPrimaryTitle(displayTopic: string, suggestedWedge: string) {
     return cleanTopic;
 }
 
+function getOpportunityHeadline(
+    observedTopic: string,
+    displayTopic: string,
+    suggestedWedge: string,
+    directBuyerCount: number,
+) {
+    const cleanObservedTopic = cleanText(observedTopic) || cleanText(displayTopic);
+    const cleanDisplayTopic = cleanText(displayTopic) || cleanObservedTopic;
+    const cleanWedge = cleanText(suggestedWedge);
+    const useConservativeObservedTitle = directBuyerCount < 2;
+    const baseTitle = useConservativeObservedTitle ? cleanObservedTopic : cleanDisplayTopic;
+    const primaryTitle = getBoardPrimaryTitle(baseTitle, useConservativeObservedTitle ? "" : cleanWedge);
+    const secondaryAngle = cleanWedge && cleanText(primaryTitle) !== cleanWedge ? cleanWedge : "";
+
+    return {
+        primaryTitle,
+        secondaryAngle,
+        secondaryLabel: useConservativeObservedTitle ? "Suggested wedge" : "Product angle",
+    };
+}
+
 function buildIdeaHref(slug: string) {
     return `/dashboard/idea/${encodeURIComponent(slug)}`;
 }
@@ -272,6 +293,13 @@ const TABS: { key: TabType; label: string; icon: LucideIcon; color: string }[] =
     { key: "dying", label: "Cooling", icon: Skull, color: "#ef4444" },
     { key: "new", label: "New", icon: Sparkles, color: "#8b5cf6" },
 ];
+
+const TAB_EXPLANATIONS: Record<TabType, string> = {
+    top: "Sorted by overall opportunity score.",
+    trending: "Sorted by 24h momentum first, then score.",
+    dying: "Sorted by 24h decline first, then score.",
+    new: "Sorted by the most recently observed opportunities.",
+};
 
 const CATEGORIES = [
     { key: "", label: "All" },
@@ -704,6 +732,7 @@ function BreakdownMeter({ label, value, color }: { label: string; value: number;
 
 function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: boolean }) {
     const displayTopic = getIdeaDisplayTopic(idea);
+    const observedTopic = decodeHtml(idea.topic);
     const suggestedWedge = getIdeaSuggestedWedge(idea);
     const marketHint = idea.market_hint || null;
     const conf = CONFIDENCE_MAP[idea.confidence_level] || CONFIDENCE_MAP.LOW;
@@ -779,8 +808,12 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
         idea.public_next_step || marketHint?.recommended_board_action || "",
         isGuest ? "Sign in to validate this idea or save it for later." : "Validate this idea next to see whether the proof still holds up under a deeper review.",
     );
-    const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
-    const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
+    const { primaryTitle, secondaryAngle, secondaryLabel } = getOpportunityHeadline(
+        observedTopic,
+        displayTopic,
+        suggestedWedge,
+        directBuyerCount,
+    );
     const rawPainPost = getTransformationRawPainPost(representativePosts);
     const rawPainTitle = rawPainPost ? decodeHtml(rawPainPost.title) : `People are repeatedly describing friction around ${displayTopic}.`;
     const rawPainSourceLabel = getTransformationSourceLabel(rawPainPost);
@@ -903,7 +936,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                     </div>
                     {secondaryAngle && (
                         <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 6, ...CLAMP_ONE }}>
-                            Product angle: {secondaryAngle}
+                            {secondaryLabel}: {secondaryAngle}
                         </div>
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
@@ -1019,7 +1052,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                                 Why this opportunity?
                                             </div>
                                             <div style={{ marginTop: 4, fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
-                                                Raw pain becomes a repeated pattern, then a tighter product angle.
+                                                Raw pain becomes a repeated pattern, then a suggested wedge you can test.
                                             </div>
                                         </div>
                                         <span style={{
@@ -1043,7 +1076,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         gap: 12,
                                     }}>
                                         <TransformationStep
-                                            label="Raw pain"
+                                            label="Core pain observed"
                                             value={rawPainTitle}
                                             hint={rawPainSourceLabel}
                                             tone="rgba(249,115,22,0.06)"
@@ -1056,7 +1089,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                             hint={evidenceSummary}
                                         />
                                         <TransformationStep
-                                            label="Product angle"
+                                            label={secondaryLabel}
                                             value={transformationAngle}
                                             hint={browseSummary}
                                             tone="rgba(59,130,246,0.08)"
@@ -1406,7 +1439,7 @@ function IdeaRow({ idea, rank, isGuest }: { idea: Idea; rank: number; isGuest: b
                                         </div>
                                         {suggestedWedge && (
                                             <div style={{ fontSize: 12, color: "#dbeafe", lineHeight: 1.55 }}>
-                                                Product angle: {suggestedWedge}
+                                                {secondaryLabel}: {suggestedWedge}
                                             </div>
                                         )}
                                         <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
@@ -1756,6 +1789,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
     const [expanded, setExpanded] = useState(false);
     const [showFullAnalysis, setShowFullAnalysis] = useState(false);
     const displayTopic = getIdeaDisplayTopic(idea);
+    const observedTopic = decodeHtml(idea.topic);
     const suggestedWedge = getIdeaSuggestedWedge(idea);
     const representativePosts = rankOpportunityRepresentativePosts(idea.top_posts || []).slice(0, 2);
     const signalContract = idea.signal_contract || null;
@@ -1785,8 +1819,12 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
     const scoreColor = idea.current_score >= 70 ? "#22c55e" : idea.current_score >= 40 ? "#f97316" : "#64748b";
     const directBuyerCount = Number(signalContract?.buyer_native_direct_count || 0);
     const trendTone = getTrendTone(idea.trend_direction);
-    const primaryTitle = getBoardPrimaryTitle(displayTopic, suggestedWedge);
-    const secondaryAngle = suggestedWedge && primaryTitle !== suggestedWedge ? suggestedWedge : "";
+    const { primaryTitle, secondaryAngle, secondaryLabel } = getOpportunityHeadline(
+        observedTopic,
+        displayTopic,
+        suggestedWedge,
+        directBuyerCount,
+    );
     const browseSummary = idea.public_summary || summarizeIdeaForBrowse(idea);
     const verdictSummary = summarizeReasonForUser(
         idea.public_verdict || signalContract?.summary,
@@ -1841,7 +1879,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                     <Link href={ideaHref} className="block">
                         <h3 className="text-base font-semibold leading-6 text-white" style={CLAMP_TWO}>{primaryTitle}</h3>
                         {secondaryAngle && (
-                            <p className="mt-1 text-sm leading-6 text-orange-200" style={CLAMP_TWO}>Product angle: {secondaryAngle}</p>
+                            <p className="mt-1 text-sm leading-6 text-orange-200" style={CLAMP_TWO}>{secondaryLabel}: {secondaryAngle}</p>
                         )}
                     </Link>
                 </div>
@@ -1939,7 +1977,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                                 <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-primary">Why this opportunity?</div>
                                 <div className="mt-3 grid gap-2">
                                     <TransformationStep
-                                        label="Raw pain"
+                                        label="Core pain observed"
                                         value={rawPainTitle}
                                         hint={getTransformationSourceLabel(rawPainPost)}
                                         tone="rgba(249,115,22,0.06)"
@@ -1948,7 +1986,7 @@ function MobileIdeaCard({ idea, rank, isGuest }: { idea: Idea; rank: number; isG
                                     />
                                     <TransformationStep label="Repeated pattern" value={repeatedPattern} hint={sourceSummary || evidenceSummary} />
                                     <TransformationStep
-                                        label="Product angle"
+                                        label={secondaryLabel}
                                         value={secondaryAngle || primaryTitle}
                                         hint={browseSummary}
                                         tone="rgba(59,130,246,0.08)"
@@ -2194,6 +2232,9 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
         <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#93c5fd" }}>
+                        Core pain observed
+                    </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.topic}</span>
                         <span style={{
@@ -2217,7 +2258,7 @@ function EmergingWedgeTile({ card, isGuest }: { card: EmergingWedgeCard; isGuest
                     </div>
                     {suggestedLabel && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Product angle: {suggestedLabel}
+                            Suggested wedge to test: {suggestedLabel}
                         </div>
                     )}
                 </div>
@@ -2283,6 +2324,9 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
         <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#93c5fd" }}>
+                        Core pain observed
+                    </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.topic}</span>
                         <span style={{
@@ -2309,7 +2353,7 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
                     </div>
                     {card.suggested_wedge_label && (
                         <div style={{ fontSize: 12, color: "#bfdbfe", lineHeight: 1.55 }}>
-                            Suggested wedge: {card.suggested_wedge_label}
+                            Suggested wedge to test: {card.suggested_wedge_label}
                         </div>
                     )}
                 </div>
@@ -2326,12 +2370,16 @@ function ThemeToShapeTile({ card, isGuest }: { card: ThemeToShapeCard; isGuest: 
             </div>
 
             <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                Observed: {summarizeReasonForUser(card.observed_pattern, `${card.topic} is repeating, but the wedge is still broad.`)}
+                Observed pattern: {summarizeReasonForUser(card.observed_pattern, `${card.topic} is repeating, but the wedge is still broad.`)}
             </div>
 
             <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
-                {card.suggested_wedge_label ? "Suggested wedge" : "Next focus"}:{" "}
+                {card.suggested_wedge_label ? "Suggested wedge to test" : "Next focus"}:{" "}
                 {summarizeReasonForUser(card.recommended_shape_direction, `${card.topic} needs a more focused angle before it becomes a stronger bet.`)}
+            </div>
+
+            <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
+                Observed counts come from live market posts. The wedge line is a suggestion, not a validated product yet.
             </div>
 
             {!suggestionIsGrounded && (
@@ -2392,6 +2440,9 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
         <div className="glass-card" style={{ padding: 18, borderRadius: 14, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: "#fca5a5" }}>
+                        Observed weakness
+                    </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>{card.competitor}</span>
                         <span style={{
@@ -2407,7 +2458,7 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
                         <IntelligenceBadge label={card.confidence.label} color={confidenceColor} background={confidenceBg} />
                     </div>
                     <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.55 }}>
-                        Observed: {card.summary}
+                        Observed weakness: {card.summary}
                     </div>
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-mono)", color: "#ef4444" }}>
@@ -2428,11 +2479,11 @@ function CompetitorPressureTile({ card }: { card: CompetitorPressureCard }) {
             )}
 
             <div style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.6 }}>
-                Signal read: {card.why_now}
+                Why this matters now: {card.why_now}
             </div>
 
             <div style={{ fontSize: 12, color: "#fca5a5", lineHeight: 1.6 }}>
-                Suggested wedge: {card.recommended_angle}
+                Suggested wedge to test: {card.recommended_angle}
             </div>
 
             <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.55 }}>
@@ -2773,7 +2824,7 @@ export default function StockMarketDashboard({
                             See live opportunities.
                         </h1>
                         <p style={{ fontSize: 12.5, color: "#94a3b8", lineHeight: 1.65, maxWidth: 560 }}>
-                            Repeated pain, shaped into product angles.
+                            Repeated pain, narrowed into wedges you can test.
                         </p>
                         {lastUpdated && (
                             <div style={{ marginTop: 10, fontSize: 10.5, color: "#64748b", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -3128,6 +3179,10 @@ export default function StockMarketDashboard({
                         {showEarlySignals ? "Hide early ideas" : "Show early ideas"}
                     </button>
                 </div>
+            </div>
+
+            <div style={{ marginTop: -8, marginBottom: 14, fontSize: 11.5, color: "#94a3b8", lineHeight: 1.6 }}>
+                {TAB_EXPLANATIONS[tab]}
             </div>
 
             <div className="lg:hidden">
