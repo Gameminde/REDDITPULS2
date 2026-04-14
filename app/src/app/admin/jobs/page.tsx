@@ -2,6 +2,38 @@ import { JobsControlPanel } from "@/app/admin/AdminActions";
 import { AdminPageHeader, AdminPill, AdminSection, AdminStatCard, EmptyAdminState } from "@/app/admin/components";
 import { getAdminJobsData } from "@/lib/admin-data";
 
+function formatTimestamp(value: string | null) {
+    if (!value) return "Unknown";
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
+}
+
+function formatAge(value: string | null) {
+    if (!value) return "Unknown";
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) return value;
+    const deltaMs = Date.now() - parsed;
+    const minutes = Math.max(0, Math.round(deltaMs / 60000));
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+}
+
+function runtimeTone(state: string) {
+    if (state === "running" || state === "idle") return "healthy" as const;
+    if (state === "stale") return "warning" as const;
+    if (state === "failed") return "degraded" as const;
+    return "neutral" as const;
+}
+
+function unitTone(activeState: string) {
+    if (activeState === "active") return "healthy" as const;
+    if (activeState === "activating") return "warning" as const;
+    if (activeState === "failed") return "degraded" as const;
+    return "neutral" as const;
+}
+
 export default async function AdminJobsPage() {
     const data = await getAdminJobsData();
 
@@ -37,6 +69,99 @@ export default async function AdminJobsPage() {
                             </div>
                         </div>
                     ))}
+                </div>
+            </AdminSection>
+
+            <AdminSection
+                title="Live scraper monitor"
+                description="Direct runtime telemetry from this host. It reads the scraper log file and, when available, the systemd service/timer state."
+                action={<AdminPill tone={runtimeTone(data.scraperRuntime.status.state)}>{data.scraperRuntime.status.label}</AdminPill>}
+            >
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <AdminStatCard
+                        label="Runtime state"
+                        value={data.scraperRuntime.status.label}
+                        hint={data.scraperRuntime.status.detail}
+                        tone={runtimeTone(data.scraperRuntime.status.state)}
+                    />
+                    <AdminStatCard
+                        label="Service unit"
+                        value={`${data.scraperRuntime.service.activeState}/${data.scraperRuntime.service.subState}`}
+                        hint={data.scraperRuntime.service.error || data.scraperRuntime.service.name}
+                        tone={unitTone(data.scraperRuntime.service.activeState)}
+                    />
+                    <AdminStatCard
+                        label="Timer unit"
+                        value={`${data.scraperRuntime.timer.activeState}/${data.scraperRuntime.timer.subState}`}
+                        hint={data.scraperRuntime.timer.error || data.scraperRuntime.timer.name}
+                        tone={unitTone(data.scraperRuntime.timer.activeState)}
+                    />
+                    <AdminStatCard
+                        label="Last heartbeat"
+                        value={formatAge(data.scraperRuntime.log.lastHeartbeatAt || data.scraperRuntime.log.updatedAt)}
+                        hint={formatTimestamp(data.scraperRuntime.log.lastHeartbeatAt || data.scraperRuntime.log.updatedAt)}
+                        tone={data.scraperRuntime.log.lastHeartbeatAt || data.scraperRuntime.log.updatedAt ? "neutral" : "warning"}
+                    />
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                    <AdminPill>host {data.scraperRuntime.host}</AdminPill>
+                    <AdminPill>platform {data.scraperRuntime.platform}</AdminPill>
+                    <AdminPill tone={data.scraperRuntime.log.exists ? "healthy" : "warning"}>
+                        log {data.scraperRuntime.log.exists ? "present" : "missing"}
+                    </AdminPill>
+                    <AdminPill tone={data.scraperRuntime.log.runInProgress ? "warning" : "neutral"}>
+                        {data.scraperRuntime.log.runInProgress ? "run in progress" : "no active run observed"}
+                    </AdminPill>
+                    <AdminPill>log path {data.scraperRuntime.log.path}</AdminPill>
+                </div>
+
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Runtime timing</div>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <AdminStatCard
+                                label="Last start"
+                                value={formatTimestamp(data.scraperRuntime.log.lastStartedAt)}
+                                hint={data.scraperRuntime.log.lastStartedAt ? formatAge(data.scraperRuntime.log.lastStartedAt) : "No start marker found in the current tail."}
+                            />
+                            <AdminStatCard
+                                label="Last finish"
+                                value={formatTimestamp(data.scraperRuntime.log.lastFinishedAt)}
+                                hint={data.scraperRuntime.log.lastFinishedAt ? formatAge(data.scraperRuntime.log.lastFinishedAt) : "No finish marker found in the current tail."}
+                                tone={data.scraperRuntime.log.runInProgress ? "warning" : "neutral"}
+                            />
+                        </div>
+                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+                            <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-muted-foreground">Latest progress line</div>
+                            <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                                {data.scraperRuntime.log.lastLine || "No recent scraper log line was captured on this host."}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground">Runtime highlights</div>
+                        {data.scraperRuntime.log.highlights.length > 0 ? (
+                            <div className="mt-4 space-y-3 font-mono text-xs">
+                                {data.scraperRuntime.log.highlights.slice(-8).reverse().map((entry) => (
+                                    <div key={entry.id} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <AdminPill tone={entry.severity === "error" ? "degraded" : entry.severity === "warning" ? "warning" : "neutral"}>
+                                                {entry.severity}
+                                            </AdminPill>
+                                            <span className="text-muted-foreground">{formatTimestamp(entry.at)}</span>
+                                        </div>
+                                        <pre className="mt-2 whitespace-pre-wrap text-muted-foreground">{entry.line}</pre>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="mt-4">
+                                <EmptyAdminState title="No runtime highlights yet" body="Once the scraper writes a tail line, warnings and progress markers will appear here." />
+                            </div>
+                        )}
+                    </div>
                 </div>
             </AdminSection>
 

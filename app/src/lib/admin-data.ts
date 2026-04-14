@@ -11,6 +11,7 @@ import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
 import { enqueueValidationJob } from "@/lib/queue";
 import { getRuntimeSettings, updateRuntimeSettings } from "@/lib/runtime-settings";
 import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
+import { getScraperRuntimeMonitor, type ScraperRuntimeMonitor } from "@/lib/scraper-runtime-monitor";
 import { createAdmin } from "@/lib/supabase-admin";
 import { summarizeValidationCoverage } from "@/lib/validation-coverage";
 
@@ -265,6 +266,23 @@ function buildRecentActivity(input: {
     return [...validationEntries, ...runEntries, ...analyticsEntries, ...adminEntries]
         .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
         .slice(0, 18);
+}
+
+function buildRuntimeLogEntries(runtime: ScraperRuntimeMonitor): AdminLogEntry[] {
+    return runtime.log.highlights.map((entry, index) => ({
+        id: `runtime:${entry.id}:${index}`,
+        at: entry.at || runtime.log.updatedAt || new Date().toISOString(),
+        source: "scraper",
+        severity: entry.severity,
+        title: "Scraper runtime",
+        message: entry.line,
+        metadata: {
+            log_path: runtime.log.path,
+            host: runtime.host,
+            service_state: runtime.service.activeState,
+            timer_state: runtime.timer.activeState,
+        },
+    }));
 }
 
 function buildMarketAuditSummary(rows: Array<Record<string, unknown>>) {
@@ -565,11 +583,12 @@ export async function retryValidationAsAdmin(validationId: string, actor: AdminA
 }
 
 export async function getAdminJobsData() {
-    const [runtimeSettings, runs, validations, ideaRows] = await Promise.all([
+    const [runtimeSettings, runs, validations, ideaRows, scraperRuntime] = await Promise.all([
         getRuntimeSettings(),
         fetchLatestScraperRuns(),
         fetchValidations(),
         fetchIdeasForMarketAudit(),
+        getScraperRuntimeMonitor(),
     ]);
     const latestRun = runs[0] || null;
     const latestRunHealth = extractScraperRunHealth(latestRun);
@@ -583,6 +602,7 @@ export async function getAdminJobsData() {
         latestRunFunnel,
         currentMarketFunnel,
         recentRuns: runs,
+        scraperRuntime,
         queue: {
             queued: validations.filter((row) => mapValidationStatus(row.status) === "queued").length,
             running: validations.filter((row) => mapValidationStatus(row.status) === "running").length,
@@ -604,6 +624,17 @@ export async function getAdminJobsData() {
                 label: "Reddit lane",
                 value: latestRun ? latestRunHealth.reddit_access_mode : "unknown",
                 status: latestRunHealth.reddit_degraded_reason ? "degraded" : "healthy",
+            },
+            {
+                label: "Scraper runtime",
+                value: scraperRuntime.status.label,
+                status: scraperRuntime.status.state === "failed"
+                    ? "degraded"
+                    : scraperRuntime.status.state === "running"
+                        ? "healthy"
+                        : scraperRuntime.status.state === "stale"
+                            ? "degraded"
+                            : "neutral",
             },
         ],
     };
@@ -865,19 +896,27 @@ export async function getAdminMarketData() {
 
 export async function getAdminLogsData() {
     const admin = createAdmin();
-    const [adminEvents, runs, validations, analytics] = await Promise.all([
+    const [adminEvents, runs, validations, analytics, scraperRuntime] = await Promise.all([
         admin.from("admin_events").select("id, created_at, action, severity, message, metadata").order("created_at", { ascending: false }).limit(40),
         admin.from("scraper_runs").select("id, started_at, completed_at, status, error_text, source").order("started_at", { ascending: false }).limit(20),
         admin.from("idea_validations").select("id, created_at, status, idea_text, report").in("status", ["failed", "error", "timeout"]).order("created_at", { ascending: false }).limit(20),
         fetchAnalyticsEvents(7),
+        getScraperRuntimeMonitor(),
     ]);
 
-    return buildRecentActivity({
+    const entries = buildRecentActivity({
         validations: toRows(validations.data),
         runs: toRows(runs.data),
         analytics: analytics.slice(0, 20),
         adminEvents: toRows(adminEvents.data),
     });
+
+    return {
+        entries: [...buildRuntimeLogEntries(scraperRuntime), ...entries]
+            .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+            .slice(0, 40),
+        scraperRuntime,
+    };
 }
 
 export async function getAdminSettingsData() {

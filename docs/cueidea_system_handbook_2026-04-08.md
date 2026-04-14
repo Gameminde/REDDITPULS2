@@ -526,6 +526,30 @@ So any research conclusion should consider:
 - scraper env
 - local `.env.local` for local development
 
+### Runtime ownership contract
+
+- keep the repo itself deploy-owned
+- keep `/opt/redditpulse/.venv` runtime-owned by `redditpulse`
+- keep `/opt/redditpulse/app/.next` runtime-owned by `redditpulse`
+- keep `/var/log/redditpulse` runtime-owned by `redditpulse`
+
+### Deploy order
+
+Web deploy order:
+- `git pull`
+- install app deps if needed
+- `npm run build` in `app/`
+- `bash scripts/vps/prepare_web_runtime.sh /opt/redditpulse`
+- `systemctl restart redditpulse-web.service`
+- `bash scripts/vps/verify_runtime.sh /opt/redditpulse`
+
+Scraper update order:
+- `git pull`
+- refresh `/opt/redditpulse/.venv` packages
+- `systemctl restart redditpulse-scraper.timer`
+- optionally `systemctl start redditpulse-scraper.service` for one manual run
+- `bash scripts/vps/verify_runtime.sh /opt/redditpulse`
+
 ### Proxy dependency
 
 Reddit access is still dependent on proxy quality.

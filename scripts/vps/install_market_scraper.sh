@@ -27,7 +27,11 @@ if ! id -u "$APP_USER" >/dev/null 2>&1; then
 fi
 
 mkdir -p /etc/redditpulse /var/log/redditpulse
-chmod 755 "$REPO_DIR/scripts/vps/install_market_scraper.sh" "$REPO_DIR/scripts/vps/run_market_scraper.sh"
+chmod 755 \
+  "$REPO_DIR/scripts/vps/install_market_scraper.sh" \
+  "$REPO_DIR/scripts/vps/run_market_scraper.sh" \
+  "$REPO_DIR/scripts/vps/prepare_web_runtime.sh" \
+  "$REPO_DIR/scripts/vps/verify_runtime.sh"
 
 "$PYTHON_BIN" -m venv "$REPO_DIR/.venv"
 mkdir -p "$REPO_DIR/.venv/nltk_data"
@@ -73,4 +77,6 @@ echo "Next steps:"
 echo "  1. Edit /etc/redditpulse/scraper.env"
 echo "  2. Test manually: systemctl start $SERVICE_NAME.service"
 echo "  3. Inspect logs: journalctl -u $SERVICE_NAME.service -n 200 --no-pager"
-echo "  4. Repo ownership stays with the deploy user; only .venv and logs are owned by $APP_USER"
+echo "  4. After app builds, run: bash $REPO_DIR/scripts/vps/prepare_web_runtime.sh $REPO_DIR"
+echo "  5. Verify runtime: bash $REPO_DIR/scripts/vps/verify_runtime.sh $REPO_DIR"
+echo "  6. Repo ownership stays with the deploy user; only .venv, app/.next, and logs are runtime-owned"

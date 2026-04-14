@@ -4,6 +4,7 @@ node_modules/
 .env.local
 __pycache__/
 *.pyc
+.venv/
 output/
 .next/
 dist/
