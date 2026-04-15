@@ -1347,6 +1347,7 @@ class AIBrain:
         """
         self._call_counter += 1
         last_error = None
+        failure_messages = []
 
         candidates = self._candidate_configs(pinned_index=pinned_index)
         if not candidates:
@@ -1370,17 +1371,26 @@ class AIBrain:
                 return text
             except Exception as e:
                 last_error = e
+                label = f"{config['provider']}/{config['selected_model']}"
+                failure_messages.append(f"{label}: {str(e)[:220]}")
+                print(
+                    f"  [Brain] Single call failed on {label}: {e}",
+                    flush=True,
+                )
+                logger.warning(f"[Brain] Single call failed on {label}: {e}")
                 if _is_413_error(e):
                     self._unavailable_config_ids.add(config["id"])
                     msg = f"[Brain] ⚠ {_short_model_label(config['selected_model'])} hit 413 — routing to next model"
                     print(f"  {msg}")
                     logger.warning(msg)
                     continue
-                    print(
-                        f"  [Brain] Single call failed on {config['provider']}/{config['selected_model']}: {e}",
-                        flush=True,
-                    )
+                continue
 
+        if failure_messages:
+            raise Exception(
+                "All AI models failed for this call. "
+                + " | ".join(failure_messages[:4])
+            ) from last_error
         raise last_error or Exception("All AI models failed for this call.")
 
     def _run_moderator_synthesis(

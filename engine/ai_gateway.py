@@ -148,6 +148,10 @@ def classify_ai_error(error: Exception) -> tuple[str, Optional[int], bool]:
 
     if "timed out" in lowered or "timeout" in lowered:
         return "timeout", status, True
+    if status == 429 and ("billing_not_active" in lowered or "account is not active" in lowered):
+        return "billing_inactive", status, False
+    if status == 429 and ("insufficient_quota" in lowered or "quota exceeded" in lowered):
+        return "quota_exceeded", status, False
     if status in {429, 529, 408, 409, 500, 502, 503, 504}:
         return "http_retryable", status, True
     if status == 413:
