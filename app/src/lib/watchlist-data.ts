@@ -44,6 +44,7 @@ async function queryWatchlistRows(
     supabaseAdmin: any,
     userId: string,
     validationId: string | null | undefined,
+    watchlistId: string | null | undefined,
     opts: {
         includeValidationId: boolean;
         includeMeta: boolean;
@@ -60,6 +61,9 @@ async function queryWatchlistRows(
         .eq("user_id", userId)
         .order("added_at", { ascending: false });
 
+    if (watchlistId) {
+        query = query.eq("id", watchlistId);
+    }
     if (validationId && opts.includeValidationId) {
         query = query.eq("validation_id", validationId);
     }
@@ -67,11 +71,16 @@ async function queryWatchlistRows(
     return await query;
 }
 
-export async function loadWatchlist(
+async function loadWatchlistInternal(
     supabaseAdmin: any,
     userId: string,
-    validationId?: string | null,
+    options?: {
+        validationId?: string | null;
+        watchlistId?: string | null;
+    },
 ) {
+    const validationId = options?.validationId;
+    const watchlistId = options?.watchlistId;
     let schemaSupportsValidations = true;
     let includeValidationId = true;
     let includeMeta = true;
@@ -79,7 +88,7 @@ export async function loadWatchlist(
     let queryResult: Awaited<ReturnType<typeof queryWatchlistRows>> | null = null;
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
-        queryResult = await queryWatchlistRows(supabaseAdmin, userId, validationId, {
+        queryResult = await queryWatchlistRows(supabaseAdmin, userId, validationId, watchlistId, {
             includeValidationId,
             includeMeta,
             includeIdeasJoin,
@@ -217,4 +226,20 @@ export async function loadWatchlist(
     }));
 
     return { data: hydratedRows, schemaSupportsValidations };
+}
+
+export async function loadWatchlist(
+    supabaseAdmin: any,
+    userId: string,
+    validationId?: string | null,
+) {
+    return loadWatchlistInternal(supabaseAdmin, userId, { validationId });
+}
+
+export async function loadWatchlistById(
+    supabaseAdmin: any,
+    userId: string,
+    watchlistId: string,
+) {
+    return loadWatchlistInternal(supabaseAdmin, userId, { watchlistId });
 }

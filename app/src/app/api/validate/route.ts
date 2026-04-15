@@ -9,21 +9,9 @@ import { getRedditConnectionSummary, loadSourcePackForUser, resolveRedditLabCont
 import { createClient } from "@/lib/supabase-server";
 import { getRuntimeSettings } from "@/lib/runtime-settings";
 import { DEFAULT_DEPTH, getValidationDepthOption, isValidDepth, type ValidationDepth } from "@/lib/validation-depth";
+import { consumeDurableRateLimit } from "@/lib/durable-rate-limit";
 
-const validateTimestamps = new Map<string, number[]>();
 const MAX_VALIDATIONS_PER_HOUR = 5;
-
-function checkRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const hourAgo = now - 3600_000;
-    const stamps = (validateTimestamps.get(userId) || []).filter((time) => time > hourAgo);
-
-    if (stamps.length >= MAX_VALIDATIONS_PER_HOUR) return false;
-
-    stamps.push(now);
-    validateTimestamps.set(userId, stamps);
-    return true;
-}
 
 export async function POST(req: NextRequest) {
     try {
@@ -65,7 +53,13 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
-        if (!checkRateLimit(user.id)) {
+        const rateLimit = await consumeDurableRateLimit({
+            userId: user.id,
+            scope: "validate",
+            limit: MAX_VALIDATIONS_PER_HOUR,
+        });
+
+        if (!rateLimit.allowed) {
             await trackServerEvent(req, {
                 eventName: "validation_failed",
                 scope: "product",

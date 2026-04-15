@@ -14,6 +14,7 @@ import requests
 import concurrent.futures
 from typing import Optional
 from ai_gateway import call_with_ai_policy, estimate_tokens as gateway_estimate_tokens, summarize_ai_telemetry
+from model_registry import resolve_model_name
 
 # Add engine to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -426,7 +427,7 @@ MODEL_ALIASES = {
 
 def resolve_model(model_name):
     """Resolve a model name through aliases. Returns the correct API model ID."""
-    return MODEL_ALIASES.get(model_name, model_name)
+    return resolve_model_name(model_name)
 
 
 def _assigned_roles(count: int):

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { createAdmin } from "@/lib/supabase-admin";
-import { buildMarketIdeas, hydrateIdeaForMarket } from "@/lib/market-feed";
-import { extractScraperRunHealth } from "@/lib/scraper-run-health";
 import {
     buildCompetitorPressure,
     buildEmergingWedges,
     buildThemesToShape,
     type MarketIntelligenceSummary,
 } from "@/lib/market-intelligence";
+import { loadMarketSnapshot } from "@/lib/market-snapshot";
 
 function normalizeSlugArray(value: unknown, primaryIdeaSlug = "") {
     const parsed = typeof value === "string" ? (() => {
@@ -34,20 +33,17 @@ export async function GET(req: NextRequest) {
     const admin = createAdmin();
     const recentHistorySince = new Date(Date.now() - 7 * 86400000).toISOString();
     const recentComplaintsSince = new Date(Date.now() - 30 * 86400000).toISOString();
+    const snapshot = await loadMarketSnapshot(admin, { category });
 
     const emptyResult = Promise.resolve({ data: [], error: null as { message?: string } | null });
 
     const [
-        { data: ideaRows, error: ideasError },
-        { data: latestRuns, error: runsError },
         { data: validationRows, error: validationsError },
         { data: opportunityRows, error: opportunitiesError },
         { data: alertRows, error: alertsError },
         { data: complaintRows, error: complaintsError },
         { data: trendRows, error: trendError },
     ] = await Promise.all([
-        admin.from("ideas").select("*"),
-        admin.from("scraper_runs").select("*").order("started_at", { ascending: false }).limit(1),
         userId
             ? admin
                 .from("idea_validations")
@@ -82,19 +78,15 @@ export async function GET(req: NextRequest) {
             .limit(400),
     ]);
 
-    if (ideasError) return NextResponse.json({ error: ideasError.message }, { status: 500 });
-    if (runsError) return NextResponse.json({ error: runsError.message }, { status: 500 });
     if (validationsError) return NextResponse.json({ error: validationsError.message }, { status: 500 });
     if (opportunitiesError) return NextResponse.json({ error: opportunitiesError.message }, { status: 500 });
     if (alertsError) return NextResponse.json({ error: alertsError.message }, { status: 500 });
     if (complaintsError) return NextResponse.json({ error: complaintsError.message }, { status: 500 });
     if (trendError) return NextResponse.json({ error: trendError.message }, { status: 500 });
 
-    const hydratedIdeas = (ideaRows || []).map((row) => hydrateIdeaForMarket(row as Record<string, unknown>));
-    const laneIdeas = category ? hydratedIdeas.filter((idea) => idea.category === category) : hydratedIdeas;
-    const userFacingIdeas = hydratedIdeas.filter((idea) => idea.visibility_decision.status === "visible");
-    const feedVisible = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, { includeExploratory: false, surface: "user" });
-    const laneFeedVisible = category ? feedVisible.filter((idea) => idea.category === category) : feedVisible;
+    const laneIdeas = snapshot.laneHydratedIdeas;
+    const userFacingIdeas = snapshot.laneUserVisibleIdeas;
+    const laneFeedVisible = snapshot.laneUserVisibleIdeas;
 
     const recentIdeaIds = userFacingIdeas
         .filter((idea) => {
@@ -147,21 +139,13 @@ export async function GET(req: NextRequest) {
         limit: 12,
     });
 
-    const sourceHealth = extractScraperRunHealth((latestRuns?.[0] || null) as Record<string, unknown> | null);
-    const new72hCount = userFacingIdeas.filter((idea) => {
-        const firstSeen = Date.parse(String(idea.first_seen || ""));
-        if (!Number.isFinite(firstSeen)) return false;
-        if (category && idea.category !== category) return false;
-        return Date.now() - firstSeen <= 72 * 3600000;
-    }).length;
-
     return NextResponse.json({
         summary: {
             generated_at: new Date().toISOString(),
-            ...sourceHealth,
+            ...snapshot.sourceHealth,
             raw_idea_count: laneIdeas.length,
             feed_visible_count: laneFeedVisible.length,
-            new_72h_count: new72hCount,
+            new_72h_count: snapshot.new72hCount,
             emerging_wedge_count: emergingWedges.length,
         } satisfies MarketIntelligenceSummary,
         emerging_wedges: emergingWedges,

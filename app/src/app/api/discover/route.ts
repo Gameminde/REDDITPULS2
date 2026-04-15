@@ -5,10 +5,9 @@ import { spawn } from "child_process";
 import path from "path";
 import { checkProcessLimit, trackProcess, releaseProcess } from "@/lib/process-limiter";
 import { checkPremium } from "@/lib/check-premium";
-import { buildMarketIdeas } from "@/lib/market-feed";
-import { extractMarketFunnel, extractScraperRunHealth } from "@/lib/scraper-run-health";
+import { consumeDurableRateLimit } from "@/lib/durable-rate-limit";
+import { loadMarketSnapshot } from "@/lib/market-snapshot";
 
-const discoverTimestamps = new Map<string, number[]>();
 const MAX_DISCOVERS_PER_HOUR = 3;
 const DISCOVERY_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -16,16 +15,6 @@ function getScraperExecutionMode() {
     return String(process.env.SCRAPER_EXECUTION_MODE || "local").toLowerCase() === "external"
         ? "external"
         : "local";
-}
-
-function checkRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const hourAgo = now - 3600_000;
-    const stamps = (discoverTimestamps.get(userId) || []).filter((timestamp) => timestamp > hourAgo);
-    if (stamps.length >= MAX_DISCOVERS_PER_HOUR) return false;
-    stamps.push(now);
-    discoverTimestamps.set(userId, stamps);
-    return true;
 }
 
 export async function POST(req: NextRequest) {
@@ -42,8 +31,14 @@ export async function POST(req: NextRequest) {
             }, { status: 409 });
         }
 
-        if (!checkRateLimit(user.id)) {
-            return NextResponse.json({ error: "Rate limit exceeded — max 3 discovery scans per hour" }, { status: 429 });
+        const rateLimit = await consumeDurableRateLimit({
+            userId: user.id,
+            scope: "discover",
+            limit: MAX_DISCOVERS_PER_HOUR,
+        });
+
+        if (!rateLimit.allowed) {
+            return NextResponse.json({ error: "Rate limit exceeded - max 3 discovery scans per hour" }, { status: 429 });
         }
 
         const { isPremium } = await checkPremium(supabase, user.id);
@@ -58,13 +53,12 @@ export async function POST(req: NextRequest) {
         );
 
         if (!checkProcessLimit(user.id)) {
-            return NextResponse.json({ error: "Too many active processes — please wait" }, { status: 429 });
+            return NextResponse.json({ error: "Too many active processes - please wait" }, { status: 429 });
         }
 
         trackProcess(user.id);
 
         const projectRoot = path.resolve(process.cwd(), "..");
-
         const env = {
             ...process.env,
             PYTHONIOENCODING: "utf-8",
@@ -125,50 +119,13 @@ export async function POST(req: NextRequest) {
 export async function GET() {
     try {
         const executionMode = getScraperExecutionMode();
-        const supabase = await createClient();
         const admin = createAdmin();
-
-        const { data: runs } = await supabase
-            .from("scraper_runs")
-            .select("*")
-            .order("started_at", { ascending: false })
-            .limit(1);
-
-        const latestRun = (runs?.[0] || null) as Record<string, unknown> | null;
-
-        const { data: ideaRows } = await supabase
-            .from("ideas")
-            .select("*")
-            .neq("confidence_level", "INSUFFICIENT");
-
-        const visibleIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
-            includeExploratory: false,
-            surface: "user",
-        });
-        const archiveIdeas = buildMarketIdeas((ideaRows || []) as Array<Record<string, unknown>>, {
-            includeExploratory: true,
-            surface: "user",
-        });
-
-        const trackedPostCount = visibleIdeas.reduce((sum, row) => sum + Number(row.post_count_total || 0), 0);
-        const evidenceAttachedCount = visibleIdeas.filter((row) => {
-            const evidenceCount = Number((row as any)?.evidence_summary?.evidence_count || 0);
-            const directCount = Number((row as any)?.signal_contract?.buyer_native_direct_count || 0);
-            const supportingCount = Number((row as any)?.signal_contract?.supporting_signal_count || 0);
-            return evidenceCount > 0 || directCount > 0 || supportingCount > 0;
-        }).length;
-        const extractedFunnel = extractMarketFunnel(latestRun);
-        const lastObservedAt =
-            typeof latestRun?.completed_at === "string"
-                ? latestRun.completed_at
-                : typeof latestRun?.started_at === "string"
-                    ? latestRun.started_at
-                    : null;
+        const snapshot = await loadMarketSnapshot(admin);
 
         const [{ count: archivePostCount }, { count: archiveIdeaCount }] = await Promise.all([
             admin
-            .from("posts")
-            .select("*", { count: "exact", head: true }),
+                .from("posts")
+                .select("*", { count: "exact", head: true }),
             admin
                 .from("ideas")
                 .select("*", { count: "exact", head: true })
@@ -176,21 +133,21 @@ export async function GET() {
         ]);
 
         return NextResponse.json({
-            latestRun,
-            ideaCount: visibleIdeas.length,
-            trackedPostCount,
-            archiveIdeaCount: archiveIdeaCount || archiveIdeas.length,
+            latestRun: snapshot.latestRun,
+            ideaCount: snapshot.userVisibleIdeas.length,
+            trackedPostCount: snapshot.trackedPostCount,
+            archiveIdeaCount: archiveIdeaCount || snapshot.userArchiveIdeas.length,
             archivePostCount: archivePostCount || 0,
-            evidenceAttachedCount,
-            lastObservedAt,
+            evidenceAttachedCount: snapshot.evidenceAttachedCount,
+            lastObservedAt: snapshot.lastObservedAt,
             funnel: {
-                rawPostsAnalyzed: extractedFunnel?.scraped_posts || archivePostCount || 0,
-                candidateOpportunities: extractedFunnel?.final_ideas || archiveIdeaCount || archiveIdeas.length,
-                visibleOnBoard: visibleIdeas.length,
-                evidenceAttached: evidenceAttachedCount,
+                rawPostsAnalyzed: snapshot.funnel?.scraped_posts || archivePostCount || 0,
+                candidateOpportunities: snapshot.funnel?.final_ideas || archiveIdeaCount || snapshot.userArchiveIdeas.length,
+                visibleOnBoard: snapshot.userVisibleIdeas.length,
+                evidenceAttached: snapshot.evidenceAttachedCount,
             },
             executionMode,
-            ...extractScraperRunHealth(latestRun),
+            ...snapshot.sourceHealth,
         });
     } catch {
         return NextResponse.json({

@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
-import { MODEL_CATALOG } from "@/app/api/settings/ai/route";
+import { MODEL_CATALOG } from "@/lib/ai-model-registry";
 import { normalizeProfileRole, type AdminProfileRole } from "@/lib/admin-access";
 import { recordAdminEvent } from "@/lib/admin-events";
 import { trackServerEvent } from "@/lib/analytics";

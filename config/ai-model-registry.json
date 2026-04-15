@@ -1,0 +1,669 @@
+{
+  "providers": {
+    "gemini": {
+      "name": "Google Gemini",
+      "endpoint": "generativelanguage.googleapis.com",
+      "default_model": "gemini-2.5-flash",
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "display_label": "Gemini 2.5 Pro",
+          "runtime_model_id": "gemini-2.5-pro",
+          "verification_model_id": "gemini-2.5-pro",
+          "aliases": ["gemini-pro"],
+          "tier": "paid",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "display_label": "Gemini 2.5 Flash",
+          "runtime_model_id": "gemini-2.5-flash",
+          "verification_model_id": "gemini-2.5-flash",
+          "aliases": ["gemini-flash"],
+          "tier": "free-tier",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-2.5-flash-lite",
+          "display_label": "Gemini 2.5 Flash-Lite",
+          "runtime_model_id": "gemini-2.5-flash-lite",
+          "verification_model_id": "gemini-2.5-flash-lite",
+          "aliases": ["gemini-3.1-flash-lite"],
+          "tier": "free-tier",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-3-pro-preview",
+          "display_label": "Gemini 3 Pro Preview",
+          "runtime_model_id": "gemini-3-pro-preview",
+          "verification_model_id": "gemini-3-pro-preview",
+          "aliases": ["gemini-3.1-pro"],
+          "tier": "paid",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-3-flash-preview",
+          "display_label": "Gemini 3 Flash Preview",
+          "runtime_model_id": "gemini-3-flash-preview",
+          "verification_model_id": "gemini-3-flash-preview",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-2.0-flash",
+          "display_label": "Gemini 2.0 Flash",
+          "runtime_model_id": "gemini-2.0-flash",
+          "verification_model_id": "gemini-2.0-flash",
+          "aliases": ["gemini-2.0-flash-exp"],
+          "tier": "free-tier",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-1.5-pro",
+          "display_label": "Gemini 1.5 Pro",
+          "runtime_model_id": "gemini-1.5-pro",
+          "verification_model_id": "gemini-1.5-pro",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 2097152
+        },
+        {
+          "id": "gemini-1.5-flash",
+          "display_label": "Gemini 1.5 Flash",
+          "runtime_model_id": "gemini-1.5-flash",
+          "verification_model_id": "gemini-1.5-flash",
+          "aliases": ["gemini-1.5-flash-8b"],
+          "tier": "free-tier",
+          "context_window": 1048576
+        }
+      ]
+    },
+    "anthropic": {
+      "name": "Anthropic",
+      "endpoint": "api.anthropic.com",
+      "default_model": "claude-sonnet-4",
+      "models": [
+        {
+          "id": "claude-opus-4-1",
+          "display_label": "Claude Opus 4.1",
+          "runtime_model_id": "claude-opus-4-1",
+          "verification_model_id": "claude-opus-4-1",
+          "aliases": ["claude-opus-4.6", "claude-3-opus-20240229"],
+          "tier": "paid",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-sonnet-4",
+          "display_label": "Claude Sonnet 4",
+          "runtime_model_id": "claude-sonnet-4",
+          "verification_model_id": "claude-sonnet-4",
+          "aliases": ["claude-sonnet-4.6", "claude-sonnet-4-20250514"],
+          "tier": "paid",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-sonnet-3-7",
+          "display_label": "Claude Sonnet 3.7",
+          "runtime_model_id": "claude-sonnet-3-7",
+          "verification_model_id": "claude-sonnet-3-7",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-3-5-sonnet-latest",
+          "display_label": "Claude 3.5 Sonnet",
+          "runtime_model_id": "claude-3-5-sonnet-latest",
+          "verification_model_id": "claude-3-5-sonnet-latest",
+          "aliases": ["claude-3-5-sonnet-20241022"],
+          "tier": "paid",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-3-5-haiku-latest",
+          "display_label": "Claude 3.5 Haiku",
+          "runtime_model_id": "claude-3-5-haiku-latest",
+          "verification_model_id": "claude-3-5-haiku-latest",
+          "aliases": ["claude-haiku-4.5", "claude-3-5-haiku-20241022"],
+          "tier": "paid",
+          "context_window": 200000
+        }
+      ]
+    },
+    "openai": {
+      "name": "OpenAI",
+      "endpoint": "api.openai.com",
+      "default_model": "gpt-5.4",
+      "models": [
+        {
+          "id": "gpt-5.4",
+          "display_label": "GPT-5.4",
+          "runtime_model_id": "gpt-5.4",
+          "verification_model_id": "gpt-5.4",
+          "aliases": ["gpt-5.3", "gpt-5.2", "gpt-5"],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "display_label": "GPT-5.4 Mini",
+          "runtime_model_id": "gpt-5.4-mini",
+          "verification_model_id": "gpt-5.4-mini",
+          "aliases": ["gpt-5-mini"],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-5.4-nano",
+          "display_label": "GPT-5.4 Nano",
+          "runtime_model_id": "gpt-5.4-nano",
+          "verification_model_id": "gpt-5.4-nano",
+          "aliases": ["gpt-5-nano"],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-4o",
+          "display_label": "GPT-4o",
+          "runtime_model_id": "gpt-4o",
+          "verification_model_id": "gpt-4o",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-4o-mini",
+          "display_label": "GPT-4o Mini",
+          "runtime_model_id": "gpt-4o-mini",
+          "verification_model_id": "gpt-4o-mini",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "o1-preview",
+          "display_label": "o1 Preview",
+          "runtime_model_id": "o1-preview",
+          "verification_model_id": "o1-preview",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "o1-mini",
+          "display_label": "o1 Mini",
+          "runtime_model_id": "o1-mini",
+          "verification_model_id": "o1-mini",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        }
+      ]
+    },
+    "grok": {
+      "name": "xAI (Grok)",
+      "endpoint": "api.x.ai",
+      "default_model": "grok-4.1",
+      "models": [
+        {
+          "id": "grok-4.1",
+          "display_label": "Grok 4.1",
+          "runtime_model_id": "grok-4.1",
+          "verification_model_id": "grok-4.1",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "grok-2-1212",
+          "display_label": "Grok 2",
+          "runtime_model_id": "grok-2-1212",
+          "verification_model_id": "grok-2-1212",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "grok-beta",
+          "display_label": "Grok Beta",
+          "runtime_model_id": "grok-beta",
+          "verification_model_id": "grok-beta",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        }
+      ]
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "endpoint": "api.deepseek.com",
+      "default_model": "deepseek-chat",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "display_label": "DeepSeek V3",
+          "runtime_model_id": "deepseek-chat",
+          "verification_model_id": "deepseek-chat",
+          "aliases": ["deepseek-v4", "deepseek-v3.2-speciale"],
+          "tier": "paid",
+          "context_window": 65536
+        },
+        {
+          "id": "deepseek-reasoner",
+          "display_label": "DeepSeek R1",
+          "runtime_model_id": "deepseek-reasoner",
+          "verification_model_id": "deepseek-reasoner",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 65536
+        }
+      ]
+    },
+    "groq": {
+      "name": "Groq",
+      "endpoint": "api.groq.com",
+      "default_model": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "models": [
+        {
+          "id": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "display_label": "Llama 4 Scout",
+          "runtime_model_id": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "verification_model_id": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "aliases": ["llama-4-scout", "llama-4-maverick"],
+          "tier": "free-tier",
+          "context_window": 16384
+        },
+        {
+          "id": "llama-3.3-70b-versatile",
+          "display_label": "Llama 3.3 70B",
+          "runtime_model_id": "llama-3.3-70b-versatile",
+          "verification_model_id": "llama-3.3-70b-versatile",
+          "aliases": ["llama-3.3-70b"],
+          "tier": "free-tier",
+          "context_window": 131072
+        },
+        {
+          "id": "llama-3.1-8b-instant",
+          "display_label": "Llama 3.1 8B Instant",
+          "runtime_model_id": "llama-3.1-8b-instant",
+          "verification_model_id": "llama-3.1-8b-instant",
+          "aliases": ["llama-3.1-8b"],
+          "tier": "free-tier",
+          "context_window": 131072
+        },
+        {
+          "id": "mixtral-8x7b-32768",
+          "display_label": "Mixtral 8x7B",
+          "runtime_model_id": "mixtral-8x7b-32768",
+          "verification_model_id": "mixtral-8x7b-32768",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 32768
+        },
+        {
+          "id": "gemma2-9b-it",
+          "display_label": "Gemma 2 9B",
+          "runtime_model_id": "gemma2-9b-it",
+          "verification_model_id": "gemma2-9b-it",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 8192
+        }
+      ]
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "endpoint": "openrouter.ai",
+      "default_model": "anthropic/claude-sonnet-4",
+      "models": [
+        {
+          "id": "anthropic/claude-sonnet-4",
+          "display_label": "Claude Sonnet 4",
+          "runtime_model_id": "anthropic/claude-sonnet-4",
+          "verification_model_id": "anthropic/claude-sonnet-4",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 200000
+        },
+        {
+          "id": "openai/gpt-5.4",
+          "display_label": "GPT-5.4",
+          "runtime_model_id": "openai/gpt-5.4",
+          "verification_model_id": "openai/gpt-5.4",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "openai/gpt-5.4-mini",
+          "display_label": "GPT-5.4 Mini",
+          "runtime_model_id": "openai/gpt-5.4-mini",
+          "verification_model_id": "openai/gpt-5.4-mini",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "deepseek/deepseek-r1",
+          "display_label": "DeepSeek R1",
+          "runtime_model_id": "deepseek/deepseek-r1",
+          "verification_model_id": "deepseek/deepseek-r1",
+          "aliases": ["openrouter/deepseek/deepseek-r1", "hunter-alpha", "openrouter/hunter-alpha", "openrouter/openrouter/hunter-alpha", "openrouter/deepseek/deepseek-r1:free"],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "deepseek/deepseek-chat",
+          "display_label": "DeepSeek V3",
+          "runtime_model_id": "deepseek/deepseek-chat",
+          "verification_model_id": "deepseek/deepseek-chat",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 128000
+        },
+        {
+          "id": "google/gemini-2.5-flash",
+          "display_label": "Gemini 2.5 Flash",
+          "runtime_model_id": "google/gemini-2.5-flash",
+          "verification_model_id": "google/gemini-2.5-flash",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 1048576
+        },
+        {
+          "id": "google/gemini-2.5-pro",
+          "display_label": "Gemini 2.5 Pro",
+          "runtime_model_id": "google/gemini-2.5-pro",
+          "verification_model_id": "google/gemini-2.5-pro",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 1048576
+        },
+        {
+          "id": "qwen/qwen2.5-72b-instruct",
+          "display_label": "Qwen 2.5 72B",
+          "runtime_model_id": "qwen/qwen2.5-72b-instruct",
+          "verification_model_id": "qwen/qwen2.5-72b-instruct",
+          "aliases": ["qwen/qwen3-coder-480b-a35b"],
+          "tier": "paid",
+          "context_window": 32768
+        },
+        {
+          "id": "meta-llama/llama-3.1-405b-instruct",
+          "display_label": "Llama 3.1 405B",
+          "runtime_model_id": "meta-llama/llama-3.1-405b-instruct",
+          "verification_model_id": "meta-llama/llama-3.1-405b-instruct",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        }
+      ]
+    },
+    "together": {
+      "name": "Together AI",
+      "endpoint": "api.together.xyz",
+      "default_model": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+      "models": [
+        {
+          "id": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+          "display_label": "Llama 3.1 405B Turbo",
+          "runtime_model_id": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+          "verification_model_id": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+          "aliases": ["llama-3.1-405b"],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "meta-llama/Llama-3-70b-chat-hf",
+          "display_label": "Llama 3 70B",
+          "runtime_model_id": "meta-llama/Llama-3-70b-chat-hf",
+          "verification_model_id": "meta-llama/Llama-3-70b-chat-hf",
+          "aliases": ["llama-3-70b"],
+          "tier": "paid",
+          "context_window": 8192
+        },
+        {
+          "id": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+          "display_label": "Qwen 2.5 72B Turbo",
+          "runtime_model_id": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+          "verification_model_id": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+          "aliases": ["qwen2.5-72b"],
+          "tier": "paid",
+          "context_window": 32768
+        },
+        {
+          "id": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+          "display_label": "Mixtral 8x22B",
+          "runtime_model_id": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+          "verification_model_id": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 65536
+        }
+      ]
+    },
+    "nvidia": {
+      "name": "NVIDIA NIM",
+      "endpoint": "integrate.api.nvidia.com",
+      "default_model": "meta/llama-3.1-70b-instruct",
+      "models": [
+        {
+          "id": "meta/llama-3.1-70b-instruct",
+          "display_label": "Llama 3.1 70B Instruct",
+          "runtime_model_id": "meta/llama-3.1-70b-instruct",
+          "verification_model_id": "meta/llama-3.1-70b-instruct",
+          "aliases": ["llama-3.1-70b-nvidia"],
+          "tier": "free-tier",
+          "context_window": 131072
+        },
+        {
+          "id": "meta/llama-3.1-405b-instruct",
+          "display_label": "Llama 3.1 405B Instruct",
+          "runtime_model_id": "meta/llama-3.1-405b-instruct",
+          "verification_model_id": "meta/llama-3.1-405b-instruct",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "nvidia/llama-3.1-nemotron-70b-instruct",
+          "display_label": "Nemotron 70B",
+          "runtime_model_id": "nvidia/llama-3.1-nemotron-70b-instruct",
+          "verification_model_id": "nvidia/llama-3.1-nemotron-70b-instruct",
+          "aliases": ["nemotron-70b"],
+          "tier": "free-tier",
+          "context_window": 131072
+        },
+        {
+          "id": "nvidia/llama-3.3-nemotron-super-49b-v1",
+          "display_label": "Nemotron Super 49B",
+          "runtime_model_id": "nvidia/llama-3.3-nemotron-super-49b-v1",
+          "verification_model_id": "nvidia/llama-3.3-nemotron-super-49b-v1",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 131072
+        },
+        {
+          "id": "mistralai/mixtral-8x22b-instruct-v0.1",
+          "display_label": "Mixtral 8x22B",
+          "runtime_model_id": "mistralai/mixtral-8x22b-instruct-v0.1",
+          "verification_model_id": "mistralai/mixtral-8x22b-instruct-v0.1",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 65536
+        },
+        {
+          "id": "qwen/qwen2.5-72b-instruct",
+          "display_label": "Qwen 2.5 72B",
+          "runtime_model_id": "qwen/qwen2.5-72b-instruct",
+          "verification_model_id": "qwen/qwen2.5-72b-instruct",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 32768
+        }
+      ]
+    },
+    "fireworks": {
+      "name": "Fireworks AI",
+      "endpoint": "api.fireworks.ai",
+      "default_model": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+      "models": [
+        {
+          "id": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+          "display_label": "Llama 3.1 70B",
+          "runtime_model_id": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+          "verification_model_id": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+          "aliases": ["llama-3.1-70b-fireworks"],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+          "display_label": "Llama 3.1 405B",
+          "runtime_model_id": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+          "verification_model_id": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "accounts/fireworks/models/deepseek-r1",
+          "display_label": "DeepSeek R1",
+          "runtime_model_id": "accounts/fireworks/models/deepseek-r1",
+          "verification_model_id": "accounts/fireworks/models/deepseek-r1",
+          "aliases": ["deepseek-r1-fireworks"],
+          "tier": "paid",
+          "context_window": 131072
+        },
+        {
+          "id": "accounts/fireworks/models/mixtral-8x22b-instruct",
+          "display_label": "Mixtral 8x22B",
+          "runtime_model_id": "accounts/fireworks/models/mixtral-8x22b-instruct",
+          "verification_model_id": "accounts/fireworks/models/mixtral-8x22b-instruct",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 65536
+        }
+      ]
+    },
+    "mistral": {
+      "name": "Mistral AI",
+      "endpoint": "api.mistral.ai",
+      "default_model": "mistral-large-latest",
+      "models": [
+        {
+          "id": "mistral-large-latest",
+          "display_label": "Mistral Large",
+          "runtime_model_id": "mistral-large-latest",
+          "verification_model_id": "mistral-large-latest",
+          "aliases": ["mistral-large"],
+          "tier": "paid",
+          "context_window": 32768
+        },
+        {
+          "id": "mistral-small-latest",
+          "display_label": "Mistral Small",
+          "runtime_model_id": "mistral-small-latest",
+          "verification_model_id": "mistral-small-latest",
+          "aliases": ["mistral-small"],
+          "tier": "paid",
+          "context_window": 32768
+        },
+        {
+          "id": "open-mixtral-8x22b",
+          "display_label": "Mixtral 8x22B",
+          "runtime_model_id": "open-mixtral-8x22b",
+          "verification_model_id": "open-mixtral-8x22b",
+          "aliases": ["mixtral-8x22b"],
+          "tier": "paid",
+          "context_window": 65536
+        },
+        {
+          "id": "open-mistral-nemo",
+          "display_label": "Mistral Nemo",
+          "runtime_model_id": "open-mistral-nemo",
+          "verification_model_id": "open-mistral-nemo",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 128000
+        }
+      ]
+    },
+    "cerebras": {
+      "name": "Cerebras",
+      "endpoint": "api.cerebras.ai",
+      "default_model": "llama3.1-70b",
+      "models": [
+        {
+          "id": "llama3.1-70b",
+          "display_label": "Llama 3.1 70B",
+          "runtime_model_id": "llama3.1-70b",
+          "verification_model_id": "llama3.1-70b",
+          "aliases": ["llama3.1-70b-cerebras"],
+          "tier": "free-tier",
+          "context_window": 8192
+        },
+        {
+          "id": "llama-3.3-70b",
+          "display_label": "Llama 3.3 70B",
+          "runtime_model_id": "llama-3.3-70b",
+          "verification_model_id": "llama-3.3-70b",
+          "aliases": ["llama3.3-70b-cerebras"],
+          "tier": "free-tier",
+          "context_window": 8192
+        },
+        {
+          "id": "llama3.1-8b",
+          "display_label": "Llama 3.1 8B",
+          "runtime_model_id": "llama3.1-8b",
+          "verification_model_id": "llama3.1-8b",
+          "aliases": [],
+          "tier": "free-tier",
+          "context_window": 8192
+        }
+      ]
+    },
+    "minimax": {
+      "name": "Minimax",
+      "endpoint": "api.minimax.chat",
+      "default_model": "minimax-01",
+      "models": [
+        {
+          "id": "minimax-01",
+          "display_label": "MiniMax 01",
+          "runtime_model_id": "minimax-01",
+          "verification_model_id": "minimax-01",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 1000000
+        },
+        {
+          "id": "abab6.5s-chat",
+          "display_label": "ABAB 6.5s",
+          "runtime_model_id": "abab6.5s-chat",
+          "verification_model_id": "abab6.5s-chat",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 245760
+        }
+      ]
+    },
+    "ollama": {
+      "name": "Ollama (Local)",
+      "endpoint": "localhost:11434",
+      "default_model": "custom",
+      "models": [
+        {
+          "id": "custom",
+          "display_label": "Custom Local Model",
+          "runtime_model_id": "custom",
+          "verification_model_id": "custom",
+          "aliases": [],
+          "tier": "free",
+          "context_window": 8192
+        }
+      ]
+    }
+  }
+}

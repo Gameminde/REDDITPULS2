@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
 import requests
+from model_registry import resolve_model_name
 
 
 STRICT_JSON_SUFFIX = """
@@ -165,7 +166,7 @@ def _retry_delay_seconds(attempt: int) -> float:
 
 def _resolve_pricing(provider: str, model: str) -> dict:
     provider_l = str(provider or "").lower()
-    model_l = str(model or "").lower()
+    model_l = resolve_model_name(str(model or "")).lower()
 
     for key, price in MODEL_PRICING.items():
         if key in model_l:

@@ -4,7 +4,12 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { trackServerEvent } from "@/lib/analytics";
 import { buildValidationTrust } from "@/lib/trust";
-import { loadWatchlist, safeParseJson, watchlistErrorMessage } from "@/lib/watchlist-data";
+import { loadWatchlist, loadWatchlistById, safeParseJson, watchlistErrorMessage } from "@/lib/watchlist-data";
+import {
+    deleteNativeValidationFallbackMonitor,
+    deleteNativeWatchlistMonitorRows,
+    syncWatchlistRowsToNativeMonitors,
+} from "@/lib/watchlist-monitor-bridge";
 
 async function getUser() {
     const cookieStore = await cookies();
@@ -225,6 +230,33 @@ async function findExistingWatchlist(userId: string, ideaId: string | null, vali
     return { data: null, error: null };
 }
 
+async function syncNativeMonitorForWatchlistRow(
+    userId: string,
+    watchlistId: string,
+    validationId?: string | null,
+) {
+    const hydrated = await loadWatchlistById(supabaseAdmin, userId, watchlistId);
+    if (hydrated.error) {
+        return { error: hydrated.error };
+    }
+
+    if ((hydrated.data || []).length > 0) {
+        const sync = await syncWatchlistRowsToNativeMonitors(supabaseAdmin, userId, hydrated.data);
+        if (sync.error) {
+            return { error: sync.error };
+        }
+    }
+
+    if (validationId) {
+        const cleanup = await deleteNativeValidationFallbackMonitor(supabaseAdmin, userId, validationId);
+        if (cleanup.error) {
+            return { error: cleanup.error };
+        }
+    }
+
+    return { error: null };
+}
+
 export async function GET(req: NextRequest) {
     const user = await getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -250,6 +282,11 @@ export async function GET(req: NextRequest) {
                 nativeMonitorFallback: true,
             });
         }
+    }
+
+    const nativeSync = await syncWatchlistRowsToNativeMonitors(supabaseAdmin, user.id, result.data || []);
+    if (nativeSync.error) {
+        return NextResponse.json({ error: nativeSync.error.message }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -299,6 +336,10 @@ export async function POST(request: Request) {
             });
         }
         if (existing.data) {
+            const nativeSync = await syncNativeMonitorForWatchlistRow(user.id, String(existing.data.id), validationId);
+            if (nativeSync.error) {
+                return NextResponse.json({ error: nativeSync.error.message }, { status: 500 });
+            }
             return NextResponse.json({ watchlist: existing.data, already_saved: true });
         }
     }
@@ -315,6 +356,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: existing.error.message }, { status: 500 });
         }
         if (existing.data) {
+            const nativeSync = await syncNativeMonitorForWatchlistRow(user.id, String(existing.data.id), null);
+            if (nativeSync.error) {
+                return NextResponse.json({ error: nativeSync.error.message }, { status: 500 });
+            }
             return NextResponse.json({ watchlist: existing.data, already_saved: true });
         }
     }
@@ -368,6 +413,11 @@ export async function POST(request: Request) {
         }, { status });
     }
 
+    const nativeSync = await syncNativeMonitorForWatchlistRow(user.id, String(data.id), validationId);
+    if (nativeSync.error) {
+        return NextResponse.json({ error: nativeSync.error.message }, { status: 500 });
+    }
+
     await trackServerEvent(request, {
         eventName: "watchlist_added",
         scope: "product",
@@ -394,6 +444,11 @@ export async function DELETE(request: Request) {
         return NextResponse.json({ error: "idea_id or validation_id required" }, { status: 400 });
     }
 
+    const existingWatchlist = await findExistingWatchlist(user.id, ideaId, validationId);
+    if (existingWatchlist.error) {
+        return NextResponse.json({ error: existingWatchlist.error.message }, { status: 500 });
+    }
+
     let watchlistDeleteError: { message?: string } | null = null;
 
     let query = supabaseAdmin
@@ -416,10 +471,16 @@ export async function DELETE(request: Request) {
 
     if (watchlistDeleteError) return NextResponse.json({ error: watchlistDeleteError.message }, { status: 500 });
 
+    const legacyIds = existingWatchlist.data?.id ? [String(existingWatchlist.data.id)] : [];
+    const nativeDelete = await deleteNativeWatchlistMonitorRows(supabaseAdmin, user.id, legacyIds);
+    if (nativeDelete.error) {
+        return NextResponse.json({ error: nativeDelete.error.message }, { status: 500 });
+    }
+
     if (validationId) {
-        const nativeDelete = await deleteNativeValidationMonitor(user.id, validationId);
-        if (nativeDelete.error) {
-            return NextResponse.json({ error: nativeDelete.error.message }, { status: 500 });
+        const fallbackDelete = await deleteNativeValidationFallbackMonitor(supabaseAdmin, user.id, validationId);
+        if (fallbackDelete.error) {
+            return NextResponse.json({ error: fallbackDelete.error.message }, { status: 500 });
         }
     }
 

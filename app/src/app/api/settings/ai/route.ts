@@ -1,149 +1,9 @@
 import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
+import { consumeDurableRateLimit } from "@/lib/durable-rate-limit";
+import { MODEL_CATALOG, getProviderRegistryEntry, resolveRegisteredModel } from "@/lib/ai-model-registry";
 
-export const MODEL_CATALOG: Record<string, { name: string; models: { id: string; label: string }[]; endpoint: string }> = {
-    gemini: {
-        name: "Google Gemini",
-        models: [
-            { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-            { id: "gemini-2.0-flash-exp", label: "Gemini 2.0 Flash Exp (Free)" },
-            { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-            { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-        ],
-        endpoint: "generativelanguage.googleapis.com",
-    },
-    anthropic: {
-        name: "Anthropic",
-        models: [
-            { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
-            { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
-            { id: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-        ],
-        endpoint: "api.anthropic.com",
-    },
-    openai: {
-        name: "OpenAI",
-        models: [
-            { id: "gpt-4o", label: "GPT-4o" },
-            { id: "gpt-4o-mini", label: "GPT-4o Mini" },
-            { id: "o1-preview", label: "o1 Preview" },
-            { id: "o1-mini", label: "o1 Mini" },
-        ],
-        endpoint: "api.openai.com",
-    },
-    grok: {
-        name: "xAI (Grok)",
-        models: [
-            { id: "grok-2-1212", label: "Grok 2" },
-            { id: "grok-beta", label: "Grok Beta" },
-        ],
-        endpoint: "api.x.ai",
-    },
-    deepseek: {
-        name: "DeepSeek",
-        models: [
-            { id: "deepseek-chat", label: "DeepSeek V3" },
-            { id: "deepseek-reasoner", label: "DeepSeek R1 (Reasoner)" },
-        ],
-        endpoint: "api.deepseek.com",
-    },
-    groq: {
-        name: "Groq",
-        models: [
-            { id: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout (16K ctx)" },
-            { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (128K ctx)" },
-            { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
-            { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
-            { id: "gemma2-9b-it", label: "Gemma 2 9B" },
-        ],
-        endpoint: "api.groq.com",
-    },
-    openrouter: {
-        name: "OpenRouter (200+ models)",
-        models: [
-            { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-            { id: "openai/gpt-4o", label: "GPT-4o" },
-            { id: "deepseek/deepseek-r1", label: "DeepSeek R1" },
-            { id: "deepseek/deepseek-chat", label: "DeepSeek V3" },
-            { id: "qwen/qwen2.5-72b-instruct", label: "Qwen 2.5 72B" },
-            { id: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B" },
-            { id: "nvidia/llama-3.1-nemotron-70b-instruct", label: "Nemotron 70B" },
-            { id: "mistralai/mixtral-8x22b-instruct", label: "Mixtral 8x22B" },
-            { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
-            { id: "microsoft/wizardlm-2-8x22b", label: "WizardLM 2 8x22B" },
-        ],
-        endpoint: "openrouter.ai",
-    },
-    together: {
-        name: "Together AI",
-        models: [
-            { id: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", label: "Llama 3.1 405B Turbo" },
-            { id: "meta-llama/Llama-3-70b-chat-hf", label: "Llama 3 70B" },
-            { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", label: "Qwen 2.5 72B Turbo" },
-            { id: "mistralai/Mixtral-8x22B-Instruct-v0.1", label: "Mixtral 8x22B" },
-            { id: "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO", label: "Nous Hermes 2 Mixtral" },
-        ],
-        endpoint: "api.together.xyz",
-    },
-    nvidia: {
-        name: "NVIDIA NIM",
-        models: [
-            { id: "meta/llama-3.1-70b-instruct", label: "Llama 3.1 70B (Free tier)" },
-            { id: "meta/llama-3.1-405b-instruct", label: "Llama 3.1 405B" },
-            { id: "nvidia/llama-3.1-nemotron-70b-instruct", label: "Nemotron 70B (Free tier)" },
-            { id: "nvidia/llama-3.3-nemotron-super-49b-v1", label: "Nemotron Super 49B" },
-            { id: "mistralai/mixtral-8x22b-instruct-v0.1", label: "Mixtral 8x22B" },
-            { id: "qwen/qwen2.5-72b-instruct", label: "Qwen 2.5 72B" },
-        ],
-        endpoint: "integrate.api.nvidia.com",
-    },
-    fireworks: {
-        name: "Fireworks AI",
-        models: [
-            { id: "accounts/fireworks/models/llama-v3p1-70b-instruct", label: "Llama 3.1 70B" },
-            { id: "accounts/fireworks/models/llama-v3p1-405b-instruct", label: "Llama 3.1 405B" },
-            { id: "accounts/fireworks/models/deepseek-r1", label: "DeepSeek R1" },
-            { id: "accounts/fireworks/models/mixtral-8x22b-instruct", label: "Mixtral 8x22B" },
-            { id: "accounts/fireworks/models/qwen2p5-72b-instruct", label: "Qwen 2.5 72B" },
-        ],
-        endpoint: "api.fireworks.ai",
-    },
-    mistral: {
-        name: "Mistral AI",
-        models: [
-            { id: "mistral-large-latest", label: "Mistral Large" },
-            { id: "mistral-medium-latest", label: "Mistral Medium" },
-            { id: "mistral-small-latest", label: "Mistral Small" },
-            { id: "open-mixtral-8x22b", label: "Mixtral 8x22B (Open)" },
-            { id: "open-mistral-nemo", label: "Mistral Nemo (Free tier)" },
-        ],
-        endpoint: "api.mistral.ai",
-    },
-    cerebras: {
-        name: "Cerebras (Ultra-fast)",
-        models: [
-            { id: "llama3.1-70b", label: "Llama 3.1 70B (Fast)" },
-            { id: "llama-3.3-70b", label: "Llama 3.3 70B (Fast)" },
-            { id: "llama3.1-8b", label: "Llama 3.1 8B (Fastest)" },
-        ],
-        endpoint: "api.cerebras.ai",
-    },
-    minimax: {
-        name: "Minimax",
-        models: [
-            { id: "minimax-01", label: "MiniMax-01 (1M ctx)" },
-            { id: "abab6.5s-chat", label: "ABAB 6.5s" },
-        ],
-        endpoint: "api.minimax.chat",
-    },
-    ollama: {
-        name: "Ollama (Local)",
-        models: [{ id: "custom", label: "Custom Local Model" }],
-        endpoint: "localhost:11434",
-    },
-};
-
-const configTimestamps = new Map<string, number[]>();
+export { MODEL_CATALOG };
 
 function requireEncryptionKey() {
     const encryptionKey = process.env.AI_ENCRYPTION_KEY?.trim();
@@ -154,16 +14,6 @@ function requireEncryptionKey() {
         );
     }
     return encryptionKey;
-}
-
-function checkConfigRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const hourAgo = now - 3600_000;
-    const timestamps = (configTimestamps.get(userId) || []).filter((timestamp) => timestamp > hourAgo);
-    if (timestamps.length >= 10) return false;
-    timestamps.push(now);
-    configTimestamps.set(userId, timestamps);
-    return true;
 }
 
 function formatEncryptedConfigError(error: { code?: string; message?: string } | null | undefined) {
@@ -194,7 +44,8 @@ export async function GET() {
 
         const maskedConfigs = (configs || []).map((config: Record<string, string | boolean | number>) => ({
             ...config,
-            api_key: config.api_key ? `•••••••••${String(config.api_key).slice(-4)}` : "",
+            selected_model: resolveRegisteredModel(String(config.selected_model || "")),
+            api_key: config.api_key ? `*********${String(config.api_key).slice(-4)}` : "",
         }));
 
         return NextResponse.json({ configs: maskedConfigs, catalog: MODEL_CATALOG });
@@ -211,20 +62,29 @@ export async function POST(req: NextRequest) {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        if (!checkConfigRateLimit(user.id)) {
-            return NextResponse.json({ error: "Rate limit exceeded — max 10 config changes per hour" }, { status: 429 });
+        const rateLimit = await consumeDurableRateLimit({
+            userId: user.id,
+            scope: "settings_ai",
+            limit: 10,
+        });
+
+        if (!rateLimit.allowed) {
+            return NextResponse.json({ error: "Rate limit exceeded - max 10 config changes per hour" }, { status: 429 });
         }
 
         const encryptionKey = requireEncryptionKey();
         const body = await req.json();
         const { provider, api_key, selected_model, priority, endpoint_url, config_id } = body;
+        const providerEntry = getProviderRegistryEntry(provider);
 
         if (!provider || !api_key || !selected_model) {
             return NextResponse.json({ error: "Provider, API key, and model are required" }, { status: 400 });
         }
-        if (!MODEL_CATALOG[provider]) {
+        if (!providerEntry) {
             return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
         }
+
+        const resolvedModel = resolveRegisteredModel(String(selected_model || ""));
 
         let verification = { status: "skipped", message: "Verification skipped" } as {
             status: string;
@@ -234,12 +94,12 @@ export async function POST(req: NextRequest) {
 
         try {
             const { verifyKey } = await import("./verify/route");
-            verification = await verifyKey(provider, api_key, selected_model);
+            verification = await verifyKey(provider, api_key, resolvedModel);
         } catch (verifyError) {
             console.error("Key verification failed:", verifyError);
             verification = {
                 status: "error",
-                message: "Could not verify key — saving anyway",
+                message: "Could not verify key - saving anyway",
             };
         }
 
@@ -273,7 +133,7 @@ export async function POST(req: NextRequest) {
             p_user_id: user.id,
             p_provider: provider,
             p_api_key: api_key,
-            p_model: selected_model,
+            p_model: resolvedModel,
             p_priority: safePriority,
             p_endpoint_url: endpoint_url || null,
             p_key: encryptionKey,
@@ -288,7 +148,7 @@ export async function POST(req: NextRequest) {
             verification: {
                 status: verification.status,
                 message: verification.message,
-                resolved_model: verification.resolved_model || selected_model,
+                resolved_model: verification.resolved_model || resolvedModel,
             },
         });
     } catch (error) {

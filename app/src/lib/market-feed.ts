@@ -6,8 +6,12 @@ import {
     type OpportunitySignalContract,
     type OpportunityTopPost,
 } from "@/lib/opportunity-signal";
-import { buildMarketOpportunityPresentation } from "@/lib/market-opportunity-presentation";
 import {
+    buildMarketOpportunityPresentation,
+    type MarketOpportunityPresentation,
+} from "@/lib/market-opportunity-presentation";
+import {
+    getPublicMarketEditorialVisibility,
     getVisibleMarketEditorial,
     getVisibleMarketEditorialProductAngle,
     parseMarketEditorial,
@@ -17,8 +21,10 @@ import { buildMarketHint, type MarketHint } from "@/lib/opportunity-actionabilit
 import { buildOpportunityStrategyPreview, buildOpportunityStrategySnapshot } from "@/lib/opportunity-strategy";
 import { isInvalidMarketTopicName, normalizeMarketTopicName } from "@/lib/market-topic-quality";
 import {
+    explainPublicOpportunityEligibility,
     getPublicOpportunityTitle,
     getSafePublicSummary,
+    type PublicOpportunityRejectionReason,
 } from "@/lib/public-idea-eligibility";
 import {
     resolveMarketVisibilityDecision,
@@ -34,6 +40,40 @@ export type MarketKind =
     | "malformed";
 
 export type MarketStatus = "visible" | "needs_wedge" | "suppressed";
+
+export interface MarketVisibilityExplanation {
+    coarse_classification: {
+        market_kind: MarketKind;
+        market_status: MarketStatus;
+        suppression_reason: string | null;
+        board_eligible: boolean;
+        board_stale_reason: string | null;
+        fresh_candidate: boolean;
+    };
+    presentation: {
+        display_topic: string;
+        shape_status: MarketOpportunityPresentation["shape_status"];
+        suppress_from_market: boolean;
+        suppress_reason: string | null;
+    };
+    editorial_visibility: {
+        visibility: string;
+        has_public_editorial: boolean;
+        updated_at: string | null;
+    };
+    public_eligibility: {
+        eligible: boolean;
+        rejection_reason: PublicOpportunityRejectionReason | null;
+    };
+    final_surface: {
+        user_status: MarketVisibilityDecision["status"];
+        user_reason: MarketVisibilityDecision["reason"];
+        user_visible: boolean;
+        admin_visible: boolean;
+        exploratory_visible: boolean;
+        include_reason: string;
+    };
+}
 
 export interface MarketHydratedIdea extends Record<string, unknown> {
     id: string;
@@ -71,6 +111,7 @@ export interface MarketHydratedIdea extends Record<string, unknown> {
     market_editorial: MarketEditorialPayload | null;
     market_editorial_updated_at: string | null;
     visibility_decision: MarketVisibilityDecision;
+    visibility_explanation: MarketVisibilityExplanation;
 }
 
 const SHARE_THREAD_PATTERNS = [
@@ -479,6 +520,7 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
     const public_summary = getSafePublicSummary(withHint);
     const approvedEditorial = getVisibleMarketEditorial(parsedMarketEditorial);
     const public_product_angle = getVisibleMarketEditorialProductAngle(parsedMarketEditorial);
+    const publicEligibility = explainPublicOpportunityEligibility(withHint);
 
     const visibilityDecision = resolveMarketVisibilityDecision({
         ...withHint,
@@ -487,6 +529,10 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         suppression_reason: withHint.suppression_reason,
         market_editorial_updated_at: withHint.market_editorial_updated_at,
         last_updated: typeof idea.last_updated === "string" ? idea.last_updated : null,
+    });
+    const includeExploratory = !shouldSuppressOpportunityIdeaCard({
+        signalContract: withHint.signal_contract,
+        postCountTotal: withHint.post_count_total,
     });
 
     return {
@@ -498,7 +544,54 @@ export function hydrateIdeaForMarket(idea: Record<string, unknown>): MarketHydra
         public_product_angle,
         public_browse_eligible: visibilityDecision.status === "visible",
         visibility_decision: visibilityDecision,
+        visibility_explanation: {
+            coarse_classification: {
+                market_kind: withHint.market_kind,
+                market_status: withHint.market_status,
+                suppression_reason: withHint.suppression_reason,
+                board_eligible: withHint.board_eligible,
+                board_stale_reason: withHint.board_stale_reason,
+                fresh_candidate: withHint.fresh_candidate,
+            },
+            presentation: {
+                display_topic: presentation.display_topic,
+                shape_status: presentation.shape_status,
+                suppress_from_market: presentation.suppress_from_market,
+                suppress_reason: presentation.suppress_reason,
+            },
+            editorial_visibility: {
+                visibility: getPublicMarketEditorialVisibility(parsedMarketEditorial) || "none",
+                has_public_editorial: Boolean(approvedEditorial),
+                updated_at: withHint.market_editorial_updated_at,
+            },
+            public_eligibility: {
+                eligible: publicEligibility.eligible,
+                rejection_reason: publicEligibility.reason,
+            },
+            final_surface: {
+                user_status: visibilityDecision.status,
+                user_reason: visibilityDecision.reason,
+                user_visible: visibilityDecision.status === "visible",
+                admin_visible: withHint.market_status !== "suppressed",
+                exploratory_visible: includeExploratory,
+                include_reason:
+                    visibilityDecision.status === "visible"
+                        ? "Visible on the public board"
+                        : withHint.market_status === "suppressed"
+                            ? "Suppressed before public surfacing"
+                            : `Hidden from the public board because ${visibilityDecision.reason.replace(/_/g, " ")}`,
+            },
+        },
     };
+}
+
+export function filterMarketIdeas(
+    ideas: MarketHydratedIdea[],
+    options?: { includeExploratory?: boolean; surface?: "user" | "admin" },
+) {
+    const includeExploratory = Boolean(options?.includeExploratory);
+    const surface = options?.surface || "user";
+    return ideas.filter((idea) => shouldIncludeMarketIdea(idea, includeExploratory, surface));
 }
 
 export function shouldIncludeMarketIdea(
@@ -519,9 +612,5 @@ export function buildMarketIdeas(
     rows: Array<Record<string, unknown>>,
     options?: { includeExploratory?: boolean; surface?: "user" | "admin" },
 ) {
-    const includeExploratory = Boolean(options?.includeExploratory);
-    const surface = options?.surface || "user";
-    return rows
-        .map((row) => hydrateIdeaForMarket(row))
-        .filter((idea) => shouldIncludeMarketIdea(idea, includeExploratory, surface));
+    return filterMarketIdeas(rows.map((row) => hydrateIdeaForMarket(row)), options);
 }

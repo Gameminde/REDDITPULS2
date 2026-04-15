@@ -5340,7 +5340,11 @@ Based on ALL analysis, deliver your FINAL VERDICT. Be honest and data-driven. If
         or verdict_report.get("interview_question", "")
         or ""
     )
-    report["ai_usage"] = verdict_report.get("ai_usage", {}) or brain.get_usage_summary()
+    usage_summary = {}
+    get_usage_summary = getattr(brain, "get_usage_summary", None)
+    if callable(get_usage_summary):
+        usage_summary = get_usage_summary() or {}
+    report["ai_usage"] = verdict_report.get("ai_usage", {}) or usage_summary
     pass3_risks = pass3.get("risk_matrix", [])
     if not pass3_risks:
         # Extract risks from debate output — they're always generated, even when Pass 3 fails
