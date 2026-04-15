@@ -3,23 +3,32 @@
     "gemini": {
       "name": "Google Gemini",
       "endpoint": "generativelanguage.googleapis.com",
-      "default_model": "gemini-3-pro-preview",
+      "default_model": "gemini-3.1-pro-preview",
       "models": [
         {
-          "id": "gemini-3-pro-preview",
+          "id": "gemini-3.1-pro-preview",
           "display_label": "Gemini 3.1 Pro Preview",
-          "runtime_model_id": "gemini-3-pro-preview",
-          "verification_model_id": "gemini-3-pro-preview",
-          "aliases": ["gemini-3.1-pro", "gemini-3-pro"],
+          "runtime_model_id": "gemini-3.1-pro-preview",
+          "verification_model_id": "gemini-3.1-pro-preview",
+          "aliases": ["gemini-3.1-pro", "gemini-3-pro", "gemini-3-pro-preview"],
           "tier": "paid",
           "context_window": 1048576
         },
         {
           "id": "gemini-3-flash-preview",
-          "display_label": "Gemini 3.1 Flash Preview",
+          "display_label": "Gemini 3 Flash Preview",
           "runtime_model_id": "gemini-3-flash-preview",
           "verification_model_id": "gemini-3-flash-preview",
           "aliases": ["gemini-3.1-flash", "gemini-3-flash"],
+          "tier": "free-tier",
+          "context_window": 1048576
+        },
+        {
+          "id": "gemini-3.1-flash-lite-preview",
+          "display_label": "Gemini 3.1 Flash-Lite Preview",
+          "runtime_model_id": "gemini-3.1-flash-lite-preview",
+          "verification_model_id": "gemini-3.1-flash-lite-preview",
+          "aliases": ["gemini-3.1-flash-lite", "gemini-3-flash-lite"],
           "tier": "free-tier",
           "context_window": 1048576
         },
@@ -46,7 +55,7 @@
           "display_label": "Gemini 2.5 Flash-Lite",
           "runtime_model_id": "gemini-2.5-flash-lite",
           "verification_model_id": "gemini-2.5-flash-lite",
-          "aliases": ["gemini-3.1-flash-lite"],
+          "aliases": [],
           "tier": "free-tier",
           "context_window": 1048576
         },
@@ -435,19 +444,28 @@
           "context_window": 128000
         },
         {
-          "id": "google/gemini-3-pro-preview",
+          "id": "google/gemini-3.1-pro-preview",
           "display_label": "Gemini 3.1 Pro Preview",
-          "runtime_model_id": "google/gemini-3-pro-preview",
-          "verification_model_id": "google/gemini-3-pro-preview",
+          "runtime_model_id": "google/gemini-3.1-pro-preview",
+          "verification_model_id": "google/gemini-3.1-pro-preview",
           "aliases": [],
           "tier": "paid",
           "context_window": 1048576
         },
         {
           "id": "google/gemini-3-flash-preview",
-          "display_label": "Gemini 3.1 Flash Preview",
+          "display_label": "Gemini 3 Flash Preview",
           "runtime_model_id": "google/gemini-3-flash-preview",
           "verification_model_id": "google/gemini-3-flash-preview",
+          "aliases": [],
+          "tier": "paid",
+          "context_window": 1048576
+        },
+        {
+          "id": "google/gemini-3.1-flash-lite-preview",
+          "display_label": "Gemini 3.1 Flash-Lite Preview",
+          "runtime_model_id": "google/gemini-3.1-flash-lite-preview",
+          "verification_model_id": "google/gemini-3.1-flash-lite-preview",
           "aliases": [],
           "tier": "paid",
           "context_window": 1048576

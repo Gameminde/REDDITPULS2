@@ -90,8 +90,8 @@ class OpportunityAnalyzer:
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         
         if gemini_key:
-            self.chain.append(("gemini", call_gemini, gemini_key, "gemini-2.5-flash-lite"))
-            print("  [AI] Gemini 2.5 Flash-Lite loaded")
+            self.chain.append(("gemini", call_gemini, gemini_key, "gemini-3.1-flash-lite-preview"))
+            print("  [AI] Gemini 3.1 Flash-Lite Preview loaded")
         if groq_key:
             self.chain.append(("groq", call_groq, groq_key, "meta-llama/llama-4-scout-17b-16e-instruct"))
             print("  [AI] Groq Llama 4 Scout loaded")

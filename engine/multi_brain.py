@@ -96,7 +96,7 @@ def get_user_ai_configs(user_id):
 # PROVIDER CALL FUNCTIONS (2026 models)
 # ═══════════════════════════════════════════════════════
 
-def call_gemini(prompt, system_prompt, api_key, model="gemini-2.5-pro"):
+def call_gemini(prompt, system_prompt, api_key, model="gemini-3.1-pro-preview"):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -388,11 +388,13 @@ MODEL_ALIASES = {
     "llama-3.3-70b": "llama-3.3-70b-versatile",
     "llama-3.1-8b": "llama-3.1-8b-instant",
     # Gemini aliases
-    "gemini-3-pro": "gemini-3-pro-preview",
-    "gemini-3.1-pro": "gemini-3-pro-preview",
+    "gemini-3-pro": "gemini-3.1-pro-preview",
+    "gemini-3-pro-preview": "gemini-3.1-pro-preview",
+    "gemini-3.1-pro": "gemini-3.1-pro-preview",
     "gemini-3-flash": "gemini-3-flash-preview",
     "gemini-3.1-flash": "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-3-flash-lite": "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
     # OpenAI aliases
     "gpt-5.2": "gpt-5.4",
     "gpt-5": "gpt-5.4",
