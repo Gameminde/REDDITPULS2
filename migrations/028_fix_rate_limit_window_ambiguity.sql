@@ -58,7 +58,7 @@ BEGIN
     1,
     p_now
   )
-  ON CONFLICT (user_id, scope, window_seconds, window_started_at)
+  ON CONFLICT ON CONSTRAINT rate_limit_windows_pkey
   DO UPDATE
     SET hit_count = public.rate_limit_windows.hit_count + 1,
         updated_at = p_now
