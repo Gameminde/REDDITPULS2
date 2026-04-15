@@ -1323,7 +1323,7 @@ const ValidatePage = () => {
                     transition={{ delay: 0.2 }}
                     className="surface-panel p-4"
                 >
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Active Models</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-3">Active Agents</p>
                     {configuredModels.length > 0 ? (
                         <div className="space-y-2.5">
                             {configuredModels.slice(0, 3).map((m: string) => {

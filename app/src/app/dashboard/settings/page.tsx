@@ -306,7 +306,7 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-6xl px-0 pt-2 pb-6 sm:pt-4">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-5 sm:mb-6">
                 <h1 className="text-[28px] font-bold font-display tracking-tight-custom text-white sm:text-[32px]">Settings</h1>
-                <p className="text-muted-foreground mt-1 text-sm font-mono">AI models · Account · Configuration</p>
+                <p className="text-muted-foreground mt-1 text-sm font-mono">AI agents · Account · Configuration</p>
             </motion.div>
 
             <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-2">
@@ -607,7 +607,7 @@ export default function SettingsPage() {
                             </div>
                             <div>
                                 <div className="flex justify-between text-[11px] mb-1.5">
-                                    <span className="text-muted-foreground">AI Models configured</span>
+                                    <span className="text-muted-foreground">AI agents configured</span>
                                     <span className="font-mono text-white">{configs.length}</span>
                                 </div>
                             </div>
