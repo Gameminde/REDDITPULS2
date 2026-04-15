@@ -29,6 +29,17 @@ type ModelInfo = {
     tier: "free" | "paid" | "free-tier";
 };
 
+type CatalogModelInfo = {
+    id: string;
+    label: string;
+};
+
+type ProviderCatalogEntry = {
+    name: string;
+    endpoint: string;
+    models: CatalogModelInfo[];
+};
+
 type ProfileData = {
     email: string;
     full_name: string;
@@ -53,6 +64,8 @@ const providerCatalog = [
     { id: "cerebras", name: "Cerebras", color: "text-teal" },
     { id: "ollama", name: "Ollama (local)", color: "text-muted-foreground" },
 ];
+
+const providerNameIndex = Object.fromEntries(providerCatalog.map((provider) => [provider.id, provider.name]));
 
 const MAX_ACTIVE_AGENTS = 6;
 
@@ -79,6 +92,7 @@ function getHealthIcon(status?: AiVerificationStatus, loading = false) {
 
 export default function SettingsPage() {
     const [configs, setConfigs] = useState<ProviderConfig[]>([]);
+    const [modelCatalog, setModelCatalog] = useState<Record<string, ProviderCatalogEntry>>({});
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [validationCount, setValidationCount] = useState(0);
 
@@ -113,6 +127,7 @@ export default function SettingsPage() {
                 setConfigs([]);
                 return;
             }
+            setModelCatalog((d.catalog && typeof d.catalog === "object") ? d.catalog as Record<string, ProviderCatalogEntry> : {});
             const nextConfigs: ProviderConfig[] = Array.isArray(d.configs) ? d.configs : [];
             nextConfigs.sort((left, right) => {
                 const leftPriority = Number(left.priority || 9999);
@@ -126,6 +141,15 @@ export default function SettingsPage() {
             setConfigMessage({ type: "error", text: "Could not load AI settings." });
         }
     }, []);
+
+    const getProviderDisplayName = useCallback((providerId: string) => {
+        return modelCatalog[providerId]?.name || providerNameIndex[providerId] || providerId;
+    }, [modelCatalog]);
+
+    const getModelDisplayName = useCallback((providerId: string, modelId: string) => {
+        const match = modelCatalog[providerId]?.models?.find((model) => model.id === modelId);
+        return match?.label || modelId.split("/").pop() || modelId;
+    }, [modelCatalog]);
 
     const fetchConfigHealth = useCallback(async () => {
         setLoadingHealth(true);
@@ -373,9 +397,9 @@ export default function SettingsPage() {
                                             <div>
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <p className="text-xs font-bold text-white">
-                                                        {config.provider.charAt(0).toUpperCase() + config.provider.slice(1)}{" "}
+                                                        {getProviderDisplayName(config.provider)}{" "}
                                                         <span className="text-muted-foreground font-mono text-[10px]">
-                                                            / {config.selected_model.split("/").pop() || config.selected_model}
+                                                            / {getModelDisplayName(config.provider, config.selected_model)}
                                                         </span>
                                                     </p>
                                                     {config.is_active && (

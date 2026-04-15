@@ -19,10 +19,21 @@ STRICT OUTPUT CONTRACT:
 
 
 MODEL_PRICING = {
+    "claude-opus-4-6": {"input": 5.0, "output": 25.0},
+    "claude-opus-4-5": {"input": 5.0, "output": 25.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
     "claude-3-5-sonnet": {"input": 3.0, "output": 15.0},
     "claude-3-5-haiku": {"input": 0.8, "output": 4.0},
+    "gpt-5.4": {"input": 2.5, "output": 15.0},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.5},
+    "gpt-5.4-nano": {"input": 0.2, "output": 1.25},
     "gpt-4o": {"input": 2.5, "output": 10.0},
-    "gpt-4.1": {"input": 5.0, "output": 15.0},
+    "gpt-4.1": {"input": 2.0, "output": 8.0},
+    "gpt-4.1-mini": {"input": 0.4, "output": 1.6},
+    "gpt-4.1-nano": {"input": 0.1, "output": 0.4},
     "gemini-2.0-flash": {"input": 0.1, "output": 0.4},
     "deepseek-chat": {"input": 0.27, "output": 1.1},
     "mistral-large": {"input": 2.0, "output": 6.0},
@@ -172,7 +183,11 @@ def _resolve_pricing(provider: str, model: str) -> dict:
     provider_l = str(provider or "").lower()
     model_l = resolve_model_name(str(model or "")).lower()
 
-    for key, price in MODEL_PRICING.items():
+    if model_l in MODEL_PRICING:
+        return MODEL_PRICING[model_l]
+
+    for key in sorted(MODEL_PRICING.keys(), key=len, reverse=True):
+        price = MODEL_PRICING[key]
         if key in model_l:
             return price
 

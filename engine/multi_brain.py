@@ -96,7 +96,7 @@ def get_user_ai_configs(user_id):
 # PROVIDER CALL FUNCTIONS (2026 models)
 # ═══════════════════════════════════════════════════════
 
-def call_gemini(prompt, system_prompt, api_key, model="gemini-3.1-pro"):
+def call_gemini(prompt, system_prompt, api_key, model="gemini-2.5-pro"):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -109,7 +109,7 @@ def call_gemini(prompt, system_prompt, api_key, model="gemini-3.1-pro"):
     return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def call_anthropic(prompt, system_prompt, api_key, model="claude-opus-4.6"):
+def call_anthropic(prompt, system_prompt, api_key, model="claude-sonnet-4-6"):
     url = "https://api.anthropic.com/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -153,7 +153,7 @@ def _extract_content(data: dict) -> str:
     raise ValueError(f"Unexpected response format — keys: {list(data.keys())}")
 
 
-def call_openai(prompt, system_prompt, api_key, model="gpt-4o"):
+def call_openai(prompt, system_prompt, api_key, model="gpt-5.4"):
     url = "https://api.openai.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -388,19 +388,23 @@ MODEL_ALIASES = {
     "llama-3.3-70b": "llama-3.3-70b-versatile",
     "llama-3.1-8b": "llama-3.1-8b-instant",
     # Gemini aliases
-    "gemini-3.1-pro": "gemini-2.0-flash",
-    "gemini-3.1-flash-lite": "gemini-2.0-flash",
-    "gemini-pro": "gemini-2.0-flash",
-    "gemini-flash": "gemini-2.0-flash",
+    "gemini-3-pro": "gemini-3-pro-preview",
+    "gemini-3.1-pro": "gemini-3-pro-preview",
+    "gemini-3-flash": "gemini-3-flash-preview",
+    "gemini-3.1-flash": "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
     # OpenAI aliases
-    "gpt-5.2": "gpt-4o",
-    "gpt-5": "gpt-4o",
-    "gpt-5.4": "gpt-4o",
-    "gpt-5.3-codex": "gpt-4o",
+    "gpt-5.2": "gpt-5.4",
+    "gpt-5": "gpt-5.4",
+    "gpt-5-mini": "gpt-5.4-mini",
+    "gpt-5-nano": "gpt-5.4-nano",
     # Anthropic aliases
-    "claude-opus-4.6": "claude-3-5-sonnet-20241022",
-    "claude-sonnet-4.6": "claude-3-5-sonnet-20241022",
-    "claude-haiku-4.5": "claude-3-5-haiku-20241022",
+    "claude-opus-4.5": "claude-opus-4-5-20251101",
+    "claude-opus-4.6": "claude-opus-4-6",
+    "claude-sonnet-4": "claude-sonnet-4-20250514",
+    "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
+    "claude-haiku-4.5": "claude-haiku-4-5",
     # DeepSeek aliases
     "deepseek-v4": "deepseek-chat",
     "deepseek-v3.2-speciale": "deepseek-chat",
