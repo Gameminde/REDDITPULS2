@@ -3,6 +3,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, CheckCircle, XCircle, AlertTriangle, User, Mail, Key, Loader2, Wand2 } from "lucide-react";
+import {
+    getAiStatusLabel,
+    getAiStatusTone,
+    type AiConfigHealth,
+    type AiVerificationStatus,
+} from "@/lib/ai-config-health";
 import { createClient } from "@/lib/supabase-browser";
 import Link from "next/link";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
@@ -30,6 +36,8 @@ type ProfileData = {
     created_at: string;
 };
 
+type ConfigMessageTone = "error" | "success" | "warning";
+
 const providerCatalog = [
     { id: "gemini", name: "Google Gemini", color: "text-teal" },
     { id: "openai", name: "OpenAI", color: "text-build" },
@@ -52,6 +60,21 @@ const statusIcons: Record<string, React.ReactNode> = {
     pending: <AlertTriangle className="w-3.5 h-3.5 text-risky" />,
 };
 
+function getConfigMessageTone(status?: AiVerificationStatus): ConfigMessageTone {
+    if (!status || status === "valid") return "success";
+    if (status === "invalid" || status === "error") return "error";
+    return "warning";
+}
+
+function getHealthIcon(status?: AiVerificationStatus, loading = false) {
+    if (loading) return <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />;
+    if (!status) return statusIcons.pending;
+    const tone = getAiStatusTone(status);
+    if (tone === "success") return statusIcons.verified;
+    if (tone === "error") return statusIcons.error;
+    return statusIcons.pending;
+}
+
 export default function SettingsPage() {
     const [configs, setConfigs] = useState<ProviderConfig[]>([]);
     const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -67,8 +90,11 @@ export default function SettingsPage() {
     const [selectedModel, setSelectedModel] = useState("");
     const [detecting, setDetecting] = useState(false);
     const [loadingModels, setLoadingModels] = useState(false);
+    const [loadingHealth, setLoadingHealth] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [configMessage, setConfigMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+    const [configMessage, setConfigMessage] = useState<{ type: ConfigMessageTone; text: string } | null>(null);
+    const [configHealth, setConfigHealth] = useState<Record<string, AiConfigHealth>>({});
+    const [healthSummary, setHealthSummary] = useState<{ blocked: boolean; message: string | null } | null>(null);
 
     const fetchConfigs = useCallback(async () => {
         try {
@@ -83,6 +109,33 @@ export default function SettingsPage() {
             setConfigMessage((prev) => (prev?.type === "error" ? null : prev));
         } catch {
             setConfigMessage({ type: "error", text: "Could not load AI settings." });
+        }
+    }, []);
+
+    const fetchConfigHealth = useCallback(async () => {
+        setLoadingHealth(true);
+        try {
+            const response = await fetch("/api/settings/ai/health");
+            const payload = await response.json();
+            if (!response.ok) {
+                setConfigHealth({});
+                setHealthSummary(null);
+                return;
+            }
+
+            const nextHealth = Object.fromEntries(
+                ((payload.health || []) as AiConfigHealth[]).map((entry) => [entry.config_id, entry]),
+            );
+            setConfigHealth(nextHealth);
+            setHealthSummary({
+                blocked: Boolean(payload.blocked),
+                message: typeof payload.message === "string" ? payload.message : null,
+            });
+        } catch {
+            setConfigHealth({});
+            setHealthSummary(null);
+        } finally {
+            setLoadingHealth(false);
         }
     }, []);
 
@@ -127,9 +180,10 @@ export default function SettingsPage() {
 
     useEffect(() => {
         fetchConfigs();
+        fetchConfigHealth();
         fetchProfile();
         fetchValidationCount();
-    }, [fetchConfigs, fetchProfile, fetchValidationCount]);
+    }, [fetchConfigHealth, fetchConfigs, fetchProfile, fetchValidationCount]);
 
     // Auto-detect provider when user pastes a key
     const handleKeyChange = async (key: string) => {
@@ -198,7 +252,7 @@ export default function SettingsPage() {
                 setConfigMessage({ type: "error", text: payload.error || "Could not save this AI configuration." });
                 return;
             }
-            await fetchConfigs();
+            await Promise.all([fetchConfigs(), fetchConfigHealth()]);
             setShowAddForm(false);
             setNewKey("");
             setDetectedProvider(null);
@@ -206,8 +260,10 @@ export default function SettingsPage() {
             setAvailableModels([]);
             setSelectedModel("");
             setConfigMessage({
-                type: payload.verification?.status === "error" ? "error" : "success",
-                text: payload.verification?.message || "AI configuration saved.",
+                type: getConfigMessageTone(payload.verification?.status),
+                text: payload.verification?.message
+                    ? `AI configuration saved. ${payload.verification.message}`
+                    : "AI configuration saved.",
             });
         } catch {
             setConfigMessage({ type: "error", text: "Could not save this AI configuration." });
@@ -219,7 +275,7 @@ export default function SettingsPage() {
         if (!configId) return;
         try {
             await fetch(`/api/settings/ai?id=${configId}`, { method: "DELETE" });
-            await fetchConfigs();
+            await Promise.all([fetchConfigs(), fetchConfigHealth()]);
         } catch { }
     };
 
@@ -252,6 +308,12 @@ export default function SettingsPage() {
                             </button>
                         </div>
 
+                        {healthSummary?.message && (
+                            <div className="mb-4 rounded-lg border border-risky/20 bg-risky/5 px-3 py-2 text-[11px] font-mono text-risky">
+                                {healthSummary.message}
+                            </div>
+                        )}
+
                         {configs.length === 0 ? (
                             <div className="text-center py-6">
                                 <p className="text-[13px] text-muted-foreground/60">No AI models configured</p>
@@ -259,7 +321,18 @@ export default function SettingsPage() {
                             </div>
                         ) : (
                             <div className="space-y-1.5">
-                                {configs.map((config, i) => (
+                                {configs.map((config, i) => {
+                                    const health = config.id ? configHealth[config.id] : null;
+                                    const healthTone = health ? getAiStatusTone(health.status) : "muted";
+                                    const badgeClasses = healthTone === "success"
+                                        ? "border border-build/20 bg-build/5 text-build"
+                                        : healthTone === "error"
+                                            ? "border border-dont/20 bg-dont/5 text-dont"
+                                            : healthTone === "warning"
+                                                ? "border border-risky/20 bg-risky/5 text-risky"
+                                                : "border border-white/10 bg-white/[0.03] text-muted-foreground";
+
+                                    return (
                                     <motion.div
                                         key={config.id || i}
                                         initial={{ opacity: 0, x: -10 }}
@@ -275,19 +348,39 @@ export default function SettingsPage() {
                                                 P{config.priority}
                                             </span>
                                             <div>
-                                                <p className="text-xs font-bold text-white">
-                                                    {config.provider.charAt(0).toUpperCase() + config.provider.slice(1)}{" "}
-                                                    <span className="text-muted-foreground font-mono text-[10px]">
-                                                        / {config.selected_model.split("/").pop() || config.selected_model}
-                                                    </span>
-                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <p className="text-xs font-bold text-white">
+                                                        {config.provider.charAt(0).toUpperCase() + config.provider.slice(1)}{" "}
+                                                        <span className="text-muted-foreground font-mono text-[10px]">
+                                                            / {config.selected_model.split("/").pop() || config.selected_model}
+                                                        </span>
+                                                    </p>
+                                                    {config.is_active && (
+                                                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${badgeClasses}`}>
+                                                            {health ? getAiStatusLabel(health.status) : loadingHealth ? "Checking" : "Saved"}
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <p className="text-[10px] text-muted-foreground font-mono">
                                                     •••••••{config.api_key.slice(-4)}
                                                 </p>
+                                                {config.is_active && (
+                                                    <p className={`mt-1 text-[10px] font-mono ${
+                                                        healthTone === "success"
+                                                            ? "text-build"
+                                                            : healthTone === "error"
+                                                                ? "text-dont"
+                                                                : healthTone === "warning"
+                                                                    ? "text-risky"
+                                                                    : "text-muted-foreground"
+                                                    }`}>
+                                                        {health?.message || (loadingHealth ? "Checking live provider status..." : "Provider health has not been checked yet.")}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2.5">
-                                            {config.is_active ? statusIcons["verified"] : statusIcons["pending"]}
+                                            {config.is_active ? getHealthIcon(health?.status, loadingHealth && !health) : statusIcons.pending}
                                             <button
                                                 onClick={() => handleDelete(config.id)}
                                                 className="text-muted-foreground hover:text-dont transition-colors opacity-0 group-hover:opacity-100"
@@ -296,7 +389,8 @@ export default function SettingsPage() {
                                             </button>
                                         </div>
                                     </motion.div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </motion.div>
@@ -319,7 +413,9 @@ export default function SettingsPage() {
                                         className={`mb-4 rounded-lg px-3 py-2 text-[11px] font-mono ${
                                             configMessage.type === "error"
                                                 ? "border border-dont/20 bg-dont/5 text-dont"
-                                                : "border border-build/20 bg-build/5 text-build"
+                                                : configMessage.type === "warning"
+                                                    ? "border border-risky/20 bg-risky/5 text-risky"
+                                                    : "border border-build/20 bg-build/5 text-build"
                                         }`}
                                     >
                                         {configMessage.text}

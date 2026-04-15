@@ -268,6 +268,7 @@ const ValidatePage = () => {
     const [configuredModels, setConfiguredModels] = useState<string[]>([]);
     const [aiConfigChecked, setAiConfigChecked] = useState(false);
     const [aiConfigError, setAiConfigError] = useState<string | null>(null);
+    const [aiHealthWarning, setAiHealthWarning] = useState<string | null>(null);
     const [showAiSetupGate, setShowAiSetupGate] = useState(false);
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [termExpanded, setTermExpanded] = useState(false);
@@ -405,11 +406,29 @@ const ValidatePage = () => {
                 const active = (d.configs || []).filter((c: any) => c.is_active);
                 setConfiguredModels(active.map((c: any) => c.selected_model));
                 setAiConfigError(null);
+                if (active.length > 0) {
+                    void fetch("/api/settings/ai/health")
+                        .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+                        .then(({ ok, payload }) => {
+                            if (cancelled) return;
+                            if (!ok) {
+                                setAiHealthWarning(null);
+                                return;
+                            }
+                            setAiHealthWarning(payload?.blocked && typeof payload?.message === "string" ? payload.message : null);
+                        })
+                        .catch(() => {
+                            if (!cancelled) setAiHealthWarning(null);
+                        });
+                } else {
+                    setAiHealthWarning(null);
+                }
             })
             .catch(() => {
                 if (cancelled) return;
                 setConfiguredModels([]);
                 setAiConfigError("We could not verify your AI setup. Open Settings and try again.");
+                setAiHealthWarning(null);
             })
             .finally(() => {
                 if (cancelled) return;
@@ -843,6 +862,22 @@ const ValidatePage = () => {
                     <p className="mt-2 text-sm text-foreground/85">
                         Quick Validation is available here. Deep Validation and Market Investigation stay premium because they use broader coverage, more sources, and a heavier synthesis pass.
                     </p>
+                </div>
+            )}
+
+            {aiHealthWarning && (
+                <div className="mb-4 bento-cell rounded-[14px] border border-risky/20 bg-risky/5 p-4">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-risky">Provider check</div>
+                    <p className="mt-2 text-sm text-foreground/85">{aiHealthWarning}</p>
+                    <div className="mt-3">
+                        <Link
+                            href={settingsHref}
+                            className="inline-flex items-center gap-2 rounded-lg border border-risky/25 bg-risky/10 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.12em] text-risky transition-colors hover:bg-risky/15"
+                        >
+                            <Settings className="h-3.5 w-3.5" />
+                            Open Settings
+                        </Link>
+                    </div>
                 </div>
             )}
 

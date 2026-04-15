@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { trackServerEvent } from "@/lib/analytics";
+import { getActiveAiConfigHealth } from "@/lib/ai-config-server";
 import { checkPremium } from "@/lib/check-premium";
 import { FEATURE_FLAGS } from "@/lib/feature-flags";
 import { enqueueValidationJob } from "@/lib/queue";
@@ -51,6 +52,43 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({
                 error: "Add at least one active AI API key in Settings before starting a validation.",
             }, { status: 400 });
+        }
+
+        try {
+            const aiHealth = await getActiveAiConfigHealth(supabase, user.id);
+            if (aiHealth.blocked) {
+                await trackServerEvent(req, {
+                    eventName: "validation_failed",
+                    scope: "product",
+                    route: "/dashboard/validate",
+                    userId: user.id,
+                    properties: {
+                        reason: "ai_providers_unusable",
+                        statuses: aiHealth.health.map((entry) => `${entry.provider}:${entry.status}`).slice(0, 6),
+                    },
+                });
+                return NextResponse.json({
+                    error: aiHealth.message || "No active AI provider is usable right now.",
+                    issues: aiHealth.health.map((entry) => ({
+                        provider: entry.provider,
+                        status: entry.status,
+                        model: entry.selected_model,
+                        message: entry.message,
+                    })),
+                }, { status: 400 });
+            }
+        } catch (healthError) {
+            console.error("AI provider preflight error:", healthError);
+            await trackServerEvent(req, {
+                eventName: "validation_failed",
+                scope: "product",
+                route: "/dashboard/validate",
+                userId: user.id,
+                properties: { reason: "ai_provider_preflight_failed" },
+            });
+            return NextResponse.json({
+                error: healthError instanceof Error ? healthError.message : "Could not verify your AI setup right now.",
+            }, { status: 500 });
         }
 
         const rateLimit = await consumeDurableRateLimit({

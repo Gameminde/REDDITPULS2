@@ -1,28 +1,16 @@
-import { createClient } from "@/lib/supabase-server";
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+    formatEncryptedConfigError,
+    getDecryptedAiConfigsForUser,
+    requireAiEncryptionKey,
+} from "@/lib/ai-config-server";
+import { verifyKey } from "@/lib/ai-key-verification";
 import { consumeDurableRateLimit } from "@/lib/durable-rate-limit";
 import { MODEL_CATALOG, getProviderRegistryEntry, resolveRegisteredModel } from "@/lib/ai-model-registry";
+import { createClient } from "@/lib/supabase-server";
 
 export { MODEL_CATALOG };
-
-function requireEncryptionKey() {
-    const encryptionKey = process.env.AI_ENCRYPTION_KEY?.trim();
-    if (!encryptionKey) {
-        throw new Error(
-            "AI_ENCRYPTION_KEY is missing. Encrypted AI settings are required. " +
-            "Set AI_ENCRYPTION_KEY and apply 012_ai_config_encryption_rpcs.sql.",
-        );
-    }
-    return encryptionKey;
-}
-
-function formatEncryptedConfigError(error: { code?: string; message?: string } | null | undefined) {
-    if (!error) return "Encrypted AI config request failed";
-    if (error.code === "42883") {
-        return "Encrypted AI config RPCs are missing. Apply 012_ai_config_encryption_rpcs.sql in Supabase first.";
-    }
-    return error.message || "Encrypted AI config request failed";
-}
 
 export async function GET() {
     try {
@@ -30,19 +18,9 @@ export async function GET() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        const encryptionKey = requireEncryptionKey();
-        const { data: configs, error } = await supabase.rpc("get_ai_configs_decrypted", {
-            p_user_id: user.id,
-            p_key: encryptionKey,
-        });
+        const configs = await getDecryptedAiConfigsForUser(supabase, user.id);
 
-        if (error) {
-            const message = formatEncryptedConfigError(error);
-            console.error("AI config GET error:", error);
-            return NextResponse.json({ error: message, configs: [], catalog: MODEL_CATALOG }, { status: 500 });
-        }
-
-        const maskedConfigs = (configs || []).map((config: Record<string, string | boolean | number>) => ({
+        const maskedConfigs = (configs || []).map((config) => ({
             ...config,
             selected_model: resolveRegisteredModel(String(config.selected_model || "")),
             api_key: config.api_key ? `*********${String(config.api_key).slice(-4)}` : "",
@@ -72,7 +50,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Rate limit exceeded - max 10 config changes per hour" }, { status: 429 });
         }
 
-        const encryptionKey = requireEncryptionKey();
+        const encryptionKey = requireAiEncryptionKey();
         const body = await req.json();
         const { provider, api_key, selected_model, priority, endpoint_url, config_id } = body;
         const providerEntry = getProviderRegistryEntry(provider);
@@ -93,7 +71,6 @@ export async function POST(req: NextRequest) {
         };
 
         try {
-            const { verifyKey } = await import("./verify/route");
             verification = await verifyKey(provider, api_key, resolvedModel);
         } catch (verifyError) {
             console.error("Key verification failed:", verifyError);
