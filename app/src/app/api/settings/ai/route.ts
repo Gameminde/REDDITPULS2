@@ -76,8 +76,16 @@ export async function POST(req: NextRequest) {
             console.error("Key verification failed:", verifyError);
             verification = {
                 status: "error",
-                message: "Could not verify key - saving anyway",
+                message: "Could not verify this key right now. Try again in a moment.",
             };
+        }
+
+        if (verification.status !== "valid") {
+            const statusCode = verification.status === "error" ? 502 : 400;
+            return NextResponse.json({
+                error: verification.message || "This AI key is not ready to use yet.",
+                verification,
+            }, { status: statusCode });
         }
 
         const safePriority = Math.max(1, Math.min(6, priority || 1));
@@ -106,7 +114,7 @@ export async function POST(req: NextRequest) {
         }
 
         const { error } = await supabase.rpc("upsert_ai_config_encrypted", {
-            p_config_id: existing?.id || null,
+            p_config_id: existing?.id || crypto.randomUUID(),
             p_user_id: user.id,
             p_provider: provider,
             p_api_key: api_key,

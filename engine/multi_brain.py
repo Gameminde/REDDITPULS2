@@ -13,7 +13,12 @@ import logging
 import requests
 import concurrent.futures
 from typing import Optional
-from ai_gateway import call_with_ai_policy, estimate_tokens as gateway_estimate_tokens, summarize_ai_telemetry
+from ai_gateway import (
+    call_with_ai_policy,
+    classify_ai_error,
+    estimate_tokens as gateway_estimate_tokens,
+    summarize_ai_telemetry,
+)
 from model_registry import resolve_model_name
 
 # Add engine to path
@@ -1219,6 +1224,14 @@ def _is_timeout_error(err) -> bool:
     return "timed out" in msg or "timeout" in msg or "read timed out" in msg
 
 
+def _should_quarantine_config(err) -> bool:
+    """Skip clearly unavailable agents for the rest of the current validation run."""
+    error_kind, error_status, _retryable = classify_ai_error(err)
+    if error_kind in {"auth", "billing_inactive", "quota_exceeded", "context_too_large"}:
+        return True
+    return error_status in {401, 402, 403, 413, 429}
+
+
 def _short_model_label(model_name: str) -> str:
     parts = [part for part in str(model_name).split("/") if part]
     return parts[-1] if parts else str(model_name)
@@ -1291,21 +1304,18 @@ class AIBrain:
     def __init__(self, configs):
         """configs: list of user_ai_config rows from Supabase."""
         active_configs = [dict(c) for c in configs if c.get("is_active", True)]
-        deduped = []
-        seen_signatures = set()
+        normalized_configs = []
+        seen_ids = set()
         for c in sorted(active_configs, key=lambda row: row.get("priority", 9999)):
-            provider = c.get("provider", "unknown")
             resolved_model = resolve_model(c.get("selected_model", ""))
-            signature = (provider.lower(), resolved_model.lower())
-            if signature in seen_signatures:
-                msg = f"[Brain] ⚠ Duplicate model removed: {provider}/{resolved_model}"
-                print(f"  {msg}")
-                logger.warning(msg)
+            config_id = str(c.get("id") or "").strip()
+            if config_id and config_id in seen_ids:
                 continue
             c["selected_model"] = resolved_model
-            deduped.append(c)
-            seen_signatures.add(signature)
-        self.configs = deduped
+            normalized_configs.append(c)
+            if config_id:
+                seen_ids.add(config_id)
+        self.configs = normalized_configs
         # Ensure every config has a unique id
         for i, c in enumerate(self.configs):
             if not c.get("id"):
@@ -1343,7 +1353,7 @@ class AIBrain:
     def single_call(self, prompt, system_prompt, pinned_index=None, *, task_type="general", stage="single_call", expect_json=False, max_retries=2):
         """
         Route sequential passes across configured models without shrinking the prompt.
-        413 responses mark a model unavailable for the rest of the validation run.
+        Auth, quota, and context-limit failures mark a model unavailable for the rest of the validation run.
         """
         self._call_counter += 1
         last_error = None
@@ -1378,9 +1388,12 @@ class AIBrain:
                     flush=True,
                 )
                 logger.warning(f"[Brain] Single call failed on {label}: {e}")
-                if _is_413_error(e):
+                if _should_quarantine_config(e):
                     self._unavailable_config_ids.add(config["id"])
-                    msg = f"[Brain] ⚠ {_short_model_label(config['selected_model'])} hit 413 — routing to next model"
+                    msg = (
+                        f"[Brain] ⚠ {_short_model_label(config['selected_model'])} marked unavailable "
+                        f"for this validation — routing to next model"
+                    )
                     print(f"  {msg}")
                     logger.warning(msg)
                     continue

@@ -54,6 +54,8 @@ const providerCatalog = [
     { id: "ollama", name: "Ollama (local)", color: "text-muted-foreground" },
 ];
 
+const MAX_ACTIVE_AGENTS = 6;
+
 const statusIcons: Record<string, React.ReactNode> = {
     verified: <CheckCircle className="w-3.5 h-3.5 text-build" />,
     error: <XCircle className="w-3.5 h-3.5 text-dont" />,
@@ -95,6 +97,12 @@ export default function SettingsPage() {
     const [configMessage, setConfigMessage] = useState<{ type: ConfigMessageTone; text: string } | null>(null);
     const [configHealth, setConfigHealth] = useState<Record<string, AiConfigHealth>>({});
     const [healthSummary, setHealthSummary] = useState<{ blocked: boolean; message: string | null } | null>(null);
+    const sortedConfigs = [...configs].sort((left, right) => {
+        const leftPriority = Number(left.priority || 9999);
+        const rightPriority = Number(right.priority || 9999);
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+        return String(left.id || "").localeCompare(String(right.id || ""));
+    });
 
     const fetchConfigs = useCallback(async () => {
         try {
@@ -105,7 +113,14 @@ export default function SettingsPage() {
                 setConfigs([]);
                 return;
             }
-            setConfigs(d.configs || []);
+            const nextConfigs: ProviderConfig[] = Array.isArray(d.configs) ? d.configs : [];
+            nextConfigs.sort((left, right) => {
+                const leftPriority = Number(left.priority || 9999);
+                const rightPriority = Number(right.priority || 9999);
+                if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+                return String(left.id || "").localeCompare(String(right.id || ""));
+            });
+            setConfigs(nextConfigs);
             setConfigMessage((prev) => (prev?.type === "error" ? null : prev));
         } catch {
             setConfigMessage({ type: "error", text: "Could not load AI settings." });
@@ -236,6 +251,10 @@ export default function SettingsPage() {
         setSaving(true);
         setConfigMessage(null);
         try {
+            const nextPriority = sortedConfigs.reduce((highest, config) => {
+                const priority = Number(config.priority || 0);
+                return Math.max(highest, Number.isFinite(priority) ? priority : 0);
+            }, 0) + 1;
             const response = await fetch("/api/settings/ai", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -244,7 +263,7 @@ export default function SettingsPage() {
                     api_key: newKey.trim(),
                     selected_model: selectedModel,
                     is_active: true,
-                    priority: configs.length + 1,
+                    priority: nextPriority,
                 }),
             });
             const payload = await response.json();
@@ -297,14 +316,14 @@ export default function SettingsPage() {
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bento-cell rounded-[14px] p-4 sm:p-5">
                         <div className="flex items-center justify-between mb-4">
                             <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                                Active Agents ({configs.length}/10)
+                                Active Agents ({sortedConfigs.length}/{MAX_ACTIVE_AGENTS})
                             </p>
                             <button
                                 onClick={() => setShowAddForm(!showAddForm)}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-primary transition-all"
                                 style={{ background: "hsl(var(--orange-dim))", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                             >
-                                <Plus className="w-3 h-3" /> Add Model
+                                <Plus className="w-3 h-3" /> Add Agent
                             </button>
                         </div>
 
@@ -314,14 +333,18 @@ export default function SettingsPage() {
                             </div>
                         )}
 
-                        {configs.length === 0 ? (
+                        <p className="mb-4 text-[11px] leading-5 text-muted-foreground">
+                            Each saved key becomes its own agent slot. You can stack the same provider more than once, even on the same model, if each agent uses a different API key.
+                        </p>
+
+                        {sortedConfigs.length === 0 ? (
                             <div className="text-center py-6">
-                                <p className="text-[13px] text-muted-foreground/60">No AI models configured</p>
-                                <p className="text-[11px] text-muted-foreground/40 mt-1">Click "Add Model" to paste your first API key</p>
+                                <p className="text-[13px] text-muted-foreground/60">No AI agents configured</p>
+                                <p className="text-[11px] text-muted-foreground/40 mt-1">Click "Add Agent" to paste your first API key</p>
                             </div>
                         ) : (
                             <div className="space-y-1.5">
-                                {configs.map((config, i) => {
+                                {sortedConfigs.map((config, i) => {
                                     const health = config.id ? configHealth[config.id] : null;
                                     const healthTone = health ? getAiStatusTone(health.status) : "muted";
                                     const badgeClasses = healthTone === "success"
@@ -342,10 +365,10 @@ export default function SettingsPage() {
                                         style={{ background: "hsl(0 0% 100% / 0.02)", border: "1px solid hsl(0 0% 100% / 0.05)" }}
                                     >
                                         <div className="flex items-center gap-3">
-                                            <span className="w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold font-mono"
+                                            <span className="min-w-[70px] rounded-md px-2 py-1 text-center text-[10px] font-bold font-mono"
                                                 style={{ background: "hsl(var(--orange-dim))", color: "hsl(16 100% 50%)", border: "1px solid hsl(16 100% 50% / 0.2)" }}
                                             >
-                                                P{config.priority}
+                                                Agent {i + 1}
                                             </span>
                                             <div>
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -395,7 +418,7 @@ export default function SettingsPage() {
                         )}
                     </motion.div>
 
-                    {/* Add Model Form */}
+                    {/* Add Agent Form */}
                     <AnimatePresence>
                         {showAddForm && (
                             <motion.div
@@ -405,7 +428,7 @@ export default function SettingsPage() {
                                 className="bento-cell rounded-[14px] p-4 sm:p-5 overflow-hidden"
                             >
                                 <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-4">
-                                    Add New AI Model
+                                    Add New Agent
                                 </p>
 
                                 {configMessage && (
